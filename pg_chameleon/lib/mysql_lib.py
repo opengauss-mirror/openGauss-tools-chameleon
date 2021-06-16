@@ -314,6 +314,36 @@ class mysql_source(object):
             self.logger.debug("Dropping the schema %s." % loading_schema)
             self.pg_engine.drop_database_schema(loading_schema, True)
 
+    def get_partition_metadata(self, table, schema):
+        """
+            The method builds the table's partition metadata querying the information_schema.
+            The data is returned as a dictionary.
+
+            :param table: The table name
+            :param schema: The table's schema
+            :return: table's partition metadata as a cursor dictionary
+            :rtype: dictionary
+        """
+        sql_metadata="""
+            SELECT DISTINCT
+                subpartition_method,
+                partition_name,
+                partition_method,
+                partition_expression,
+                partition_description
+            FROM
+                information_schema.partitions
+            WHERE
+                    table_schema=%s
+                AND table_name=%s
+            ORDER BY
+                partition_ordinal_position
+            ;
+        """
+        self.cursor_buffered.execute(sql_metadata, (schema, table))
+        partition_metadata=self.cursor_buffered.fetchall()
+        return partition_metadata
+
     def get_table_metadata(self, table, schema):
         """
             The method builds the table's metadata querying the information_schema.
@@ -401,7 +431,8 @@ class mysql_source(object):
             table_list = self.schema_tables[schema]
             for table in table_list:
                 table_metadata = self.get_table_metadata(table, schema)
-                self.pg_engine.create_table(table_metadata, table, schema, 'mysql')
+                partition_metadata = self.get_partition_metadata(table, schema)
+                self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
 
 
     def generate_select_statements(self, schema, table):
@@ -1304,8 +1335,7 @@ class mysql_source(object):
 
                     sql_tokeniser.reset_lists()
                 if close_batch:
-                    my_stream.close()
-                    return [master_data, close_batch]
+                    break
             else:
 
                 for row in binlogevent.rows:
