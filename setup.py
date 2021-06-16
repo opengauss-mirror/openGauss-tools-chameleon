@@ -50,10 +50,10 @@ setup(
         "scripts/chameleon"
     ],
     install_requires=[
-        'PyMySQL>=0.10.0',
+        'PyMySQL>=0.10.0, <1.0.0',
         'argparse>=1.2.1',
         'mysql-replication>=0.22',
-        'psycopg2-binary>=2.8.3',
+        'py-opengauss>=1.3.1',
         'PyYAML>=5.1.2',
         'tabulate>=0.8.1',
         'daemonize>=2.4.7',
