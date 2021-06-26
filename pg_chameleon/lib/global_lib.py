@@ -864,6 +864,13 @@ class replica_engine(object):
         log_level = self.config["log_level"]
         log_dest = self.config["log_dest"]
         log_days_keep = self.config["log_days_keep"]
+        log_level_map = {
+            "debug": logging.DEBUG,
+            "info": logging.INFO,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+            "critical": logging.critical
+        }
         config_name = self.args.config
         source_name = self.args.source
         debug_mode = self.args.debug
@@ -886,15 +893,16 @@ class replica_engine(object):
 
         if log_dest=='stdout' or debug_mode:
             fh=logging.StreamHandler(sys.stdout)
-
         elif log_dest=='file':
             fh = TimedRotatingFileHandler(log_file, when="d",interval=1,backupCount=log_days_keep)
+        else:
+            print("Invalid log_dest value: %s" % log_dest)
+            sys.exit()
 
-        if log_level=='debug' or debug_mode:
-            fh.setLevel(logging.DEBUG)
-        elif log_level=='info':
-            fh.setLevel(logging.INFO)
+        if debug_mode:
+            log_level = 'debug'
 
+        fh.setLevel(log_level_map.get(log_level, logging.DEBUG))
         fh.setFormatter(formatter)
         logger.addHandler(fh)
         logger_fds = fh.stream.fileno()
