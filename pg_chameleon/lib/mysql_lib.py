@@ -388,32 +388,45 @@ class mysql_source(object):
     def get_foreign_keys_metadata(self):
         """
             The method collects the foreign key metadata for the detach replica process.
-            Currently doesn't get the ON UPDATE/ON DELETE triggers
         """
         self.__init_sync()
         schema_replica = "'%s'"  % "','".join([schema.strip() for schema in self.sources[self.source]["schema_mappings"]])
         self.logger.info("retrieving foreign keys metadata for schemas %s" % schema_replica)
         sql_fkeys = """
-            SELECT
-                table_name as table_name,
-                table_schema as table_schema,
-                constraint_name as constraint_name,
-                referenced_table_name as referenced_table_name,
-                referenced_table_schema as referenced_table_schema,
-                GROUP_CONCAT(concat('"',column_name,'"') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as fk_cols,
-                GROUP_CONCAT(concat('"',REFERENCED_COLUMN_NAME,'"') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as ref_columns
-            FROM
-                information_schema.key_column_usage
-            WHERE
-                    table_schema in (%s)
-                AND referenced_table_name IS NOT NULL
-                AND referenced_table_schema in (%s)
-            GROUP BY
-                table_name,
-                constraint_name,
-                referenced_table_name
-            ORDER BY
-                table_name
+            SELECT s.table_name,
+                   s.table_schema,
+                   s.constraint_name,
+                   s.referenced_table_name,
+                   s.referenced_table_schema,
+                   s.fk_cols,
+                   s.ref_columns,
+                   rc.update_rule,
+                   rc.delete_rule
+            FROM (
+                SELECT
+                    table_name as table_name,
+                    table_schema as table_schema,
+                    constraint_name as constraint_name,
+                    referenced_table_name as referenced_table_name,
+                    referenced_table_schema as referenced_table_schema,
+                    GROUP_CONCAT(concat('"',column_name,'"') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as fk_cols,
+                    GROUP_CONCAT(concat('"',REFERENCED_COLUMN_NAME,'"') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as ref_columns
+                FROM
+                    information_schema.key_column_usage
+                WHERE
+                        table_schema in (%s)
+                    AND referenced_table_name IS NOT NULL
+                    AND referenced_table_schema in (%s)
+                GROUP BY
+                    table_name,
+                    constraint_name,
+                    referenced_table_name
+                ORDER BY
+                    table_name
+            ) s
+            JOIN information_schema.referential_constraints rc ON rc.constraint_schema = s.table_schema
+            AND rc.constraint_name = s.constraint_name
+            AND rc.table_name = s.table_name
             ;
 
         """ % (schema_replica, schema_replica)
@@ -645,8 +658,8 @@ class mysql_source(object):
             csv_data="\n".join(d[0] for d in csv_results )
 
             if self.copy_mode == 'direct':
-                csv_file = io.StringIO()
-                csv_file.write(csv_data)
+                csv_file = io.BytesIO()
+                csv_file.write(csv_data.encode())
                 csv_file.seek(0)
 
             if self.copy_mode == 'file':

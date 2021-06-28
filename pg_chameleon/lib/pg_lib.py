@@ -95,11 +95,10 @@ class pgsql_source(object):
             :rtype: dictionary
         """
         if self.source_conn:
-            strconn = "opengauss://%(user)s:%(password)s@%(host)s:%(port)s/%(database)s?[connect_timeout]=%(connect_timeout)s"\
-                 % self.source_conn
-            pgsql_conn = py_opengauss.open(strconn)
+            strconn = "opengauss://%(host)s:%(port)s/%(database)s?[connect_timeout]=%(connect_timeout)s" % self.source_conn
+            pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"])
             pgsql_conn.settings['client_encoding']=self.source_conn["charset"]
-        elif not self.source_conn:
+        else:
             self.logger.error("Undefined database connection string. Exiting now.")
             sys.exit()
 
@@ -543,10 +542,10 @@ class pg_engine(object):
             'tinytext':'text',
             'mediumtext':'text',
             'longtext':'text',
-            'tinyblob':'bytea',
-            'mediumblob':'bytea',
-            'longblob':'bytea',
-            'blob':'bytea',
+            'tinyblob':'blob',
+            'mediumblob':'blob',
+            'longblob':'blob',
+            'blob':'blob',
             'binary':'bytea',
             'varbinary':'bytea',
             'decimal':'numeric',
@@ -634,8 +633,8 @@ class pg_engine(object):
             dedicated connection and cursor.
         """
         if self.dest_conn and not self.pgsql_conn:
-            strconn = "opengauss://%(user)s:%(password)s@%(host)s:%(port)s/%(database)s" % self.dest_conn
-            self.pgsql_conn = py_opengauss.open(strconn)
+            strconn = "opengauss://%(host)s:%(port)s/%(database)s" % self.dest_conn
+            self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"])
             self.pgsql_conn.settings['client_encoding']=self.dest_conn["charset"]
         elif not self.dest_conn:
             self.logger.error("Undefined database connection string. Exiting now.")
@@ -738,8 +737,13 @@ class pg_engine(object):
                 referenced_table_name = foreign_key["referenced_table_name"]
                 referenced_table_schema = schema_mappings[foreign_key["referenced_table_schema"]]
                 ref_columns = foreign_key["ref_columns"]
+                update_rule = foreign_key["update_rule"]
+                delete_rule = foreign_key["delete_rule"]
                 fk_list.append({'fkey_name':fk_name, 'table_name':table_name, 'table_schema':table_schema})
-                sql_fkey = ("""ALTER TABLE "%s"."%s" ADD CONSTRAINT "%s" FOREIGN KEY (%s) REFERENCES "%s"."%s" (%s) NOT VALID;""" %
+                sql_fkey = ("""
+                    ALTER TABLE "%s"."%s" ADD CONSTRAINT "%s" FOREIGN KEY (%s) REFERENCES "%s"."%s" (%s)
+                    ON UPDATE %s ON DELETE %s NOT VALID;
+                    """ %
                         (
                             table_schema,
                             table_name,
@@ -747,7 +751,9 @@ class pg_engine(object):
                             fk_cols,
                             referenced_table_schema,
                             referenced_table_name,
-                            ref_columns
+                            ref_columns,
+                            update_rule,
+                            delete_rule
                         )
                     )
                 fk_counter+=1
@@ -1290,8 +1296,7 @@ class pg_engine(object):
                     new_name = token["new_name"]
                     query = """ALTER TABLE "%s"."%s" RENAME TO "%s" """ % (destination_schema, old_name, new_name)
                     table_pkey = self.get_table_pkey(destination_schema, old_name)
-                    if table_pkey:
-                        self.store_table(destination_schema, new_name, table_pkey, None)
+                    self.store_table(destination_schema, new_name, table_pkey, None)
                 elif token["command"] == "DROP TABLE":
                     query=""" DROP TABLE IF EXISTS "%s"."%s";""" % (destination_schema, token["name"])
                 elif token["command"] == "TRUNCATE":
@@ -1509,9 +1514,9 @@ class pg_engine(object):
         stmt = self.pgsql_conn.prepare(sql_gen % (schema, token["name"]))
         value_check=stmt.first()
         if value_check:
-            sql_drop=value_check[0]
+            sql_drop=value_check
             self.pgsql_conn.execute(sql_drop)
-            self.unregister_table(schema, token["name"])
+            # Now we support replica table without pk, so no need to call self.unregister_table(schema, token["name"])
 
     def __count_active_sources(self):
         """
@@ -2407,8 +2412,9 @@ class pg_engine(object):
             re_symbol = ''
             if column_type in self.character_type:
                 re_symbol = 'E'
-            if column["column_default"] and column["column_default"] != 'NULL':
-                default_value = "DEFAULT %s%s" % (re_symbol, column["column_default"])
+            column_default = column.get("column_default");
+            if column_default and column_default != "NULL":
+                default_value = "DEFAULT %s%s" % (re_symbol, column_default)
             else:
                 default_value = ''
             ddl_columns.append(  ' "%s" %s %s %s   ' %  (column["column_name"], column_type, default_value, col_is_null ))
@@ -2858,24 +2864,24 @@ class pg_engine(object):
             event_after=row_data["event_after"]
             event_before=row_data["event_before"]
             log_table=global_data["log_table"]
-            insert_list.append(str.encode("%s,'%s','%s','%s','%s',%s,'%s','%s',%s" %  (
+            insert_list.append(("%s,'%s','%s','%s','%s',%s,'%s','%s',%s" %  (
                         global_data["batch_id"],
                         global_data["table"],
                         global_data["schema"],
                         global_data["action"],
                         global_data["binlog"],
                         global_data["logpos"],
-                        json.dumps(event_after, cls=pg_encoder).replace("'", "''"),
-                        json.dumps(event_before, cls=pg_encoder).replace("'", "''"),
+                        json.dumps(event_after, cls=pg_encoder, ensure_ascii=False).replace("'", "''"),
+                        json.dumps(event_before, cls=pg_encoder, ensure_ascii=False).replace("'", "''"),
                         global_data["event_time"],
-
                     )
                 )
             )
 
-        csv_data=b"\n".join(insert_list )
-        csv_file.write(csv_data)
+        csv_data="\n".join(insert_list )
+        csv_file.write(csv_data.encode())
         csv_file.seek(0)
+
         try:
             sql_copy=("""
                 COPY "sch_chameleon".{}
@@ -3014,6 +3020,7 @@ class pg_engine(object):
         batch_id = global_data["batch_id"]
         str_data = '%s' %(row_data, )
         hex_row = binascii.hexlify(str_data.encode())
+        hex_row = '%s' %(hex_row, )
         sql_save="""
             INSERT INTO sch_chameleon.t_discarded_rows
                 (
@@ -3287,7 +3294,7 @@ class pg_engine(object):
         self.set_source_id()
         sql_maintenance = """
             SELECT
-                now()-coalesce(ts_last_maintenance,'1970-01-01 00:00:00'::timestamp)>%s::interval
+                now()-coalesce(ts_last_maintenance,'1970-01-01 00:00:00'::timestamp)>'%s'::interval
             FROM
                 sch_chameleon.t_sources
             WHERE
