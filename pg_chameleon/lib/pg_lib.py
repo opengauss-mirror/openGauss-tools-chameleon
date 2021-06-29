@@ -549,6 +549,8 @@ class pg_engine(object):
             'binary':'bytea',
             'varbinary':'bytea',
             'decimal':'numeric',
+            'dec':'numeric',
+            'numeric':'numeric',
             'double':'double precision',
             'double precision':'double precision',
             'float':'double precision',
@@ -570,6 +572,12 @@ class pg_engine(object):
             'time without time zone', 'timestamp without time zone', 'time', 'timestamp', 'bpchar', 'nchar', 'decimal']
         self.character_type = ['char', 'character', 'nchar', 'varchar', 'character varying', 'varchar', 'varchar2',
             'nvarchar2', 'text', 'clob']
+        self.default_value_map = {
+            # without time zone
+            'curdate()': "CURRENT_DATE",
+            'curtime()': "('now'::text)::time",
+            'current_timestamp()': "pg_systimestamp()::timestamp"
+        }
 
         self.migrations = [
             {'version': '2.0.1',  'script': '200_to_201.sql'},
@@ -610,10 +618,10 @@ class pg_engine(object):
             }
         else:
             spatial_data = {
-            'geometry':'bytea',
-            'point':'bytea',
-            'linestring':'bytea',
-            'polygon':'bytea',
+            'geometry':'point',
+            'point':'point',
+            'linestring':'path',
+            'polygon':'polygon',
             'multipoint':'bytea',
             'geometrycollection':'bytea',
             'multilinestring':'bytea',
@@ -2412,9 +2420,9 @@ class pg_engine(object):
             re_symbol = ''
             if column_type in self.character_type:
                 re_symbol = 'E'
-            column_default = column.get("column_default");
+            column_default = column.get("column_default")
             if column_default and column_default != "NULL":
-                default_value = "DEFAULT %s%s" % (re_symbol, column_default)
+                default_value = "DEFAULT %s%s" % (re_symbol, self.default_value_map.get(column_default, column_default))
             else:
                 default_value = ''
             ddl_columns.append(  ' "%s" %s %s %s   ' %  (column["column_name"], column_type, default_value, col_is_null ))
@@ -4001,6 +4009,7 @@ class pg_engine(object):
                 idx_col = [column.strip() for column in index["index_columns"].split(',')]
                 index_columns = ['"%s"' % column.strip() for column in idx_col]
                 non_unique = index["non_unique"]
+                index_type = index["index_type"]
                 if indx =='PRIMARY':
                     pkey_name = "pk_%s_%s_%s" % (table[0:10],table_timestamp,  self.idx_sequence)
                     pkey_def = 'ALTER TABLE "%s"."%s" ADD CONSTRAINT "%s" PRIMARY KEY (%s) ;' % (schema, table, pkey_name, ','.join(index_columns))
@@ -4013,8 +4022,13 @@ class pg_engine(object):
                             table_primary = idx_col
                     else:
                         unique_key = ''
+                    # openGauss doesn't support multi column for GIN index, so use BTREE when columns > 1
+                    if index_type == 'BTREE' or len(index_columns) > 1:
+                        using = 'USING BTREE(%s)' % (','.join(index_columns))
+                    else:
+                        using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
                     index_name='idx_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp, self.idx_sequence)
-                    idx_def='CREATE %s INDEX "%s" ON "%s"."%s" (%s);' % (unique_key, index_name, schema, table, ','.join(index_columns) )
+                    idx_def='CREATE %s INDEX "%s" ON "%s"."%s" %s;' % (unique_key, index_name, schema, table, using)
                     idx_ddl[index_name] = idx_def
                 self.idx_sequence+=1
         for index in idx_ddl:

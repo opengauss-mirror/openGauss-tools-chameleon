@@ -23,7 +23,8 @@ class mysql_source(object):
         self.schema_loading = {}
         self.schema_list = []
         self.hexify_always = ['blob', 'tinyblob', 'mediumblob','longblob','binary','varbinary']
-        self.spatial_datatypes = ['point','geometry','linestring','polygon', 'multipoint', 'multilinestring', 'geometrycollection']
+        self.postgis_spatial_datatypes = ['multipoint', 'multilinestring', 'geometrycollection']
+        self.common_spatial_datatypes = ['point','geometry','linestring','polygon']
         self.schema_only = {}
         self.gtid_mode = False
         self.gtid_enable = False
@@ -475,37 +476,26 @@ class mysql_source(object):
                     THEN
                         concat('nullif(`',column_name,'`,cast("0000-00-00 00:00:00" as date))')
                     WHEN
-                        data_type IN ('"""+"','".join(self.spatial_datatypes)+"""')
+                        data_type IN ('"""+"','".join(self.postgis_spatial_datatypes)+"""')
                     THEN
                         concat('ST_AsText(',column_name,')')
+                    WHEN
+                        data_type IN ('point', 'geometry')
+                    THEN
+                        concat('SUBSTR(REPLACE(ST_AsText(',column_name,'),\\' \\',\\',\\'), 6)')
+                    WHEN
+                        data_type IN ('polygon')
+                    THEN
+                        concat('SUBSTR(REPLACE(REPLACE(ST_AsText(',column_name,'),\\',\\',\\'),(\\'), \\' \\', \\',\\'),8)')
+                    WHEN
+                        data_type IN ('linestring')
+                    THEN
+                        concat('concat(REPLACE(REPLACE(REPLACE(ST_AsText(',column_name,'),\\'LINESTRING\\',\\'[\\'),\\',\\',\\'),(\\'),\\' \\',\\',\\'),\\']\\')')
 
                 ELSE
                     concat('cast(`',column_name,'` AS char CHARACTER SET """+ self.charset +""")')
                 END
                 AS select_csv,
-                CASE
-                    WHEN
-                        data_type IN ('"""+"','".join(self.hexify)+"""')
-                    THEN
-                        concat('hex(',column_name,') AS','`',column_name,'`')
-                    WHEN
-                        data_type IN ('bit')
-                    THEN
-                        concat('cast(`',column_name,'` AS unsigned) AS','`',column_name,'`')
-                    WHEN
-                        data_type IN ('datetime','timestamp','date')
-                    THEN
-                        concat('nullif(`',column_name,'`,cast("0000-00-00 00:00:00" as date)) AS `',column_name,'`')
-                    WHEN
-                        data_type IN ('"""+"','".join(self.spatial_datatypes)+"""')
-                    THEN
-                        concat('ST_AsText(',column_name,') AS','`',column_name,'`')
-
-                ELSE
-                    concat('cast(`',column_name,'` AS char CHARACTER SET """+ self.charset +""") AS','`',column_name,'`')
-
-                END
-                AS select_stat,
                 column_name as column_name
             FROM
                 information_schema.COLUMNS
@@ -764,6 +754,7 @@ class mysql_source(object):
         sql_index = """
             SELECT
                 index_name as index_name,
+                index_type as index_type,
                 non_unique as non_unique,
                 GROUP_CONCAT(column_name ORDER BY seq_in_index) as index_columns
             FROM
@@ -771,7 +762,7 @@ class mysql_source(object):
             WHERE
                     table_schema=%s
                 AND 	table_name=%s
-                AND	index_type = 'BTREE'
+                AND	(index_type = 'BTREE' OR index_type = 'FULLTEXT')
             GROUP BY
                 table_name,
                 non_unique,
@@ -842,6 +833,17 @@ class mysql_source(object):
                 sys.exit(3)
         self.copy_max_memory = copy_max_memory
 
+    def __init_postgis_state(self):
+        """
+            The method check postgis state and update hexify column
+        """
+        self.postgis_present = self.pg_engine.check_postgis()
+        if self.postgis_present:
+            self.hexify = self.hexify_always
+            self.postgis_spatial_datatypes = self.postgis_spatial_datatypes + self.common_spatial_datatypes
+        else:
+            self.hexify = self.hexify_always + self.postgis_spatial_datatypes
+
     def __init_read_replica(self):
         """
             The method calls the pre-steps required by the read replica method.
@@ -859,11 +861,7 @@ class mysql_source(object):
         self.skip_tables = self.source_config["skip_tables"]
         self.replica_batch_size = self.source_config["replica_batch_size"]
         self.sleep_loop = self.source_config["sleep_loop"]
-        self.postgis_present = self.pg_engine.check_postgis()
-        if self.postgis_present:
-            self.hexify = self.hexify_always
-        else:
-            self.hexify = self.hexify_always + self.spatial_datatypes
+        self.__init_postgis_state()
         try:
             self.connect_db_buffered()
         except:
@@ -905,11 +903,7 @@ class mysql_source(object):
         else:
             self.keep_existing_schema = False
         self.set_copy_max_memory()
-        self.postgis_present = self.pg_engine.check_postgis()
-        if self.postgis_present:
-            self.hexify = self.hexify_always
-        else:
-            self.hexify = self.hexify_always + self.spatial_datatypes
+        self.__init_postgis_state()
         self.connect_db_buffered()
         self.pg_engine.connect_db()
         self.schema_mappings = self.pg_engine.get_schema_mappings()
@@ -1418,7 +1412,7 @@ class mysql_source(object):
                                     event_after[column_name] = ''
                                 elif column_type == 'json':
                                     event_after[column_name] = self.__decode_dic_keys(event_after[column_name])
-                                elif column_type in self.spatial_datatypes and event_after[column_name]:
+                                elif column_type in self.postgis_spatial_datatypes and event_after[column_name]:
                                     event_after[column_name] = self.__get_text_spatial(event_after[column_name])
 
 
@@ -1434,7 +1428,7 @@ class mysql_source(object):
                                     event_before[column_name] = ''
                                 elif column_type == 'json':
                                     event_before[column_name] = self.__decode_dic_keys(event_after[column_name])
-                                elif column_type in self.spatial_datatypes and event_after[column_name]:
+                                elif column_type in self.postgis_spatial_datatypes and event_after[column_name]:
                                     event_before[column_name] = self.__get_text_spatial(event_before[column_name])
                             event_insert={"global_data":global_data,"event_after":event_after,  "event_before":event_before}
                             size_insert += len(str(event_insert))

@@ -29,7 +29,7 @@ CREATE TABLE sch_chameleon.t_error_log
     i_id_source bigint NOT NULL,
     v_table_name character varying(100) NOT NULL,
     v_schema_name character varying(100) NOT NULL,
-    t_table_pkey text NOT NULL,
+    t_table_pkey text,
     t_binlog_name text NOT NULL,
     i_binlog_position bigint NOT NULL,
     ts_error	timestamp without time zone,
