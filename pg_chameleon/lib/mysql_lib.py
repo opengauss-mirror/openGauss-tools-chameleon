@@ -8,9 +8,17 @@ from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.event import QueryEvent, GtidEvent, HeartbeatLogEvent
 from pymysqlreplication.row_event import DeleteRowsEvent,UpdateRowsEvent,WriteRowsEvent
 from pymysqlreplication.event import RotateEvent
-from pg_chameleon import sql_token
+from pg_chameleon import sql_token, ColumnType
 from os import remove
+from geomet import wkb
+from geomet import wkt
 import re
+
+POINT_PREFIX_LEN = len('POINT ')
+POLYGON_PREFIX_LEN = len('POLYGON ')
+LINESTR_PREFIX_LEN = len('LINESTRING ')
+WKB_PREFIX_LEN = 4
+
 class mysql_source(object):
     def __init__(self):
         """
@@ -22,13 +30,55 @@ class mysql_source(object):
         self.schema_mappings = {}
         self.schema_loading = {}
         self.schema_list = []
-        self.hexify_always = ['blob', 'tinyblob', 'mediumblob','longblob','binary','varbinary']
-        self.postgis_spatial_datatypes = ['multipoint', 'multilinestring', 'geometrycollection']
-        self.common_spatial_datatypes = ['point','geometry','linestring','polygon']
+        self.hexify_always = ColumnType.get_mysql_hexify_always_type()
+        self.postgis_spatial_datatypes = ColumnType.get_mysql_postgis_spatial_type()
+        self.common_spatial_datatypes = ColumnType.get_mysql_common_spatial_type()
         self.schema_only = {}
         self.gtid_mode = False
         self.gtid_enable = False
+        self.decode_map = {}
+        self.__init_decode_map()
 
+    def __decode_hexify_value(self, origin_value):
+        return binascii.hexlify(origin_value).decode().upper()
+
+    def __decode_json_value(self, origin_value):
+        return self.__decode_dic_keys(origin_value)
+
+    def __decode_postgis_spatial_value(self, origin_value):
+        return self.__get_text_spatial(origin_value)
+
+    def __decode_binary_value(self, origin_value):
+        if not isinstance(origin_value, bytes):
+            return origin_value
+        return origin_value.decode()
+
+    def __decode_point_value(self, origin_value):
+        return wkt.dumps(wkb.loads(origin_value[WKB_PREFIX_LEN:]))[POINT_PREFIX_LEN:].replace(' ', ',')
+
+    def __decode_polygon_value(self, origin_value):
+        return wkt.dumps(wkb.loads(origin_value[WKB_PREFIX_LEN:]))[POLYGON_PREFIX_LEN:].replace(', ', '),(').replace(' ', ',')
+
+    def __decode_linestr_value(self, origin_value):
+        return '[' + wkt.dumps(wkb.loads(origin_value[WKB_PREFIX_LEN:]))[LINESTR_PREFIX_LEN:].replace(', ', '),(').replace(' ', ',') + ']'
+
+    def __decode_default_value(self, origin_value):
+        return origin_value
+
+    def __init_decode_map(self):
+        self.decode_map = {
+            ColumnType.M_C_GIS_POINT.value: self.__decode_point_value,
+            ColumnType.M_C_GIS_GEO.value: self.__decode_point_value,
+            ColumnType.M_C_GIS_LINESTR.value: self.__decode_linestr_value,
+            ColumnType.M_C_GIS_POLYGON.value: self.__decode_polygon_value,
+            ColumnType.M_JSON.value: self.__decode_json_value,
+            ColumnType.M_BINARY.value: self.__decode_binary_value,
+            ColumnType.M_VARBINARY.value: self.__decode_binary_value
+        }
+        for v in self.hexify_always:
+            self.decode_map[v] = self.__decode_hexify_value
+        for v in self.postgis_spatial_datatypes:
+            self.decode_map[v] = self.__decode_postgis_spatial_value
 
     def __del__(self):
         """
@@ -468,11 +518,15 @@ class mysql_source(object):
                     THEN
                         concat('hex(',column_name,')')
                     WHEN
-                        data_type IN ('bit')
+                        data_type IN ('"""+ColumnType.M_BINARY.value+"""')
+                    THEN
+                        concat('concat(\\'\\\\\\\\x\\', trim(trailing \\'00\\' from hex(',column_name,')))')
+                    WHEN
+                        data_type IN ('"""+ColumnType.M_BIT.value+"""')
                     THEN
                         concat('cast(`',column_name,'` AS unsigned)')
                     WHEN
-                        data_type IN ('datetime','timestamp','date')
+                        data_type IN ('"""+ColumnType.M_DATATIME.value+"""','"""+ColumnType.M_TIMESTAMP.value+"""','"""+ColumnType.M_DATE.value+"""')
                     THEN
                         concat('nullif(`',column_name,'`,cast("0000-00-00 00:00:00" as date))')
                     WHEN
@@ -480,15 +534,15 @@ class mysql_source(object):
                     THEN
                         concat('ST_AsText(',column_name,')')
                     WHEN
-                        data_type IN ('point', 'geometry')
+                        data_type IN ('"""+ColumnType.M_C_GIS_POINT.value+"""', '"""+ColumnType.M_C_GIS_GEO.value+"""')
                     THEN
                         concat('SUBSTR(REPLACE(ST_AsText(',column_name,'),\\' \\',\\',\\'), 6)')
                     WHEN
-                        data_type IN ('polygon')
+                        data_type IN ('"""+ColumnType.M_C_GIS_POLYGON.value+"""')
                     THEN
                         concat('SUBSTR(REPLACE(REPLACE(ST_AsText(',column_name,'),\\',\\',\\'),(\\'), \\' \\', \\',\\'),8)')
                     WHEN
-                        data_type IN ('linestring')
+                        data_type IN ('"""+ColumnType.M_C_GIS_LINESTR.value+"""')
                     THEN
                         concat('concat(REPLACE(REPLACE(REPLACE(ST_AsText(',column_name,'),\\'LINESTRING\\',\\'[\\'),\\',\\',\\'),(\\'),\\' \\',\\',\\'),\\']\\')')
 
@@ -835,7 +889,7 @@ class mysql_source(object):
 
     def __init_postgis_state(self):
         """
-            The method check postgis state and update hexify column
+            The method check postgis state and update decode map
         """
         self.postgis_present = self.pg_engine.check_postgis()
         if self.postgis_present:
@@ -843,6 +897,10 @@ class mysql_source(object):
             self.postgis_spatial_datatypes = self.postgis_spatial_datatypes + self.common_spatial_datatypes
         else:
             self.hexify = self.hexify_always + self.postgis_spatial_datatypes
+            for v in self.postgis_spatial_datatypes:
+                # update postgis_spatial_datatypes value in map, decode them as hex
+                self.decode_map[v] = self.__decode_hexify_value
+
 
     def __init_read_replica(self):
         """
@@ -1184,6 +1242,24 @@ class mysql_source(object):
                     dic_decoded[key] = self.__decode_dic_keys(value)
         return dic_decoded
 
+    def __decode_event_value(self, table_name, column_map, column_name, origin_value):
+        """
+            Decode event value based on column type
+        """
+        try:
+            column_type=column_map[column_name]
+        except KeyError:
+            self.logger.debug("Detected inconsistent structure for the table  %s. The replay may fail. " % (table_name))
+            column_type = 'text'
+
+        if not origin_value:
+            if isinstance(origin_value, bytes):
+                return ''
+            else:
+                return origin_value
+
+        return self.decode_map.get(column_type, self.__decode_default_value)(origin_value)
+
     def __read_replica_stream(self, batch_data):
         """
         Stream the replica using the batch data. This method evaluates the different events streamed from MySQL
@@ -1401,35 +1477,11 @@ class mysql_source(object):
                                 event_after=row["values"]
 
                             for column_name in event_after:
-                                try:
-                                    column_type=column_map[column_name]
-                                except KeyError:
-                                    self.logger.debug("Detected inconsistent structure for the table  %s. The replay may fail. " % (table_name))
-                                    column_type = 'text'
-                                if column_type in self.hexify and event_after[column_name]:
-                                    event_after[column_name]=binascii.hexlify(event_after[column_name]).decode()
-                                elif column_type in self.hexify and isinstance(event_after[column_name], bytes):
-                                    event_after[column_name] = ''
-                                elif column_type == 'json':
-                                    event_after[column_name] = self.__decode_dic_keys(event_after[column_name])
-                                elif column_type in self.postgis_spatial_datatypes and event_after[column_name]:
-                                    event_after[column_name] = self.__get_text_spatial(event_after[column_name])
-
+                                event_after[column_name] = self.__decode_event_value(table_name, column_map, column_name, event_after[column_name])
 
                             for column_name in event_before:
-                                try:
-                                    column_type=column_map[column_name]
-                                except KeyError:
-                                    self.logger.debug("Detected inconsistent structure for the table  %s. The replay may fail. " % (table_name))
-                                    column_type = 'text'
-                                if column_type in self.hexify and event_before[column_name]:
-                                    event_before[column_name]=binascii.hexlify(event_before[column_name]).decode()
-                                elif column_type in self.hexify and isinstance(event_before[column_name], bytes):
-                                    event_before[column_name] = ''
-                                elif column_type == 'json':
-                                    event_before[column_name] = self.__decode_dic_keys(event_after[column_name])
-                                elif column_type in self.postgis_spatial_datatypes and event_after[column_name]:
-                                    event_before[column_name] = self.__get_text_spatial(event_before[column_name])
+                                event_before[column_name] = self.__decode_event_value(table_name, column_map, column_name, event_before[column_name])
+
                             event_insert={"global_data":global_data,"event_after":event_after,  "event_before":event_before}
                             size_insert += len(str(event_insert))
                             group_insert.append(event_insert)

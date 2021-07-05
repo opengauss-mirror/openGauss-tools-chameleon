@@ -605,15 +605,6 @@ $BODY$
         RAISE DEBUG 'Finding the last executed event''s timestamp...';
         
         v_ts_evt_source:=(SELECT sch_chameleon.fn_get_event_time(v_i_evt_replay[array_length(v_i_evt_replay,1)], v_i_id_batch));
---        v_ts_evt_source:=(
---            SELECT 
---                to_timestamp(i_my_event_time)
---            FROM	
---                sch_chameleon.t_log_replica
---            WHERE
---                    i_id_event=v_i_evt_replay[array_length(v_i_evt_replay,1)]
---                AND	i_id_batch=v_i_id_batch
---        );
 
         RAISE DEBUG 'Generating the main loop sql';
 
@@ -702,6 +693,14 @@ $BODY$
                                     WHEN (dec.jsb_event_after->>t_column) is NULL
                                     THEN
                                         '' is ''
+                                    WHEN (
+                                            SELECT data_type from information_schema.columns where table_schema=dec.v_schema_name
+                                            AND table_name=dec.v_table_name
+                                            AND column_name=dec.t_column
+                                        )
+                                        IN (''point'', ''polygon'', ''path'')
+                                    THEN
+                                        ''~=''
                                     ELSE
                                         ''=''
                                 END
@@ -714,6 +713,14 @@ $BODY$
                                     WHEN (dec.jsb_event_before->>t_column) is NULL
                                     THEN
                                         '' is ''
+                                    WHEN (
+                                            SELECT data_type from information_schema.columns where table_schema=dec.v_schema_name
+                                            AND table_name=dec.v_table_name
+                                            AND column_name=dec.t_column
+                                        )
+                                        IN (''point'', ''polygon'', ''path'')
+                                    THEN
+                                        ''~=''
                                     ELSE
                                         ''=''
                                 END
