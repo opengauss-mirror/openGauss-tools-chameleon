@@ -10,6 +10,7 @@ import os
 import binascii
 from distutils.sysconfig import get_python_lib
 import multiprocessing as mp
+from pg_chameleon import ColumnType
 
 class pg_encoder(json.JSONEncoder):
     def default(self, obj):
@@ -525,42 +526,42 @@ class pg_engine(object):
         self.type_ddl={}
         self.idx_sequence=0
         self.type_dictionary = {
-            'integer':'integer',
-            'mediumint':'integer',
-            'tinyint':'integer',
-            'smallint':'integer',
-            'int':'integer',
-            'bigint':'bigint',
-            'varchar':'character varying',
-            'character varying':'character varying',
-            'text':'text',
-            'char':'character',
-            'datetime':'timestamp without time zone',
-            'date':'date',
-            'time':'time without time zone',
-            'timestamp':'timestamp without time zone',
-            'tinytext':'text',
-            'mediumtext':'text',
-            'longtext':'text',
-            'tinyblob':'blob',
-            'mediumblob':'blob',
-            'longblob':'blob',
-            'blob':'blob',
-            'binary':'bytea',
-            'varbinary':'bytea',
-            'decimal':'numeric',
-            'dec':'numeric',
-            'numeric':'numeric',
-            'double':'double precision',
-            'double precision':'double precision',
-            'float':'double precision',
-            'bit':'integer',
-            'year':'integer',
-            'enum':'enum',
-            'set':'text',
-            'json':'json',
-            'bool':'boolean',
-            'boolean':'boolean',
+            ColumnType.M_INTEGER.value:ColumnType.O_INTEGER.value,
+            ColumnType.M_MINT.value:ColumnType.O_INTEGER.value,
+            ColumnType.M_TINT.value:ColumnType.O_INTEGER.value,
+            ColumnType.M_SINT.value:ColumnType.O_INTEGER.value,
+            ColumnType.M_INT.value:ColumnType.O_INTEGER.value,
+            ColumnType.M_BINT.value:ColumnType.O_BINT.value,
+            ColumnType.M_VARCHAR.value:ColumnType.O_C_CHAR_VAR.value,
+            ColumnType.M_CHAR_VAR.value:ColumnType.O_C_CHAR_VAR.value,
+            ColumnType.M_TEXT.value:ColumnType.O_C_TEXT.value,
+            ColumnType.M_CHAR.value:ColumnType.O_C_CHARACTER.value,
+            ColumnType.M_DATATIME.value:ColumnType.O_TIMESTAP_NO_TZ.value,
+            ColumnType.M_DATE.value:ColumnType.O_DATE.value,
+            ColumnType.M_TIME.value:ColumnType.O_TIME_NO_TZ.value,
+            ColumnType.M_TIMESTAMP.value:ColumnType.O_TIMESTAP_NO_TZ.value,
+            ColumnType.M_TTEXT.value:ColumnType.O_C_TEXT.value,
+            ColumnType.M_MTEXT.value:ColumnType.O_C_TEXT.value,
+            ColumnType.M_LTEXT.value:ColumnType.O_C_TEXT.value,
+            ColumnType.M_HEX_T_BLOB.value:ColumnType.O_BLOB.value,
+            ColumnType.M_HEX_M_BLOB.value:ColumnType.O_BLOB.value,
+            ColumnType.M_HEX_L_BLOB.value:ColumnType.O_BLOB.value,
+            ColumnType.M_HEX_BLOB.value:ColumnType.O_BLOB.value,
+            ColumnType.M_BINARY.value:ColumnType.O_BYTEA.value,
+            ColumnType.M_VARBINARY.value:ColumnType.O_BYTEA.value,
+            ColumnType.M_DECIMAL.value:ColumnType.O_NUM.value,
+            ColumnType.M_DEC.value:ColumnType.O_NUM.value,
+            ColumnType.M_NUM.value:ColumnType.O_NUM.value,
+            ColumnType.M_DOUBLE.value:ColumnType.O_DOUBLE_P.value,
+            ColumnType.M_DOUBLE_P.value:ColumnType.O_DOUBLE_P.value,
+            ColumnType.M_FLOAT.value:ColumnType.O_DOUBLE_P.value,
+            ColumnType.M_BIT.value:ColumnType.O_INTEGER.value,
+            ColumnType.M_YEAR.value:ColumnType.O_INTEGER.value,
+            ColumnType.M_ENUM.value:ColumnType.O_ENUM.value,
+            ColumnType.M_SET.value:ColumnType.O_C_TEXT.value,
+            ColumnType.M_JSON.value:ColumnType.O_JSON.value,
+            ColumnType.M_BOOL.value:ColumnType.O_BOOLEAN.value,
+            ColumnType.M_BOOLEAN.value:ColumnType.O_BOOLEAN.value,
         }
         self.dest_conn = None
         self.pgsql_conn = None
@@ -568,10 +569,8 @@ class pg_engine(object):
         self.idx_sequence = 0
         self.lock_timeout = 0
         self.max_range_column = 4
-        self.hash_part_key_type = ['integer', 'bigint', 'character varying', 'text', 'character', 'numeric', 'date',
-            'time without time zone', 'timestamp without time zone', 'time', 'timestamp', 'bpchar', 'nchar', 'decimal']
-        self.character_type = ['char', 'character', 'nchar', 'varchar', 'character varying', 'varchar', 'varchar2',
-            'nvarchar2', 'text', 'clob']
+        self.hash_part_key_type = ColumnType.get_opengauss_hash_part_key_type()
+        self.character_type = ColumnType.get_opengauss_char_type()
         self.default_value_map = {
             # without time zone
             'curdate()': "CURRENT_DATE",
@@ -608,23 +607,25 @@ class pg_engine(object):
         self.postgis_present = postgis_check
         if self.postgis_present:
             spatial_data = {
-            'geometry':'geometry',
-            'point':'geometry',
-            'linestring':'geometry',
-            'polygon':'geometry',
-            'multipoint':'geometry',
-            'geometrycollection':'geometry',
-            'multilinestring':'geometry',
+            ColumnType.M_C_GIS_GEO.value:ColumnType.O_GEO.value,
+            ColumnType.M_C_GIS_POINT.value:ColumnType.O_GEO.value,
+            ColumnType.M_C_GIS_LINESTR.value:ColumnType.O_GEO.value,
+            ColumnType.M_C_GIS_POLYGON.value:ColumnType.O_GEO.value,
+            ColumnType.M_S_GIS_MUL_POINT.value:ColumnType.O_GEO.value,
+            ColumnType.M_S_GIS_GEOCOL.value:ColumnType.O_GEO.value,
+            ColumnType.M_S_GIS_MUL_LINESTR.value:ColumnType.O_GEO.value,
+            ColumnType.M_S_GIS_MUL_POLYGON.value:ColumnType.O_GEO.value
             }
         else:
             spatial_data = {
-            'geometry':'point',
-            'point':'point',
-            'linestring':'path',
-            'polygon':'polygon',
-            'multipoint':'bytea',
-            'geometrycollection':'bytea',
-            'multilinestring':'bytea',
+            ColumnType.M_C_GIS_GEO.value:ColumnType.O_POINT.value,
+            ColumnType.M_C_GIS_POINT.value:ColumnType.O_POINT.value,
+            ColumnType.M_C_GIS_LINESTR.value:ColumnType.O_PATH.value,
+            ColumnType.M_C_GIS_POLYGON.value:ColumnType.O_POLYGON.value,
+            ColumnType.M_S_GIS_MUL_POINT.value:ColumnType.O_BYTEA.value,
+            ColumnType.M_S_GIS_GEOCOL.value:ColumnType.O_BYTEA.value,
+            ColumnType.M_S_GIS_MUL_LINESTR.value:ColumnType.O_BYTEA.value,
+            ColumnType.M_S_GIS_MUL_POLYGON.value:ColumnType.O_BYTEA.value
             }
         self.type_dictionary.update(spatial_data.items())
         return postgis_check
@@ -1365,7 +1366,7 @@ class pg_engine(object):
         column_type = enm_dic["type"]
         self.logger.debug(enm_dic)
         if type_data:
-            if type_data[0] == 'E' and enm_dic["type"] == 'enum':
+            if type_data[0] == 'E' and enm_dic["type"] == ColumnType.O_ENUM.value:
                 self.logger.debug('There is already the enum %s, altering the type')
                 new_enums = [val.strip() for val in enm_dic["enum_list"] if val.strip() not in type_data[3]]
                 sql_add = []
@@ -1373,15 +1374,15 @@ class pg_engine(object):
                     sql_add =  """ALTER TYPE "%s"."%s" ADD VALUE '%s';""" % (type_data[2], enum_name, enumeration)
                     self.pgsql_conn.execute(sql_add)
 
-            elif type_data[0] != 'E' and enm_dic["type"] == 'enum':
+            elif type_data[0] != 'E' and enm_dic["type"] == ColumnType.O_ENUM.value:
                 self.logger.debug('The column will be altered in enum, creating the type')
                 pre_alter = """CREATE TYPE "%s"."%s" AS ENUM (%s);""" % (schema,enum_name, enm_dic["enum_elements"])
 
-            elif type_data[0] == 'E' and enm_dic["type"] != 'enum':
+            elif type_data[0] == 'E' and enm_dic["type"] != ColumnType.O_ENUM.value:
                 self.logger.debug('The column is no longer an enum, dropping the type')
                 post_alter = """DROP TYPE "%s"."%s"; """ % (schema,enum_name)
             column_type = """ "%s"."%s" """ % (schema, enum_name)
-        elif not type_data and enm_dic["type"] == 'enum':
+        elif not type_data and enm_dic["type"] == ColumnType.O_ENUM.value:
                 self.logger.debug('Creating a new enumeration type %s' % (enum_name))
                 pre_alter = """CREATE TYPE "%s"."%s" AS ENUM (%s);""" % (schema,enum_name, enm_dic["enum_elements"])
                 column_type = """ "%s"."%s" """ % (schema, enum_name)
@@ -1431,7 +1432,7 @@ class pg_engine(object):
                 enm_alter = self.build_enum_ddl(schema, enm_dic)
                 ddl_pre_alter.append(enm_alter["pre_alter"])
                 column_type= enm_alter["column_type"]
-                if 	column_type in ["character varying", "character", 'numeric', 'bit', 'float']:
+                if 	column_type in [ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_CHARACTER.value, ColumnType.O_NUM.value, ColumnType.O_BIT.value, ColumnType.O_FLOAT.value]:
                         column_type = column_type+"("+str(alter_dic["dimension"])+")"
                 if alter_dic["default"]:
                     default_value = "DEFAULT %s::%s" % (alter_dic["default"], column_type.strip())
@@ -1457,7 +1458,9 @@ class pg_engine(object):
                 ddl_post_alter.append(default_sql["create"])
                 column_type= enm_alter["column_type"]
 
-                if column_type=="character varying" or column_type=="character" or column_type=='numeric' or column_type=='bit' or column_type=='float':
+                if column_type==ColumnType.O_C_CHAR_VAR.value or column_type==ColumnType.O_C_CHARACTER.value or\
+                    column_type==ColumnType.O_NUM.value or column_type==ColumnType.O_BIT.value or\
+                    column_type==ColumnType.O_FLOAT.value:
                         column_type=column_type+"("+str(alter_dic["dimension"])+")"
                 sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s  USING "%s"::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
                 if old_column != new_column:
@@ -1482,7 +1485,9 @@ class pg_engine(object):
                 ddl_post_alter.append(enm_alter["post_alter"])
                 ddl_post_alter.append(default_sql["create"])
                 column_type= enm_alter["column_type"]
-                if column_type=="character varying" or column_type=="character" or column_type=='numeric' or column_type=='bit' or column_type=='float':
+                if column_type==ColumnType.O_C_CHAR_VAR.value or column_type==ColumnType.O_C_CHARACTER.value or\
+                    column_type==ColumnType.O_NUM.value or column_type==ColumnType.O_BIT.value or\
+                    column_type==ColumnType.O_FLOAT.value:
                         column_type=column_type+"("+str(alter_dic["dimension"])+")"
                 query = ' '.join(ddl_pre_alter)
                 query +=  """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s USING "%s"::%s ;""" % (schema, table_name, column_name, column_type, column_name, column_type)
@@ -2352,7 +2357,7 @@ class pg_engine(object):
                 column_type=composite_type
             if column["col_serial"]:
                 default_value = ''
-                if column_type == 'bigint':
+                if column_type == ColumnType.O_BINT.value:
                     column_type = 'bigserial'
                 else:
                     column_type = 'serial'
@@ -2410,12 +2415,12 @@ class pg_engine(object):
                 ddl_enum.append(sql_drop_enum)
                 ddl_enum.append(sql_create_enum)
                 column_type=enum_type
-            if column_type == "character varying" or column_type == "character":
+            if column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value:
                 column_type="%s (%s)" % (column_type, str(column["character_maximum_length"]))
-            if column_type == 'numeric':
+            if column_type == ColumnType.O_NUM.value:
                 column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
             if column["extra"] == "auto_increment":
-                column_type = "bigserial"
+                column_type = ColumnType.O_BIGSERIAL.value
 
             re_symbol = ''
             if column_type in self.character_type:
@@ -3780,7 +3785,7 @@ class pg_engine(object):
                         v_schema_referenced ='%s'
                     AND v_table_referenced ='%s'
                     )
-            ON DUPLICATE KEY UPDATE v_constraint_name = EXCLUDED.v_constraint_name,t_fkey_drop=EXCLUDED.t_fkey_drop,t_fkey_create=EXCLUDED.t_fkey_create,t_fkey_validate=EXCLUDED.t_fkey_validate;
+            ON DUPLICATE KEY UPDATE t_fkey_drop=EXCLUDED.t_fkey_drop,t_fkey_create=EXCLUDED.t_fkey_create,t_fkey_validate=EXCLUDED.t_fkey_validate;
             ;
         """
         self.pgsql_conn.execute(sql_index%(schema,table,))
@@ -3851,46 +3856,41 @@ class pg_engine(object):
             binlog_file = None
             binlog_pos = None
 
-
-        if len(table_pkey) >= 0:
-            sql_insert = """
-                INSERT INTO sch_chameleon.t_replica_tables
-                    (
-                        i_id_source,
-                        v_table_name,
-                        v_schema_name,
-                        v_table_pkey,
-                        t_binlog_name,
-                        i_binlog_position
-                    )
-                VALUES
-                    (
-                        $1,
-                        $2,
-                        $3,
-                        $4,
-                        $5,
-                        $6
-                    )
-                ON DUPLICATE KEY UPDATE
-                            v_table_pkey=EXCLUDED.v_table_pkey,
-                            t_binlog_name = EXCLUDED.t_binlog_name,
-                            i_binlog_position = EXCLUDED.i_binlog_position,
-                            b_replica_enabled = True
-                ;
-                            """
-            stmt = self.pgsql_conn.prepare(sql_insert)
-            stmt(
-                self.i_id_source,
-                table,
-                schema,
-                table_pkey,
-                binlog_file,
-                binlog_pos
+        sql_insert = """
+            INSERT INTO sch_chameleon.t_replica_tables
+                (
+                    i_id_source,
+                    v_table_name,
+                    v_schema_name,
+                    v_table_pkey,
+                    t_binlog_name,
+                    i_binlog_position
                 )
-        else:
-            self.logger.warning("Missing primary key. The table %s.%s will not be replicated." % (schema, table,))
-            self.unregister_table(schema,  table)
+            VALUES
+                (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    $6
+                )
+            ON DUPLICATE KEY UPDATE
+                        v_table_pkey=EXCLUDED.v_table_pkey,
+                        t_binlog_name = EXCLUDED.t_binlog_name,
+                        i_binlog_position = EXCLUDED.i_binlog_position,
+                        b_replica_enabled = True
+            ;
+        """
+        stmt = self.pgsql_conn.prepare(sql_insert)
+        stmt(
+            self.i_id_source,
+            table,
+            schema,
+            table_pkey,
+            binlog_file,
+            binlog_pos
+            )
 
 
     def copy_data(self, csv_file, schema, table, column_list):

@@ -1,4 +1,113 @@
 import re
+from enum import Enum
+
+class ColumnType(Enum):
+    """
+        Some speical column type, pay attention to the enum prefix
+    """
+    # mysql data type
+    M_HEX_BLOB = 'blob'
+    M_HEX_T_BLOB = 'tinyblob'
+    M_HEX_M_BLOB = 'mediumblob'
+    M_HEX_L_BLOB = 'longblob'
+    M_S_GIS_MUL_POINT = 'multipoint'
+    M_S_GIS_MUL_LINESTR = 'multilinestring'
+    M_S_GIS_MUL_POLYGON = 'multipolygon'
+    M_S_GIS_GEOCOL = 'geometrycollection'
+    M_C_GIS_POINT = 'point'
+    M_C_GIS_GEO = 'geometry'
+    M_C_GIS_LINESTR = 'linestring'
+    M_C_GIS_POLYGON = 'polygon'
+    M_JSON = 'json'
+    M_BINARY = 'binary'
+    M_VARBINARY = 'varbinary'
+    M_BIT = 'bit'
+    M_DATATIME = 'datetime'
+    M_TIMESTAMP = 'timestamp'
+    M_DATE = 'date'
+    M_INTEGER = 'integer'
+    M_MINT = 'mediumint'
+    M_TINT = 'tinyint'
+    M_SINT = 'smallint'
+    M_INT = 'int'
+    M_BINT = 'bigint'
+    M_VARCHAR = 'varchar'
+    M_CHAR_VAR = 'character varying'
+    M_TEXT = 'text'
+    M_CHAR = 'char'
+    M_TIME = 'time'
+    M_TTEXT = 'tinytext'
+    M_MTEXT = 'mediumtext'
+    M_LTEXT = 'longtext'
+    M_DECIMAL = 'decimal'
+    M_DEC = 'dec'
+    M_NUM = 'numeric'
+    M_DOUBLE = 'double'
+    M_DOUBLE_P = 'double precision'
+    M_FLOAT = 'float'
+    M_YEAR = 'year'
+    M_ENUM = 'enum'
+    M_SET = 'set'
+    M_BOOL = 'bool'
+    M_BOOLEAN = 'boolean'
+    #opengauss data type
+    O_INTEGER = 'integer'
+    O_BINT = 'bigint'
+    O_TIMESTAP = 'timestamp'
+    O_TIMESTAP_NO_TZ = 'timestamp without time zone'
+    O_DATE = 'date'
+    O_TIME = 'time'
+    O_TIME_NO_TZ = 'time without time zone'
+    O_BLOB = 'blob'
+    O_BYTEA = 'bytea'
+    O_BIT = 'bit'
+    O_NUM = 'numeric'
+    O_FLOAT = 'float'
+    O_BIGSERIAL = 'bigserial'
+    O_DOUBLE_P = 'double precision'
+    O_DEC = 'decimal'
+    O_ENUM = 'enum'
+    O_JSON = 'json'
+    O_BOOLEAN = 'boolean'
+    O_POINT = 'point'
+    O_PATH = 'path'
+    O_POLYGON = 'polygon'
+    O_GEO = 'geometry'
+    O_C_BPCHAR = 'bpchar'
+    O_C_NCHAR = 'nchar'
+    O_C_VARCHAR = 'varchar'
+    O_C_VARCHAR2 = 'varchar2'
+    O_C_NVCHAR2 = 'nvarchar2'
+    O_C_CLOB = 'clob'
+    O_C_CHAR = 'char'
+    O_C_CHARACTER = 'character'
+    O_C_CHAR_VAR = 'character varying'
+    O_C_TEXT = 'text'
+
+    def __name_start_with(s):
+        results = []
+        for k, v in ColumnType.__members__.items():
+            if k.startswith(s):
+                results.append(v.value)
+        return results
+
+    def get_mysql_hexify_always_type():
+        return ColumnType.__name_start_with('M_HEX_')
+
+    def get_mysql_postgis_spatial_type():
+        return ColumnType.__name_start_with('M_S_GIS_')
+
+    def get_mysql_common_spatial_type():
+        return ColumnType.__name_start_with('M_C_GIS_')
+
+    def get_opengauss_char_type():
+        return ColumnType.__name_start_with('O_C_')
+
+    def get_opengauss_hash_part_key_type():
+        return [ColumnType.O_INTEGER.value, ColumnType.O_BINT.value, ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_TEXT.value,
+            ColumnType.O_C_CHAR.value, ColumnType.O_NUM.value, ColumnType.O_DATE.value, ColumnType.O_TIME_NO_TZ.value,
+            ColumnType.O_TIMESTAP_NO_TZ.value, ColumnType.O_TIME.value, ColumnType.O_TIMESTAP.value, ColumnType.O_C_BPCHAR.value,
+            ColumnType.O_C_NCHAR.value, ColumnType.O_DEC.value]
 
 class sql_token(object):
     """

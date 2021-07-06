@@ -57,7 +57,8 @@ setup(
         'PyYAML>=5.1.2',
         'tabulate>=0.8.1',
         'daemonize>=2.4.7',
-        'rollbar>=0.13.17'
+        'rollbar>=0.13.17',
+        'geomet>=0.3.0'
     ],
     include_package_data = True,
     package_data=package_data,
