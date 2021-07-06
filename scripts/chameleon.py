@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from pkg_resources import get_distribution
-__version__ = get_distribution('pg_chameleon')
+__version__ = get_distribution('chameleon')
 import argparse
 from pg_chameleon import replica_engine
 
