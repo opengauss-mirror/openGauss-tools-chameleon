@@ -9,9 +9,9 @@ def readme():
 package_data = {'pg_chameleon': ['configuration/config-example.yml','sql/upgrade/*.sql','sql/drop_schema.sql','sql/create_schema.sql', 'LICENSE.txt']}
 
 setup(
-    name="pg_chameleon",
-    version="2.0.16",
-    description="MySQL to PostgreSQL replica and migration",
+    name="chameleon",
+    version="1.0.0",
+    description="MySQL to openGauss replica and migration",
     long_description=readme(),
     author = "Federico Campoli",
     author_email = "the4thdoctor.gallifrey@gmail.com",
@@ -64,6 +64,6 @@ setup(
     package_data=package_data,
     packages=setuptools.find_packages(),
     python_requires='>=3.5',
-    keywords='postgresql mysql replica migration database',
+    keywords='openGauss mysql replica migration database',
 
 )
