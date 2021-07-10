@@ -698,7 +698,7 @@ $BODY$
                                             AND table_name=dec.v_table_name
                                             AND column_name=dec.t_column
                                         )
-                                        IN (''point'', ''polygon'', ''path'')
+                                        IN (''point'', ''polygon'')
                                     THEN
                                         ''~=''
                                     ELSE
@@ -718,7 +718,7 @@ $BODY$
                                             AND table_name=dec.v_table_name
                                             AND column_name=dec.t_column
                                         )
-                                        IN (''point'', ''polygon'', ''path'')
+                                        IN (''point'', ''polygon'')
                                     THEN
                                         ''~=''
                                     ELSE

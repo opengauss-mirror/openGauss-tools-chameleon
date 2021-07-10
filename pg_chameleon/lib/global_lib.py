@@ -869,7 +869,7 @@ class replica_engine(object):
             "info": logging.INFO,
             "warning": logging.WARNING,
             "error": logging.ERROR,
-            "critical": logging.critical
+            "critical": logging.CRITICAL
         }
         config_name = self.args.config
         source_name = self.args.source

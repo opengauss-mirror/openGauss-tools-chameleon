@@ -46,7 +46,7 @@ class mysql_source(object):
         return self.__decode_dic_keys(origin_value)
 
     def __decode_postgis_spatial_value(self, origin_value):
-        return self.__get_text_spatial(origin_value)
+        return self.__get_text_spatial(origin_value).upper()
 
     def __decode_binary_value(self, origin_value):
         if not isinstance(origin_value, bytes):
@@ -895,6 +895,9 @@ class mysql_source(object):
         if self.postgis_present:
             self.hexify = self.hexify_always
             self.postgis_spatial_datatypes = self.postgis_spatial_datatypes + self.common_spatial_datatypes
+            for v in self.common_spatial_datatypes:
+                # update common_spatial_datatypes value in map, decode them as geometry text
+                self.decode_map[v] = self.__decode_postgis_spatial_value
         else:
             self.hexify = self.hexify_always + self.postgis_spatial_datatypes
             for v in self.postgis_spatial_datatypes:
