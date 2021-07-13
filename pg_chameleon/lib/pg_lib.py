@@ -1179,7 +1179,7 @@ class pg_engine(object):
             replay_max_rows = self.source_config["replay_max_rows"]
             exit_on_error = True if self.source_config["on_error_replay"]=='exit' else False
             while continue_loop:
-                sql_replay = """SELECT * FROM sch_chameleon.fn_replay_mysql(%s,%s,%s);""";
+                sql_replay = """SELECT * FROM sch_chameleon.fn_replay_mysql(%s,%s,%s);"""
                 stmt = self.pgsql_conn.prepare(sql_replay % (replay_max_rows, self.i_id_source, exit_on_error))
                 replay_status = stmt.first()
                 if replay_status[0]:
