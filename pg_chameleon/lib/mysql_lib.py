@@ -18,6 +18,11 @@ POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
 LINESTR_PREFIX_LEN = len('LINESTRING ')
 WKB_PREFIX_LEN = 4
+BINARY_BASE = 2
+# 6 means the significant figures, g is python format
+DEFAULT_FLOAT_FORMAT_STR = '{:6g}'
+# 18 means the significant figures, 16 means the precision, e is python format
+DEFAULT_DOUBLE_FORMAT_STR = '{:18.16e}'
 
 class mysql_source(object):
     def __init__(self):
@@ -39,30 +44,53 @@ class mysql_source(object):
         self.decode_map = {}
         self.__init_decode_map()
 
-    def __decode_hexify_value(self, origin_value):
+    @classmethod
+    def __decode_hexify_value(cls, origin_value, numeric_scale):
         return binascii.hexlify(origin_value).decode().upper()
 
-    def __decode_json_value(self, origin_value):
-        return self.__decode_dic_keys(origin_value)
+    @classmethod
+    def __decode_json_value(cls, origin_value, numeric_scale):
+        return cls.__decode_dic_keys(origin_value)
 
-    def __decode_postgis_spatial_value(self, origin_value):
-        return self.__get_text_spatial(origin_value).upper()
+    @classmethod
+    def __decode_postgis_spatial_value(cls, origin_value, numeric_scale):
+        return cls.__get_text_spatial(origin_value).upper()
 
-    def __decode_binary_value(self, origin_value):
+    @classmethod
+    def __decode_binary_value(cls, origin_value, numeric_scale):
         if not isinstance(origin_value, bytes):
             return origin_value
         return origin_value.decode()
 
-    def __decode_point_value(self, origin_value):
+    @classmethod
+    def __decode_point_value(cls, origin_value, numeric_scale):
         return wkt.dumps(wkb.loads(origin_value[WKB_PREFIX_LEN:]))[POINT_PREFIX_LEN:].replace(' ', ',')
 
-    def __decode_polygon_value(self, origin_value):
+    @classmethod
+    def __decode_polygon_value(cls, origin_value, numeric_scale):
         return wkt.dumps(wkb.loads(origin_value[WKB_PREFIX_LEN:]))[POLYGON_PREFIX_LEN:].replace(', ', '),(').replace(' ', ',')
 
-    def __decode_linestr_value(self, origin_value):
+    @classmethod
+    def __decode_linestr_value(cls, origin_value, numeric_scale):
         return '[' + wkt.dumps(wkb.loads(origin_value[WKB_PREFIX_LEN:]))[LINESTR_PREFIX_LEN:].replace(', ', '),(').replace(' ', ',') + ']'
 
-    def __decode_default_value(self, origin_value):
+    @classmethod
+    def __decode_float_value(cls, float_type):
+        def __real_decode(origin_value, numeric_scale):
+            if not numeric_scale or numeric_scale == 'NULL':
+                format_str = DEFAULT_FLOAT_FORMAT_STR if (float_type == ColumnType.M_FLOAT.value)\
+                    else DEFAULT_DOUBLE_FORMAT_STR
+            else:
+                format_str = '{:.' + str(numeric_scale) +'f}'
+            return float(format_str.format(origin_value))
+        return __real_decode
+
+    @classmethod
+    def __decode_bit_value(cls, origin_value, numeric_scale):
+        return int(origin_value, BINARY_BASE)
+
+    @classmethod
+    def __decode_default_value(cls, origin_value, numeric_scale):
         return origin_value
 
     def __init_decode_map(self):
@@ -73,7 +101,11 @@ class mysql_source(object):
             ColumnType.M_C_GIS_POLYGON.value: self.__decode_polygon_value,
             ColumnType.M_JSON.value: self.__decode_json_value,
             ColumnType.M_BINARY.value: self.__decode_binary_value,
-            ColumnType.M_VARBINARY.value: self.__decode_binary_value
+            ColumnType.M_VARBINARY.value: self.__decode_binary_value,
+            ColumnType.M_FLOAT.value: self.__decode_float_value(ColumnType.M_FLOAT.value),
+            ColumnType.M_DOUBLE.value: self.__decode_float_value(ColumnType.M_DOUBLE.value),
+            ColumnType.M_DOUBLE_P.value: self.__decode_float_value(ColumnType.M_DOUBLE.value),
+            ColumnType.M_BIT.value: self.__decode_bit_value
         }
         for v in self.hexify_always:
             self.decode_map[v] = self.__decode_hexify_value
@@ -1075,7 +1107,8 @@ class mysql_source(object):
             self.logger.critical(notifier_message)
             raise
 
-    def __get_text_spatial(self,raw_data):
+    @classmethod
+    def __get_text_spatial(cls, raw_data):
         """
             The method returns the text representation converted in postgresql format
             for the raw data point using the ST_AsText function and the regular expressions
@@ -1115,10 +1148,12 @@ class mysql_source(object):
 
             for table in table_list:
                 column_type = {}
+                numeric_scale = {}
                 sql_columns = """
                     SELECT
                         column_name as column_name,
-                        data_type as data_type
+                        data_type as data_type,
+                        numeric_scale
                     FROM
                         information_schema.COLUMNS
                     WHERE
@@ -1133,9 +1168,11 @@ class mysql_source(object):
                 column_data = self.cursor_buffered.fetchall()
                 for column in column_data:
                     column_type[column["column_name"]] = column["data_type"]
+                    numeric_scale[column["column_name"]] = column["numeric_scale"]
                 table_dict = {}
                 table_dict["table_charset"] = table_charset
                 table_dict["column_type"] = column_type
+                table_dict["numeric_scale"] = numeric_scale
                 table_map[table["table_name"]] = table_dict
             table_type_map[schema] = table_map
             table_map = {}
@@ -1216,7 +1253,8 @@ class mysql_source(object):
             new_set = ",\n".join(gtid_pack)
         return new_set
 
-    def __decode_dic_keys(self, dic_encoded):
+    @classmethod
+    def __decode_dic_keys(cls, dic_encoded):
         """
         Private method to recursively decode the dictionary keys  and values into strings.
         This is used fixing the the json data types in the __read_replica_stream method because
@@ -1230,7 +1268,7 @@ class mysql_source(object):
         lst_decode = []
         if isinstance(dic_encoded, list):
             for item in dic_encoded:
-                lst_decode.append(self.__decode_dic_keys(item))
+                lst_decode.append(cls.__decode_dic_keys(item))
             return lst_decode
         elif not isinstance(dic_encoded, dict):
             try:
@@ -1240,9 +1278,9 @@ class mysql_source(object):
         else:
             for key, value in dic_encoded.items():
                 try:
-                    dic_decoded[key.decode("UTF-8")] = self.__decode_dic_keys(value)
+                    dic_decoded[key.decode("UTF-8")] = cls.__decode_dic_keys(value)
                 except AttributeError:
-                    dic_decoded[key] = self.__decode_dic_keys(value)
+                    dic_decoded[key] = cls.__decode_dic_keys(value)
         return dic_decoded
 
     def __decode_event_value(self, table_name, column_map, column_name, origin_value):
@@ -1250,7 +1288,7 @@ class mysql_source(object):
             Decode event value based on column type
         """
         try:
-            column_type=column_map[column_name]
+            column_type=column_map["column_type"][column_name]
         except KeyError:
             self.logger.debug("Detected inconsistent structure for the table  %s. The replay may fail. " % (table_name))
             column_type = 'text'
@@ -1261,7 +1299,7 @@ class mysql_source(object):
             else:
                 return origin_value
 
-        return self.decode_map.get(column_type, self.__decode_default_value)(origin_value)
+        return self.decode_map.get(column_type, self.__decode_default_value)(origin_value, column_map["numeric_scale"][column_name])
 
     def __read_replica_stream(self, batch_data):
         """
@@ -1455,7 +1493,7 @@ class mysql_source(object):
                                 inc_tables = self.pg_engine.get_inconsistent_tables()
                             else:
                                 add_row = False
-                        column_map = table_type_map[schema_row][table_name]["column_type"]
+                        column_map = table_type_map[schema_row][table_name]
                         table_charset = table_type_map[schema_row][table_name]["table_charset"]
 
                         global_data={
