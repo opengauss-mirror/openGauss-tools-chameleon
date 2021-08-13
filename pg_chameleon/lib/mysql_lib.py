@@ -1,6 +1,9 @@
-import time
+import multiprocessing
 import sys
 import io
+import gc
+import time
+
 import pymysql
 import codecs
 import binascii
@@ -12,17 +15,38 @@ from pg_chameleon import sql_token, ColumnType
 from os import remove
 from geomet import wkb
 from geomet import wkt
-import re
+import MySQLdb
+import MySQLdb.cursors
+
+from pg_chameleon.lib.pg_lib import pg_engine
+from pg_chameleon.lib.task_lib import copy_data_task, create_index_task, read_data_task
 
 POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
 LINESTR_PREFIX_LEN = len('LINESTRING ')
 WKB_PREFIX_LEN = 4
+
+# we set the default max size of csv file is 2M
+DEFAULT_MAX_SIZE_OF_CSV: int = 2 * 1024 * 1024
+MINIUM_QUEUE_SIZE: int = 5
+
 BINARY_BASE = 2
 # 6 means the significant figures, g is python format
 DEFAULT_FLOAT_FORMAT_STR = '{:6g}'
 # 18 means the significant figures, 16 means the precision, e is python format
 DEFAULT_DOUBLE_FORMAT_STR = '{:18.16e}'
+
+class reader_cursor_manager(object):
+    def __init__(self, conn_buffered, conn_unbuffered):
+        self.cursor_buffered = conn_buffered.cursor()
+        self.cursor_unbuffered = conn_unbuffered.cursor()
+
+    def __del__(self):
+        self.close()
+
+    def close(self):
+        self.cursor_buffered.close()
+        self.cursor_unbuffered.close()
 
 class mysql_source(object):
     def __init__(self):
@@ -42,6 +66,9 @@ class mysql_source(object):
         self.gtid_mode = False
         self.gtid_enable = False
         self.decode_map = {}
+        self.write_task_queue = None
+        self.read_task_queue = None
+        self.indices = multiprocessing.Manager().dict()
         self.__init_decode_map()
 
     @classmethod
@@ -128,7 +155,6 @@ class mysql_source(object):
             log_bin - ON if the binary log is enabled
             binlog_format - must be ROW , otherwise the replica won't get the data
             binlog_row_image - must be FULL, otherwise the row image will be incomplete
-
         """
         if self.gtid_enable:
             sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'gtid_mode';"""
@@ -183,6 +209,32 @@ class mysql_source(object):
             self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL (only for MySQL 5.6+) ")
             sys.exit()
 
+    def get_connect(self, is_buffered=True):
+        db_conn = self.source_config["db_conn"]
+        db_conn = {key: str(value) for key, value in db_conn.items()}
+        db_conn["port"] = int(db_conn["port"])
+        db_conn["connect_timeout"] = int(db_conn["connect_timeout"])
+        conn = MySQLdb.connect(
+            host=db_conn["host"],
+            user=db_conn["user"],
+            port=db_conn["port"],
+            password=db_conn["password"],
+            charset=db_conn["charset"],
+            connect_timeout=db_conn["connect_timeout"],
+            cursorclass=MySQLdb.cursors.DictCursor if is_buffered else MySQLdb.cursors.SSCursor
+        )
+        return conn
+
+    def get_new_engine(self):
+        new_engine = pg_engine()
+        new_engine.dest_conn = self.pg_engine.dest_conn
+        new_engine.logger = self.pg_engine.logger
+        new_engine.source = self.pg_engine.source
+        new_engine.full = self.pg_engine.full
+        new_engine.type_override = self.pg_engine.type_override
+        new_engine.sources = self.pg_engine.sources
+        new_engine.notifier = self.pg_engine.notifier
+        return new_engine
 
     def connect_db_buffered(self):
         """
@@ -205,7 +257,6 @@ class mysql_source(object):
         )
         self.charset = db_conn["charset"]
         self.cursor_buffered = self.conn_buffered.cursor()
-        self.cursor_buffered_fallback = self.conn_buffered.cursor()
 
     def disconnect_db_buffered(self):
         """
@@ -237,7 +288,6 @@ class mysql_source(object):
         )
         self.charset = db_conn["charset"]
         self.cursor_unbuffered = self.conn_unbuffered.cursor()
-
 
     def disconnect_db_unbuffered(self):
         """
@@ -271,8 +321,6 @@ class mysql_source(object):
                 self.skip_events["delete"] = skip_events["delete"]
             else:
                 self.skip_events["delete"] = []
-
-
 
     def __build_table_exceptions(self):
         """
@@ -324,7 +372,6 @@ class mysql_source(object):
                     except:
                         pass
                 self.skip_tables[table_list[0]]  = list_exclude
-
 
     def get_table_list(self):
         """
@@ -530,19 +577,19 @@ class mysql_source(object):
                 partition_metadata = self.get_partition_metadata(table, schema)
                 self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
 
-
-    def generate_select_statements(self, schema, table):
+    def generate_select_statements(self, schema, table, cursor=None):
         """
             The generates the csv output and the statements output for the given schema and table.
             The method assumes there is a buffered database connection active.
 
             :param schema: the origin's schema
             :param table: the table name
+            :param cursor: the cursor
             :return: the select list statements for the copy to csv and  the fallback to inserts.
             :rtype: dictionary
         """
         select_columns = {}
-        sql_select="""
+        sql_select = """
             SELECT
                 CASE
                     WHEN
@@ -592,8 +639,13 @@ class mysql_source(object):
                 ordinal_position
             ;
         """
-        self.cursor_buffered.execute(sql_select, (schema, table))
-        select_data = self.cursor_buffered.fetchall()
+        if cursor is None:
+            self.cursor_buffered.execute(sql_select, (schema, table))
+            select_data = self.cursor_buffered.fetchall()
+        else:
+            cursor.execute(sql_select, (schema, table))
+            select_data = cursor.fetchall()
+
         select_csv = ["COALESCE(REPLACE(%s, '\"', '\"\"'),'NULL') " % statement["select_csv"] for statement in select_data]
         select_stat = [statement["select_csv"] for statement in select_data]
         column_list = ['"%s"' % statement["column_name"] for statement in select_data]
@@ -602,23 +654,40 @@ class mysql_source(object):
         select_columns["column_list"]  = ','.join(column_list)
         return select_columns
 
+    # Use an inner class to represent transactions
+    class reader_xact:
+        def __init__(self, outer_obj, cursor, table_txs):
+            self.outer_obj = outer_obj
+            self.cursor = cursor
+            self.table_txs = table_txs
 
-    def begin_tx(self):
+        def __enter__(self):
+            if self.table_txs:
+                self.outer_obj.begin_tx(self.cursor)
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if self.table_txs:
+                self.outer_obj.end_tx(self.cursor)
+
+        def __del__(self):
+            self.outer_obj.logger.debug("delete the xact")
+
+    def begin_tx(self, cursor):
         """
             The method sets the isolation level to repeatable read and begins a transaction
         """
         self.logger.debug("set isolation level")
-        self.cursor_unbuffered.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         self.logger.debug("beginning transaction")
-        self.cursor_unbuffered.execute("BEGIN")
+        cursor.execute("BEGIN")
 
-    def end_tx(self):
+    def end_tx(self, cursor):
         """
             The method ends the current transaction by rollback
             - We should never have changed source anyway
         """
         self.logger.debug("rolling back")
-        self.cursor_unbuffered.execute("ROLLBACK")
+        cursor.execute("ROLLBACK")
 
     def make_tx_snapshot(self, schema, table):
         """
@@ -628,29 +697,29 @@ class mysql_source(object):
         self.logger.debug("reading and discarding 1 row from `%s`.`%s`" % (schema, table))
         self.cursor_unbuffered.execute("SELECT * FROM `%s`.`%s` LIMIT 1" % (schema, table))
 
-    def lock_table(self, schema, table):
+    def lock_table(self, schema, table, cursor):
         """
             The method flushes the given table with read lock.
             The method assumes there is a database connection active.
 
             :param schema: the origin's schema
             :param table: the table name
-
+            :param cursor: the cursor
         """
-        self.logger.debug("locking the table `%s`.`%s`" % (schema, table) )
+        self.logger.debug("locking the table `%s`.`%s`" % (schema, table))
         sql_lock = "FLUSH TABLES `%s`.`%s` WITH READ LOCK;" %(schema, table)
-        self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table) )
-        self.cursor_buffered.execute(sql_lock)
+        self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table))
+        cursor.execute(sql_lock)
 
-    def unlock_tables(self):
+    def unlock_tables(self, cursor):
         """
             The method unlocks all tables
         """
         self.logger.debug("unlocking the tables")
         sql_unlock = "UNLOCK TABLES;"
-        self.cursor_buffered.execute(sql_unlock)
+        cursor.execute(sql_unlock)
 
-    def get_master_coordinates(self):
+    def get_master_coordinates(self, cursor_buffered=None):
         """
             The method gets the master's coordinates and return them stored in a dictionary.
             The method assumes there is a database connection active.
@@ -659,24 +728,82 @@ class mysql_source(object):
             :rtype: dictionary
         """
         sql_master = "SHOW MASTER STATUS;"
-        self.cursor_buffered.execute(sql_master)
-        master_status = self.cursor_buffered.fetchall()
+        if cursor_buffered is None:
+            self.cursor_buffered.execute(sql_master)
+            master_status = self.cursor_buffered.fetchall()
+        else:
+            cursor_buffered.execute(sql_master)
+            master_status = cursor_buffered.fetchall()
         return master_status
 
-    def copy_data(self, schema, table):
+    def data_reader(self):
+        with self.get_connect(True) as conn_buffered, self.get_connect(False) as conn_unbuffered:
+            self.execute_task(queue=self.read_task_queue, conn_unbuffered=conn_unbuffered, conn_buffered=conn_buffered)
+
+    def data_writer(self):
+        writer_engine = self.get_new_engine()
+        writer_engine.connect_db()
+        writer_engine.set_source_status("initialising")
+        self.execute_task(queue=self.write_task_queue, engine=writer_engine)
+        writer_engine.disconnect_db()
+
+    def execute_task(self, queue, engine=None, conn_buffered=None, conn_unbuffered=None):
+        while True:
+            task = queue.get(block=True)
+            if task is None:
+                queue.put(task, block=True)
+                break
+            if engine is not None:
+                # this is the data_writer process
+                if isinstance(task, copy_data_task):
+                    self.copy_table_data(task, engine)
+                elif isinstance(task, create_index_task):
+                    self.create_index_process(task, engine)
+                else:
+                    self.logger.error("unknown write task type")
+            elif conn_unbuffered is not None and conn_buffered is not None:
+                # this is the data_reader process
+                if isinstance(task, read_data_task):
+                    self.read_data_process(conn_buffered, conn_unbuffered, task)
+                else:
+                    self.logger.error("unknown read task type")
+            else:
+                self.logger.error("this is an error process")
+
+    def read_data_process(self, conn_buffered, conn_unbuffered, task):
+        cursor_manager = reader_cursor_manager(conn_buffered, conn_unbuffered)
+        destination_schema = task.destination_schema
+        loading_schema = task.loading_schema
+        schema = task.schema
+        table = task.table
+
+        self.logger.info("Copying the source table %s into %s.%s" % (table, loading_schema, table))
+        try:
+            master_status = self.read_data_from_table(schema, table, cursor_manager)
+            if schema + "." + table in self.indices:
+                indices = self.indices[schema + "." + table]
+            else:
+                indices = []
+            index_write_task = create_index_task(table, schema, indices, destination_schema, master_status)
+            self.write_task_queue.put(index_write_task, block=True)
+        except:
+            self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
+            raise
+        finally:
+            cursor_manager.close()
+
+    def read_data_from_table(self, schema, table, cursor_manager):
         """
             The method copy the data between the origin and destination table.
             The method locks the table read only mode and  gets the log coordinates which are returned to the calling method.
 
             :param schema: the origin's schema
             :param table: the table name
+            :param cursor_buffered: the cursor which store the data in client
+            :param cursor_unbuffered: the cursor which store the data in server
             :return: the log coordinates for the given table
             :rtype: dictionary
         """
-        slice_insert = []
-        loading_schema = self.schema_loading[schema]["loading"]
-        self.connect_db_buffered()
-
         self.logger.debug("estimating rows in %s.%s" % (schema , table))
         sql_rows = """
             SELECT
@@ -699,9 +826,11 @@ class mysql_source(object):
                 AND TABLES.engine = ENGINES.engine
             ;
         """
-        sql_rows = sql_rows.format(self.copy_max_memory)
-        self.cursor_buffered.execute(sql_rows, (schema, table))
-        count_rows = self.cursor_buffered.fetchone()
+        cursor_buffered = cursor_manager.cursor_buffered
+        cursor_unbuffered = cursor_manager.cursor_unbuffered
+        sql_rows = sql_rows.format(DEFAULT_MAX_SIZE_OF_CSV)
+        cursor_buffered.execute(sql_rows, (schema, table))
+        count_rows = cursor_buffered.fetchone()
         total_rows = count_rows["table_rows"]
         copy_limit = int(count_rows["copy_limit"])
         table_txs = count_rows["transactions"] == "YES"
@@ -710,51 +839,95 @@ class mysql_source(object):
         num_slices = int(total_rows//copy_limit)
         range_slices = list(range(num_slices+1))
         total_slices = len(range_slices)
-        slice = range_slices[0]
+
         self.logger.debug("The table %s.%s will be copied in %s  estimated slice(s) of %s rows, using a transaction %s"  % (schema, table, total_slices, copy_limit, table_txs))
-        out_file = '%s/%s_%s.csv' % (self.out_dir, schema, table )
-        self.lock_table(schema, table)
-        master_status = self.get_master_coordinates()
 
-        select_columns = self.generate_select_statements(schema, table)
-        csv_data = ""
+        # lock the table and flush the cache
+        self.lock_table(schema, table, cursor_buffered)
+
+        # get master status
+        master_status = self.get_master_coordinates(cursor_buffered)
+
+        select_columns = self.generate_select_statements(schema, table, cursor_buffered)
         sql_csv = "SELECT %s as data FROM `%s`.`%s`;" % (select_columns["select_csv"], schema, table)
+        self.logger.debug("Executing query for table %s.%s" % (schema, table))
+
+        with self.reader_xact(self, cursor_unbuffered, table_txs):
+            cursor_unbuffered.execute(sql_csv)
+            # unlock tables
+            if table_txs:
+                self.unlock_tables(cursor_buffered)
+            slice = 0
+            while True:
+                out_file = '%s/%s_%s_slice%d.csv' % (self.out_dir, schema, table, slice + 1)
+                csv_results = cursor_unbuffered.fetchmany(copy_limit)
+                if len(csv_results) == 0:
+                    break
+                csv_data = "\n".join(d[0] for d in csv_results)
+                if self.copy_mode == 'file':
+                    csv_file = codecs.open(out_file, 'wb', self.charset)
+                    csv_file.write(csv_data)
+                    csv_file.close()
+                    task = copy_data_task(out_file, count_rows, table, schema, select_columns, slice + 1)
+                else:
+                    if self.copy_mode != 'direct':
+                        self.logger.warning("unknown copy mode, use direct instead")
+                    csv_file = io.BytesIO()
+                    csv_file.write(csv_data.encode())
+                    csv_file.seek(0)
+                    task = copy_data_task(csv_file, count_rows, table, schema, select_columns, slice + 1)
+                self.write_task_queue.put(task, block=True)
+                slice += 1
+
+        return master_status
+
+    def copy_table_data(self, task, writer_engine):
+        slice_insert = []
+        if self.copy_mode == "direct":
+            csv_file = task.csv_file
+        elif self.copy_mode == "file":
+            csv_file = open(task.csv_file, 'rb')
+        else:
+            self.logger.warning("unknown copy mode, use \'direct\' mode")
+            csv_file = task.csv_file
+        if csv_file is None:
+            self.logger.warning("this is an empty csv file, you should check your batch for errors")
+            return
+        count_rows = task.count_rows
+        schema = task.schema
+        table = task.table
+        select_columns = task.select_columns
+        total_rows = count_rows["table_rows"]
+        copy_limit = int(count_rows["copy_limit"])
+        loading_schema = self.schema_loading[schema]["loading"]
         column_list = select_columns["column_list"]
-        self.logger.debug("Executing query for table %s.%s"  % (schema, table ))
-        self.connect_db_unbuffered()
-        if table_txs:
-            self.begin_tx()
-        self.cursor_unbuffered.execute(sql_csv)
-        if table_txs:
-            self.unlock_tables()
-        while True:
-            csv_results = self.cursor_unbuffered.fetchmany(copy_limit)
-            if len(csv_results) == 0:
-                break
-            csv_data="\n".join(d[0] for d in csv_results )
-
-            if self.copy_mode == 'direct':
-                csv_file = io.BytesIO()
-                csv_file.write(csv_data.encode())
-                csv_file.seek(0)
-
-            if self.copy_mode == 'file':
-                csv_file = codecs.open(out_file, 'wb', self.charset)
-                csv_file.write(csv_data)
-                csv_file.close()
-                csv_file = open(out_file, 'rb')
-            try:
-                self.pg_engine.copy_data(csv_file, loading_schema, table, column_list)
-            except:
-                self.logger.info("Table %s.%s error in PostgreSQL copy, saving slice number for the fallback to insert statements " %  (loading_schema, table ))
-                slice_insert.append(slice)
-
-            self.print_progress(slice+1,total_slices, schema, table)
-            slice+=1
-
+        if copy_limit == 0:
+            copy_limit = 1000000
+        num_slices = int(total_rows // copy_limit)
+        range_slices = list(range(num_slices + 1))
+        total_slices = len(range_slices)
+        slice = task.slice
+        try:
+            writer_engine.copy_data(csv_file, loading_schema, table, column_list)
+        except:
+            self.logger.info(
+                "Table %s.%s error in PostgreSQL copy, saving slice number for the fallback to insert statements" % (
+                loading_schema, table))
+            slice_insert.append(slice)
+        finally:
             csv_file.close()
-        if len(slice_insert)>0:
-            ins_arg={}
+            if self.copy_mode == "file":
+                try:
+                    remove(task.csv_file)
+                except:
+                    pass
+            del csv_file
+            del task
+            gc.collect()
+        self.print_progress(slice + 1, total_slices, schema, table)
+        slice += 1
+        if len(slice_insert) > 0:
+            ins_arg = {}
             ins_arg["slice_insert"] = slice_insert
             ins_arg["table"] = table
             ins_arg["schema"] = schema
@@ -763,21 +936,6 @@ class mysql_source(object):
             ins_arg["copy_limit"] = copy_limit
             self.insert_table_data(ins_arg)
 
-
-        if table_txs:
-            self.end_tx()
-        else:
-            self.unlock_tables()
-        self.cursor_unbuffered.close()
-        self.disconnect_db_unbuffered()
-        self.disconnect_db_buffered()
-
-        try:
-            remove(out_file)
-        except:
-            pass
-        return master_status
-
     def insert_table_data(self, ins_arg):
         """
             This method is a fallback procedure whether copy_table_data fails.
@@ -785,7 +943,6 @@ class mysql_source(object):
             statements and the slices's start and stop.
             The process is performed in memory and can take a very long time to complete.
 
-            :param pg_engine: the postgresql engine
             :param ins_arg: the list with the insert arguments (slice_insert, schema, table, select_stat,column_list, copy_limit)
         """
         slice_insert= ins_arg["slice_insert"]
@@ -794,18 +951,55 @@ class mysql_source(object):
         select_stat = ins_arg["select_stat"]
         column_list = ins_arg["column_list"]
         copy_limit = ins_arg["copy_limit"]
-        self.connect_db_unbuffered()
         loading_schema = self.schema_loading[schema]["loading"]
+        conn_unbuffered = self.get_connect(False)
+        cursor_unbuffered = conn_unbuffered.cursor()
         num_insert = 1
         for slice in slice_insert:
-            self.logger.info("Executing inserts in %s.%s. Slice %s. Rows per slice %s." %  (loading_schema, table, num_insert, copy_limit ,   ))
-            offset = slice*copy_limit
-            sql_fallback = "SELECT %s FROM `%s`.`%s` LIMIT %s, %s;" % (select_stat, schema, table, offset, copy_limit)
-            self.cursor_unbuffered.execute(sql_fallback)
-            insert_data =  self.cursor_unbuffered.fetchall()
-            self.pg_engine.insert_data(loading_schema, table, insert_data , column_list)
-            num_insert +=1
+            self.logger.info("Executing inserts in %s.%s. Slice %s. Rows per slice %s." % (
+            loading_schema, table, num_insert, copy_limit,))
+            offset = slice * copy_limit
+            sql_fallback = "SELECT %s FROM `%s`.`%s` LIMIT %s, %s;" % (
+            select_stat, schema, table, offset, copy_limit)
+            cursor_unbuffered.execute(sql_fallback)
+            insert_data = cursor_unbuffered.fetchall()
+            self.pg_engine.insert_data(loading_schema, table, insert_data, column_list)
+            num_insert += 1
+        cursor_unbuffered.close()
+        conn_unbuffered.close()
 
+    def create_index_process(self, task, writer_engine):
+        if task.indices is None:
+            self.logger.error("index data is None")
+            return
+        if len(task.indices) == 0:
+            self.logger.info("there are no indices be created, just store the table")
+            engine.store_table(task.destination_schema, task.table, [], task.master_status)
+            return
+        table = task.table
+        destination_schema = task.destination_schema
+        schema = task.schema
+        loading_schema = self.schema_loading[schema]["loading"]
+        master_status = task.master_status
+        try:
+            if self.keep_existing_schema:
+                table_pkey = writer_engine.get_existing_pkey(destination_schema, table)
+                self.logger.info("Collecting constraints and indices from the destination table  %s.%s" % (
+                    destination_schema, table))
+                writer_engine.collect_idx_cons(destination_schema, table)
+                self.logger.info("Removing constraints and indices from the destination table  %s.%s" % (
+                    destination_schema, table))
+                writer_engine.cleanup_idx_cons(destination_schema, table)
+                writer_engine.truncate_table(destination_schema, table)
+            else:
+                table_pkey = writer_engine.create_indices(loading_schema, table, task.indices)
+            writer_engine.store_table(destination_schema, table, table_pkey, master_status)
+            if self.keep_existing_schema:
+                self.logger.info(
+                    "Adding constraint and indices to the destination table  %s.%s" % (destination_schema, table))
+                writer_engine.create_idx_cons(destination_schema, table)
+        except:
+            self.logger.error("create index or constraint error")
 
     def print_progress (self, iteration, total, schema, table):
         """
@@ -824,7 +1018,7 @@ class mysql_source(object):
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
 
-    def __create_indices(self, schema, table):
+    def __create_indices(self, schema, table, pg_engine, cursor_buffered):
         """
             The method copy the data between the origin and destination table.
             The method locks the table read only mode and  gets the log coordinates which are returned to the calling method.
@@ -835,32 +1029,41 @@ class mysql_source(object):
             :rtype: dictionary
         """
         loading_schema = self.schema_loading[schema]["loading"]
-        self.connect_db_buffered()
         self.logger.debug("Creating indices on table %s.%s " % (schema, table))
-        sql_index = """
-            SELECT
-                index_name as index_name,
-                index_type as index_type,
-                non_unique as non_unique,
-                GROUP_CONCAT(column_name ORDER BY seq_in_index) as index_columns
-            FROM
-                information_schema.statistics
-            WHERE
-                    table_schema=%s
-                AND 	table_name=%s
-                AND	(index_type = 'BTREE' OR index_type = 'FULLTEXT')
-            GROUP BY
-                table_name,
-                non_unique,
-                index_name
-            ;
-        """
-        self.cursor_buffered.execute(sql_index, (schema, table))
-        index_data = self.cursor_buffered.fetchall()
-        table_pkey = self.pg_engine.create_indices(loading_schema, table, index_data)
-        self.disconnect_db_buffered()
+        index_data = self.__get_index_data(schema, table, cursor_buffered)
+        table_pkey = pg_engine.create_indices(loading_schema, table, index_data)
         return table_pkey
 
+    def __get_index_data(self, schema, table, cursor_buffered):
+        sql_index = """
+                    SELECT
+                        index_name as index_name,
+                        index_type as index_type,
+                        non_unique as non_unique,
+                        GROUP_CONCAT(column_name ORDER BY seq_in_index) as index_columns
+                    FROM
+                        information_schema.statistics
+                    WHERE
+                            table_schema=%s
+                        AND 	table_name=%s
+                        AND	(index_type = 'BTREE' OR index_type = 'FULLTEXT')
+                    GROUP BY
+                        table_name,
+                        non_unique,
+                        index_name
+                    ;
+                """
+        cursor_buffered.execute(sql_index, (schema, table))
+        index_data = cursor_buffered.fetchall()
+        return index_data
+
+    def init_workers(self, count, target_func, pool, worker_prefix):
+        for x in range(count):
+            process = multiprocessing.Process(target=target_func)
+            process.daemon = True
+            process.name = worker_prefix + str(x + 1)
+            pool.append(process)
+            process.start()
 
     def __copy_tables(self):
         """
@@ -869,32 +1072,43 @@ class mysql_source(object):
             If keep_existing_schema is true for the source then the tables are truncated before the copy,
             the indices are left in place and a REINDEX TABLE is executed after the copy.
         """
+        readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
+        writers = self.source_config["writers"] if self.source_config["writers"] > 0 else 1
+        size = int(int(self.copy_max_memory) / DEFAULT_MAX_SIZE_OF_CSV)
+        self.write_task_queue = multiprocessing.Queue(size if size > MINIUM_QUEUE_SIZE else MINIUM_QUEUE_SIZE)
+        self.read_task_queue = multiprocessing.Queue()
+        writer_pool = []
+        reader_pool = []
 
+        self.init_workers(readers, self.data_reader, reader_pool, "reader-")
+        self.init_workers(readers, self.data_writer, writer_pool, "writer-")
 
         for schema in self.schema_tables:
             loading_schema = self.schema_loading[schema]["loading"]
             destination_schema = self.schema_loading[schema]["destination"]
             table_list = self.schema_tables[schema]
             for table in table_list:
-                self.logger.info("Copying the source table %s into %s.%s" %(table, loading_schema, table) )
-                try:
-                    if self.keep_existing_schema:
-                        table_pkey = self.pg_engine.get_existing_pkey(destination_schema,table)
-                        self.logger.info("Collecting constraints and indices from the destination table  %s.%s" %(destination_schema, table) )
-                        self.pg_engine.collect_idx_cons(destination_schema,table)
-                        self.logger.info("Removing constraints and indices from the destination table  %s.%s" %(destination_schema, table) )
-                        self.pg_engine.cleanup_idx_cons(destination_schema,table)
-                        self.pg_engine.truncate_table(destination_schema,table)
-                    else:
-                        table_pkey = self.__create_indices(schema, table)
-                    master_status = self.copy_data(schema, table)
-                    self.pg_engine.store_table(destination_schema, table, table_pkey, master_status)
-                    if self.keep_existing_schema:
-                        self.logger.info("Adding constraint and indices to the destination table  %s.%s" %(destination_schema, table) )
-                        self.pg_engine.create_idx_cons(destination_schema,table)
-                except:
-                    self.logger.info("Could not copy the table %s. Excluding it from the replica." %(table) )
-                    raise
+                self.connect_db_buffered()
+                index_data = self.__get_index_data(schema=schema, table=table, cursor_buffered=self.cursor_buffered)
+                self.indices[schema+"."+table] = index_data
+
+                task = read_data_task(destination_schema=destination_schema, loading_schema=loading_schema,
+                                      schema=schema, table=table)
+                self.read_task_queue.put(task, block=True)
+
+        self.read_task_queue.put(None, block=True)
+        self.wait_for_finish(reader_pool)
+        self.write_task_queue.put(None, block=True)
+        self.wait_for_finish(writer_pool)
+        self.write_task_queue.close()
+        self.read_task_queue.close()
+        writer_pool.clear()
+        reader_pool.clear()
+
+    def wait_for_finish(self, processes):
+        for process in processes:
+            if process.is_alive():
+                process.join()
 
     def set_copy_max_memory(self):
         """
@@ -935,7 +1149,6 @@ class mysql_source(object):
             for v in self.postgis_spatial_datatypes:
                 # update postgis_spatial_datatypes value in map, decode them as hex
                 self.decode_map[v] = self.__decode_hexify_value
-
 
     def __init_read_replica(self):
         """
@@ -1002,9 +1215,6 @@ class mysql_source(object):
         self.schema_mappings = self.pg_engine.get_schema_mappings()
         self.pg_engine.schema_tables = self.schema_tables
 
-
-
-
     def refresh_schema(self):
         """
             The method performs a sync for an entire schema within a source.
@@ -1050,8 +1260,6 @@ class mysql_source(object):
             self.notifier.send_message(notifier_message, 'critical')
             self.logger.critical(notifier_message)
             raise
-
-
 
     def sync_tables(self):
         """
@@ -1178,7 +1386,6 @@ class mysql_source(object):
             table_map = {}
         return table_type_map
 
-
     def __store_binlog_event(self, table, schema):
         """
         The private method returns whether the table event should be stored or not in the postgresql log replica.
@@ -1203,7 +1410,6 @@ class mysql_source(object):
                 return False
 
         return True
-
 
     def __skip_event(self, table, schema, binlogevent):
         """
@@ -1551,7 +1757,6 @@ class mysql_source(object):
 
         return [master_data, close_batch]
 
-
     def read_replica(self):
         """
             The method gets the batch data from PostgreSQL.
@@ -1605,7 +1810,6 @@ class mysql_source(object):
 
 
             self.disconnect_db_buffered()
-
 
     def init_replica(self):
         """

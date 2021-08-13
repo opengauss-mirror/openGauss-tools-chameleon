@@ -29,6 +29,8 @@ pg_conn:
 
 sources:
   mysql:
+    readers: 4
+    writers: 4
     db_conn:
       host: "localhost"
       port: "3306"
