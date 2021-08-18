@@ -668,9 +668,8 @@ class mysql_source(object):
         def __exit__(self, exc_type, exc_val, exc_tb):
             if self.table_txs:
                 self.outer_obj.end_tx(self.cursor)
-
-        def __del__(self):
-            self.outer_obj.logger.debug("delete the xact")
+            else:
+                self.outer_obj.unlock_tables(self.cursor)
 
     def begin_tx(self, cursor):
         """
@@ -852,7 +851,7 @@ class mysql_source(object):
         sql_csv = "SELECT %s as data FROM `%s`.`%s`;" % (select_columns["select_csv"], schema, table)
         self.logger.debug("Executing query for table %s.%s" % (schema, table))
 
-        with self.reader_xact(self, cursor_unbuffered, table_txs):
+        with self.reader_xact(self, cursor_buffered, table_txs):
             cursor_unbuffered.execute(sql_csv)
             # unlock tables
             if table_txs:
