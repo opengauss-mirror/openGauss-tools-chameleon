@@ -58,7 +58,8 @@ setup(
         'tabulate>=0.8.1',
         'daemonize>=2.4.7',
         'rollbar>=0.13.17',
-        'geomet>=0.3.0'
+        'geomet>=0.3.0',
+        'mysqlclient>=1.4.6'
     ],
     include_package_data = True,
     package_data=package_data,
