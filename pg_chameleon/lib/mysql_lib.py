@@ -868,14 +868,14 @@ class mysql_source(object):
                     csv_file = codecs.open(out_file, 'wb', self.charset)
                     csv_file.write(csv_data)
                     csv_file.close()
-                    task = copy_data_task(out_file, count_rows, table, schema, select_columns, slice + 1)
+                    task = copy_data_task(out_file, count_rows, table, schema, select_columns, slice)
                 else:
                     if self.copy_mode != 'direct':
                         self.logger.warning("unknown copy mode, use direct instead")
                     csv_file = io.BytesIO()
                     csv_file.write(csv_data.encode())
                     csv_file.seek(0)
-                    task = copy_data_task(csv_file, count_rows, table, schema, select_columns, slice + 1)
+                    task = copy_data_task(csv_file, count_rows, table, schema, select_columns, slice)
                 self.write_task_queue.put(task, block=True)
                 slice += 1
 
@@ -974,7 +974,7 @@ class mysql_source(object):
             return
         if len(task.indices) == 0:
             self.logger.info("there are no indices be created, just store the table")
-            engine.store_table(task.destination_schema, task.table, [], task.master_status)
+            writer_engine.store_table(task.destination_schema, task.table, [], task.master_status)
             return
         table = task.table
         destination_schema = task.destination_schema
