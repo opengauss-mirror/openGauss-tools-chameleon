@@ -68,7 +68,12 @@ class mysql_source(object):
         self.decode_map = {}
         self.write_task_queue = None
         self.read_task_queue = None
-        self.indices = multiprocessing.Manager().dict()
+        """
+            This queue index_waiting_queue is used to temporarily store index tasks.
+            After all data read tasks are complete,
+            all index tasks are removed from the queue and added to the write_task_queue.
+        """
+        self.index_waiting_queue = None
         self.__init_decode_map()
 
     @classmethod
@@ -780,12 +785,9 @@ class mysql_source(object):
         self.logger.info("Copying the source table %s into %s.%s" % (table, loading_schema, table))
         try:
             master_status = self.read_data_from_table(schema, table, cursor_manager)
-            if schema + "." + table in self.indices:
-                indices = self.indices[schema + "." + table]
-            else:
-                indices = []
+            indices = self.__get_index_data(schema=schema, table=table, cursor_buffered=cursor_manager.cursor_buffered)
             index_write_task = create_index_task(table, schema, indices, destination_schema, master_status)
-            self.write_task_queue.put(index_write_task, block=True)
+            self.index_waiting_queue.put(index_write_task, block=True)
         except:
             self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
             raise
@@ -1077,11 +1079,12 @@ class mysql_source(object):
         size = int(int(self.copy_max_memory) / DEFAULT_MAX_SIZE_OF_CSV)
         self.write_task_queue = multiprocessing.Queue(size if size > MINIUM_QUEUE_SIZE else MINIUM_QUEUE_SIZE)
         self.read_task_queue = multiprocessing.Queue()
+        self.index_waiting_queue = multiprocessing.Queue()
         writer_pool = []
         reader_pool = []
 
         self.init_workers(readers, self.data_reader, reader_pool, "reader-")
-        self.init_workers(readers, self.data_writer, writer_pool, "writer-")
+        self.init_workers(writers, self.data_writer, writer_pool, "writer-")
 
         for schema in self.schema_tables:
             loading_schema = self.schema_loading[schema]["loading"]
@@ -1089,15 +1092,15 @@ class mysql_source(object):
             table_list = self.schema_tables[schema]
             for table in table_list:
                 self.connect_db_buffered()
-                index_data = self.__get_index_data(schema=schema, table=table, cursor_buffered=self.cursor_buffered)
-                self.indices[schema+"."+table] = index_data
-
                 task = read_data_task(destination_schema=destination_schema, loading_schema=loading_schema,
                                       schema=schema, table=table)
                 self.read_task_queue.put(task, block=True)
 
         self.read_task_queue.put(None, block=True)
         self.wait_for_finish(reader_pool)
+        while not self.index_waiting_queue.empty():
+            task = self.index_waiting_queue.get(block=True)
+            self.write_task_queue.put(task, block=True)
         self.write_task_queue.put(None, block=True)
         self.wait_for_finish(writer_pool)
         self.write_task_queue.close()
