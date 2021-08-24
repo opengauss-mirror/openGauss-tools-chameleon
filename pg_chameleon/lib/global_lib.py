@@ -195,14 +195,11 @@ class replica_engine(object):
                 print ("creating directory %s" % confdir)
                 os.mkdir(confdir)
 
-
         if os.path.isfile(self.local_conf_example):
-            if os.path.getctime(self.global_conf_example)>os.path.getctime(self.local_conf_example):
-                print ("updating configuration example with %s" % self.local_conf_example)
-                copy(self.global_conf_example, self.local_conf_example)
+            print ("updating configuration example with %s" % self.local_conf_example)
         else:
             print ("copying configuration  example in %s" % self.local_conf_example)
-            copy(self.global_conf_example, self.local_conf_example)
+        copy(self.global_conf_example, self.local_conf_example)
 
     def load_config(self):
         """
