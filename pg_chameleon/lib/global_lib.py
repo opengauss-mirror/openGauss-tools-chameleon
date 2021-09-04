@@ -120,6 +120,10 @@ class replica_engine(object):
         self.pg_engine.type_override = self.config["type_override"]
         self.pg_engine.sources = self.config["sources"]
         self.pg_engine.notifier = self.notifier
+        try:
+            self.pg_engine.migrate_default_value = self.config["sources"][self.source]["migrate_default_value"]
+        except KeyError:
+            self.pg_engine.migrate_default_value = True
 
         #mysql_source instance initialisation
         self.mysql_source = mysql_source()

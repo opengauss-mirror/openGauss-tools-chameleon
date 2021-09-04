@@ -67,6 +67,7 @@ sources:
         - delphis_mediterranea  # skips deletes on schema delphis_mediterranea
       update:
     keep_existing_schema: No
+    migrate_default_value: Yes
 
   pgsql:
     db_conn:
