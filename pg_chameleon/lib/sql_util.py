@@ -14,6 +14,7 @@ class ColumnType(Enum):
     M_S_GIS_MUL_LINESTR = 'multilinestring'
     M_S_GIS_MUL_POLYGON = 'multipolygon'
     M_S_GIS_GEOCOL = 'geometrycollection'
+    M_S_GIS_GEOCOL2 = 'geomcollection'
     M_C_GIS_POINT = 'point'
     M_C_GIS_GEO = 'geometry'
     M_C_GIS_LINESTR = 'linestring'
@@ -85,10 +86,10 @@ class ColumnType(Enum):
     O_C_TEXT = 'text'
 
     def __name_start_with(s):
-        results = []
+        results = set()
         for k, v in ColumnType.__members__.items():
             if k.startswith(s):
-                results.append(v.value)
+                results.add(v.value)
         return results
 
     def get_mysql_hexify_always_type():
@@ -103,11 +104,15 @@ class ColumnType(Enum):
     def get_opengauss_char_type():
         return ColumnType.__name_start_with('O_C_')
 
+    def get_opengauss_date_type():
+        return {ColumnType.O_TIMESTAP.value, ColumnType.O_TIMESTAP_NO_TZ.value, ColumnType.O_DATE.value,
+                ColumnType.O_TIME.value, ColumnType.O_TIME_NO_TZ.value}
+
     def get_opengauss_hash_part_key_type():
-        return [ColumnType.O_INTEGER.value, ColumnType.O_BINT.value, ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_TEXT.value,
+        return {ColumnType.O_INTEGER.value, ColumnType.O_BINT.value, ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_TEXT.value,
             ColumnType.O_C_CHAR.value, ColumnType.O_NUM.value, ColumnType.O_DATE.value, ColumnType.O_TIME_NO_TZ.value,
             ColumnType.O_TIMESTAP_NO_TZ.value, ColumnType.O_TIME.value, ColumnType.O_TIMESTAP.value, ColumnType.O_C_BPCHAR.value,
-            ColumnType.O_C_NCHAR.value, ColumnType.O_DEC.value]
+            ColumnType.O_C_NCHAR.value, ColumnType.O_DEC.value}
 
 class sql_token(object):
     """
@@ -172,6 +177,8 @@ class sql_token(object):
         self.m_drop_primary = re.compile(r'(?:(?:ALTER\s+?TABLE)\s+(`?\b.*?\b`?)\s+(DROP\s+PRIMARY\s+KEY))', re.IGNORECASE)
         #self.m_modify = re.compile(r'((?:(?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
         self.m_ignore_keywords = re.compile(r'(CONSTRAINT)|(PRIMARY)|(INDEX)|(KEY)|(UNIQUE)|(FOREIGN\s*KEY)', re.IGNORECASE)
+
+    VERSION_SCALE = 1000
 
     def reset_lists(self):
         """
@@ -622,4 +629,14 @@ class sql_token(object):
             if stat_dic!={}:
                 self.tokenised.append(stat_dic)
 
-
+    def parse_version(version_str):
+        suffix_pos = version_str.find('-')
+        if (suffix_pos != -1):
+            num_str = version_str[0:suffix_pos]
+        else:
+            num_str = version_str
+        split_num = num_str.split('.')
+        version_num = 0
+        for v in split_num:
+            version_num = version_num * sql_token.VERSION_SCALE + int(v)
+        return version_num

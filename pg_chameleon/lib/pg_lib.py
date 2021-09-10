@@ -10,7 +10,12 @@ import os
 import binascii
 from distutils.sysconfig import get_python_lib
 import multiprocessing as mp
-from pg_chameleon import ColumnType
+from pg_chameleon import sql_token, ColumnType
+
+# from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
+# are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
+COLUMNDEFAULT_INCLUDE_QUOTE_VER = 7 + sql_token.VERSION_SCALE * 2 +\
+    (sql_token.VERSION_SCALE * sql_token.VERSION_SCALE) * 10
 
 class pg_encoder(json.JSONEncoder):
     def default(self, obj):
@@ -569,13 +574,16 @@ class pg_engine(object):
         self.idx_sequence = 0
         self.lock_timeout = 0
         self.max_range_column = 4
+        self.mysql_version = 0
         self.hash_part_key_type = ColumnType.get_opengauss_hash_part_key_type()
         self.character_type = ColumnType.get_opengauss_char_type()
+        self.date_type = ColumnType.get_opengauss_date_type()
         self.default_value_map = {
             # without time zone
             'curdate()': "CURRENT_DATE",
             'curtime()': "('now'::text)::time",
-            'current_timestamp()': "pg_systimestamp()::timestamp"
+            'current_timestamp()': "pg_systimestamp()::timestamp",
+            'current_timestamp': "pg_systimestamp()::timestamp"
         }
 
         self.migrations = [
@@ -587,7 +595,6 @@ class pg_engine(object):
             {'version': '2.0.6',  'script': '205_to_206.sql'},
             {'version': '2.0.7',  'script': '206_to_207.sql'},
         ]
-
 
     def check_postgis(self):
         """
@@ -613,6 +620,7 @@ class pg_engine(object):
             ColumnType.M_C_GIS_POLYGON.value:ColumnType.O_GEO.value,
             ColumnType.M_S_GIS_MUL_POINT.value:ColumnType.O_GEO.value,
             ColumnType.M_S_GIS_GEOCOL.value:ColumnType.O_GEO.value,
+            ColumnType.M_S_GIS_GEOCOL2.value:ColumnType.O_GEO.value,
             ColumnType.M_S_GIS_MUL_LINESTR.value:ColumnType.O_GEO.value,
             ColumnType.M_S_GIS_MUL_POLYGON.value:ColumnType.O_GEO.value
             }
@@ -624,6 +632,7 @@ class pg_engine(object):
             ColumnType.M_C_GIS_POLYGON.value:ColumnType.O_POLYGON.value,
             ColumnType.M_S_GIS_MUL_POINT.value:ColumnType.O_BYTEA.value,
             ColumnType.M_S_GIS_GEOCOL.value:ColumnType.O_BYTEA.value,
+            ColumnType.M_S_GIS_GEOCOL2.value:ColumnType.O_BYTEA.value,
             ColumnType.M_S_GIS_MUL_LINESTR.value:ColumnType.O_BYTEA.value,
             ColumnType.M_S_GIS_MUL_POLYGON.value:ColumnType.O_BYTEA.value
             }
@@ -2380,6 +2389,31 @@ class pg_engine(object):
                         return False
         return True
 
+    def __trans_default_value(self, origin_default, column_type):
+        if self.migrate_default_value == False or origin_default is None or origin_default == "NULL":
+            return ''
+
+        re_symbol = 'E' if column_type in self.character_type else ''
+        # for mysql, mysql_version will be -1 which need to be quoted
+        # for mariadb, mysql_version will be the real version num, need to be quoted when version < 10.2.7
+        # when we need to quote value, we also need to add '\' to escape single quotation mark for string type
+        quote = ''
+        if self.mysql_version < COLUMNDEFAULT_INCLUDE_QUOTE_VER:
+            if column_type in self.character_type:
+                quote = '\''
+                origin_default = origin_default.replace('\'', '\\\'')
+            elif column_type in self.date_type:
+                if origin_default.lower() in self.default_value_map:
+                    origin_default = self.default_value_map.get(origin_default.lower())
+                else:
+                    quote = '\''
+            else:
+                pass
+        else:
+            origin_default = self.default_value_map.get(origin_default.lower(), origin_default)
+        default_str = "DEFAULT %s%s%s%s" % (re_symbol, quote, origin_default, quote)
+        return default_str
+
     def __build_create_table_mysql(self, table_metadata, partition_metadata, table_name,  schema, temporary_schema=True):
         """
             The method builds the create table statement with any enumeration associated using the mysql's metadata.
@@ -2408,6 +2442,8 @@ class pg_engine(object):
             else:
                 col_is_null="NULL"
             column_type = self.get_data_type(column, schema, table_name)
+            default_value = self.__trans_default_value(column.get("column_default"), column_type)
+
             if column_type == "enum":
                 enum_type = '"%s"."enum_%s_%s"' % (destination_schema, table_name[0:20], column["column_name"][0:20])
                 sql_drop_enum = 'DROP TYPE IF EXISTS %s CASCADE;' % enum_type
@@ -2422,14 +2458,6 @@ class pg_engine(object):
             if column["extra"] == "auto_increment":
                 column_type = ColumnType.O_BIGSERIAL.value
 
-            re_symbol = ''
-            if column_type in self.character_type:
-                re_symbol = 'E'
-            column_default = column.get("column_default")
-            if column_default and column_default != "NULL":
-                default_value = "DEFAULT %s%s" % (re_symbol, self.default_value_map.get(column_default, column_default))
-            else:
-                default_value = ''
             ddl_columns.append(  ' "%s" %s %s %s   ' %  (column["column_name"], column_type, default_value, col_is_null ))
         def_columns=str(',').join(ddl_columns)
         table_ddl["enum"] = ddl_enum

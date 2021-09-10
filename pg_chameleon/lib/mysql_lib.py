@@ -25,6 +25,7 @@ POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
 LINESTR_PREFIX_LEN = len('LINESTRING ')
 WKB_PREFIX_LEN = 4
+MARIADB = "MariaDB"
 
 # we set the default max size of csv file is 2M
 DEFAULT_MAX_SIZE_OF_CSV: int = 2 * 1024 * 1024
@@ -68,6 +69,8 @@ class mysql_source(object):
         self.decode_map = {}
         self.write_task_queue = None
         self.read_task_queue = None
+        self.is_mariadb = False
+        self.version = 0
         """
             This queue index_waiting_queue is used to temporarily store index tasks.
             After all data read tasks are complete,
@@ -204,6 +207,14 @@ class mysql_source(object):
         else:
             binlog_row_image = 'FULL'
 
+        sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'version';"""
+        self.cursor_buffered.execute(sql_log_bin)
+        variable_check = self.cursor_buffered.fetchone()
+        self.is_mariadb = False if variable_check["Value"].find(MARIADB) == -1 else True
+        self.version = sql_token.parse_version(variable_check["Value"])
+        self.pg_engine.mysql_version = -1 if self.is_mariadb == False else self.version
+        self.logger.debug("mysql version %d" % self.version)
+
         if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL':
             self.replica_possible = True
         else:
@@ -226,6 +237,7 @@ class mysql_source(object):
             password=db_conn["password"],
             charset=db_conn["charset"],
             connect_timeout=db_conn["connect_timeout"],
+            autocommit=True,
             cursorclass=MySQLdb.cursors.DictCursor if is_buffered else MySQLdb.cursors.SSCursor
         )
         return conn
@@ -239,6 +251,8 @@ class mysql_source(object):
         new_engine.type_override = self.pg_engine.type_override
         new_engine.sources = self.pg_engine.sources
         new_engine.notifier = self.pg_engine.notifier
+        new_engine.migrate_default_value = self.pg_engine.migrate_default_value
+        new_engine.mysql_version = -1 if self.is_mariadb == False else self.version
         return new_engine
 
     def connect_db_buffered(self):
@@ -461,11 +475,12 @@ class mysql_source(object):
         """
         sql_metadata="""
             SELECT DISTINCT
-                subpartition_method,
-                partition_name,
-                partition_method,
-                partition_expression,
-                partition_description
+                partition_ordinal_position as partition_ordinal_position,
+                subpartition_method as subpartition_method,
+                partition_name as partition_name,
+                partition_method as partition_method,
+                partition_expression as partition_expression,
+                partition_description as partition_description
             FROM
                 information_schema.partitions
             WHERE
@@ -555,7 +570,9 @@ class mysql_source(object):
                 GROUP BY
                     table_name,
                     constraint_name,
-                    referenced_table_name
+                    referenced_table_name,
+                    table_schema,
+                    referenced_table_schema
                 ORDER BY
                     table_name
             ) s
@@ -712,7 +729,6 @@ class mysql_source(object):
         """
         self.logger.debug("locking the table `%s`.`%s`" % (schema, table))
         sql_lock = "FLUSH TABLES `%s`.`%s` WITH READ LOCK;" %(schema, table)
-        self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table))
         cursor.execute(sql_lock)
 
     def unlock_tables(self, cursor):
@@ -847,6 +863,7 @@ class mysql_source(object):
         self.lock_table(schema, table, cursor_buffered)
 
         # get master status
+        self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table))
         master_status = self.get_master_coordinates(cursor_buffered)
 
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
@@ -1051,7 +1068,8 @@ class mysql_source(object):
                     GROUP BY
                         table_name,
                         non_unique,
-                        index_name
+                        index_name,
+                        index_type
                     ;
                 """
         cursor_buffered.execute(sql_index, (schema, table))
@@ -1142,12 +1160,12 @@ class mysql_source(object):
         self.postgis_present = self.pg_engine.check_postgis()
         if self.postgis_present:
             self.hexify = self.hexify_always
-            self.postgis_spatial_datatypes = self.postgis_spatial_datatypes + self.common_spatial_datatypes
+            self.postgis_spatial_datatypes = self.postgis_spatial_datatypes.union(self.common_spatial_datatypes)
             for v in self.common_spatial_datatypes:
                 # update common_spatial_datatypes value in map, decode them as geometry text
                 self.decode_map[v] = self.__decode_postgis_spatial_value
         else:
-            self.hexify = self.hexify_always + self.postgis_spatial_datatypes
+            self.hexify = self.hexify_always.union(self.postgis_spatial_datatypes)
             for v in self.postgis_spatial_datatypes:
                 # update postgis_spatial_datatypes value in map, decode them as hex
                 self.decode_map[v] = self.__decode_hexify_value
