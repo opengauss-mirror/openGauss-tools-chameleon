@@ -104,6 +104,7 @@ class pgsql_source(object):
             strconn = "opengauss://%(host)s:%(port)s/%(database)s?[connect_timeout]=%(connect_timeout)s" % self.source_conn
             pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"])
             pgsql_conn.settings['client_encoding']=self.source_conn["charset"]
+            pgsql_conn.execute("set session_timeout = 0;")
         else:
             self.logger.error("Undefined database connection string. Exiting now.")
             sys.exit()
@@ -583,7 +584,9 @@ class pg_engine(object):
             'curdate()': "CURRENT_DATE",
             'curtime()': "('now'::text)::time",
             'current_timestamp()': "pg_systimestamp()::timestamp",
-            'current_timestamp': "pg_systimestamp()::timestamp"
+            'current_timestamp': "pg_systimestamp()::timestamp",
+            '0000-00-00 00:00:00': "NULL",
+            '0000-00-00': "NULL"
         }
 
         self.migrations = [
@@ -654,6 +657,7 @@ class pg_engine(object):
             strconn = "opengauss://%(host)s:%(port)s/%(database)s" % self.dest_conn
             self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"])
             self.pgsql_conn.settings['client_encoding']=self.dest_conn["charset"]
+            self.pgsql_conn.execute("set session_timeout = 0;")
         elif not self.dest_conn:
             self.logger.error("Undefined database connection string. Exiting now.")
             sys.exit()
@@ -844,14 +848,14 @@ class pg_engine(object):
                 schema_loading = self.schema_loading[schema]["loading"]
                 self.logger.info("Granting select on tables in schema %s to the role(s) %s." % (schema_loading,','.join(self.grant_select_to)))
                 for db_role in self.grant_select_to:
-                    sql_grant_usage = ("GRANT USAGE ON SCHEMA {} TO {};").format(schema_loading, db_role)
-                    sql_alter_default_privs = ("ALTER DEFAULT PRIVILEGES IN SCHEMA {} GRANT SELECT ON TABLES TO {};").format(schema_loading, db_role)
+                    sql_grant_usage = ("GRANT USAGE ON SCHEMA \"{}\" TO \"{}\";").format(schema_loading, db_role)
+                    sql_alter_default_privs = ("ALTER DEFAULT PRIVILEGES IN SCHEMA \"{}\" GRANT SELECT ON TABLES TO \"{}\";").format(schema_loading, db_role)
                     try:
                         self.pgsql_conn.execute(sql_grant_usage)
                         self.pgsql_conn.execute(sql_alter_default_privs)
                         for table in self.schema_tables[schema]:
                             self.logger.info("Granting select on table %s.%s to the role %s." % (schema_loading, table,db_role))
-                            sql_grant_select = ("GRANT SELECT ON TABLE {}.{} TO {};").format(schema_loading, table, db_role)
+                            sql_grant_select = ("GRANT SELECT ON TABLE \"{}\".\"{}\" TO \"{}\";").format(schema_loading, table, db_role)
                             try:
                                 self.pgsql_conn.execute(sql_grant_select)
                             except Exception as er:
@@ -1783,7 +1787,7 @@ class pg_engine(object):
         if upgrade_possible:
             try:
                 self.logger.info("Renaming the old schema %s in %s " % (self.__v2_schema, self.__v1_schema))
-                sql_rename_old = ("ALTER SCHEMA {} RENAME TO {};").format(self.__current_schema, self.__v1_schema)
+                sql_rename_old = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format(self.__current_schema, self.__v1_schema)
                 self.pgsql_conn.execute(sql_rename_old)
                 self.logger.info("Installing the new replica catalogue " )
                 self.create_replica_schema()
@@ -1840,9 +1844,9 @@ class pg_engine(object):
             curr_schema = stmt.first()
             if curr_schema == 1:
                 self.logger.info("Renaming the current schema %s in %s" % (self.__current_schema, self.__v2_schema))
-                sql_rename_current = ("ALTER SCHEMA {} RENAME TO {};").format(self.__current_schema, self.__v2_schema)
+                sql_rename_current = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format(self.__current_schema, self.__v2_schema)
                 self.pgsql_conn.execute(sql_rename_current)
-            sql_rename_old = ("ALTER SCHEMA {} RENAME TO {};").format((self.__v1_schema), (self.__current_schema))
+            sql_rename_old = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((self.__v1_schema), (self.__current_schema))
             self.pgsql_conn.execute(sql_rename_old)
         else:
             self.logger.info("The old schema %s does not exists, aborting the rollback" % (self.__v1_schema))
@@ -1906,7 +1910,7 @@ class pg_engine(object):
                 table_schema = self.schema_loading[schema]["destination"]
                 where_cond = "format('%%I.%%I','%s','%s')" % (table_schema, table_name)
                 list_conditions.append(where_cond)
-        sql_cleanup = "DELETE FROM sch_chameleon.{} WHERE format('%%I.%%I',v_schema_name,v_table_name) IN (%s) ;" % ' ,'.join(list_conditions)
+        sql_cleanup = "DELETE FROM sch_chameleon.\"{}\" WHERE format('%%I.%%I',v_schema_name,v_table_name) IN (%s) ;" % ' ,'.join(list_conditions)
         for log_table in log_tables:
             self.logger.debug("Cleaning up log events in log table %s " % (log_table,))
             sql_clean_log = (sql_cleanup).format((log_table))
@@ -1956,7 +1960,7 @@ class pg_engine(object):
                 pg_ddl
             )
         sql_insert=("""
-            INSERT INTO "sch_chameleon".{}
+            INSERT INTO "sch_chameleon".\"{}\"
                 (
                     i_id_batch,
                     v_table_name,
@@ -2451,7 +2455,8 @@ class pg_engine(object):
                 ddl_enum.append(sql_drop_enum)
                 ddl_enum.append(sql_create_enum)
                 column_type=enum_type
-            if column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value:
+            if (column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value) and\
+                int(column["character_maximum_length"]) > 0:
                 column_type="%s (%s)" % (column_type, str(column["character_maximum_length"]))
             if column_type == ColumnType.O_NUM.value:
                 column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
@@ -2841,8 +2846,8 @@ class pg_engine(object):
         query_drop_default = ""
         query_add_default = ""
         if default_value:
-            query_drop_default = (" ALTER TABLE {}.{} ALTER COLUMN {} DROP DEFAULT;").format((schema), (table), (column))
-            query_add_default = (" ALTER TABLE  {}.{} ALTER COLUMN {} SET DEFAULT %s;" % (default_value)).format((schema), (table), (column))
+            query_drop_default = (" ALTER TABLE \"{}\".\"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;").format((schema), (table), (column))
+            query_add_default = (" ALTER TABLE  \"{}\".\"{}\" ALTER COLUMN \"{}\" SET DEFAULT %s;" % (default_value)).format((schema), (table), (column))
 
         return {'drop':query_drop_default, 'create':query_add_default}
 
@@ -2925,7 +2930,7 @@ class pg_engine(object):
 
         try:
             sql_copy=("""
-                COPY "sch_chameleon".{}
+                COPY "sch_chameleon".\"{}\"
                     (
                         i_id_batch,
                         v_table_name,
@@ -2971,7 +2976,7 @@ class pg_engine(object):
             log_table = global_data["log_table"]
             event_time = global_data["event_time"]
             sql_insert=("""
-                INSERT INTO sch_chameleon.{}
+                INSERT INTO sch_chameleon.\"{}\"
                     (
                         i_id_batch,
                         v_table_name,
@@ -3158,7 +3163,7 @@ class pg_engine(object):
                             ;
                         """
                         self.pgsql_conn.execute(sql_tables % (new_mapping, self.i_id_source,old_mapping ))
-                        sql_alter_schema = ("ALTER SCHEMA {} RENAME TO {};").format((old_mapping), (new_mapping))
+                        sql_alter_schema = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((old_mapping), (new_mapping))
                         self.pgsql_conn.execute(sql_alter_schema)
                 sql_source="""
                     UPDATE sch_chameleon.t_sources
@@ -3304,7 +3309,7 @@ class pg_engine(object):
         for log_table in log_tables:
 
             sql_cleanup = ("""
-                DELETE FROM sch_chameleon.{}
+                DELETE FROM sch_chameleon.\"{}\"
                 WHERE
                     i_id_batch IN (
                         SELECT
@@ -3589,7 +3594,7 @@ class pg_engine(object):
             :param schema: the table's schema
             :param table: the table's name
         """
-        sql_reindex = ("REINDEX TABLE {}.{} ;").format((schema), (table))
+        sql_reindex = ("REINDEX TABLE \"{}\".\"{}\" ;").format((schema), (table))
         self.pgsql_conn.execute(sql_reindex)
 
     def cleanup_idx_cons(self,schema,table):
@@ -3857,7 +3862,7 @@ class pg_engine(object):
             :param schema: the table's schema
             :param table: the table's name
         """
-        sql_truncate = ("TRUNCATE TABLE {}.{};").format((schema), (table))
+        sql_truncate = ("TRUNCATE TABLE \"{}\".\"{}\";").format((schema), (table))
         self.pgsql_conn.execute(sql_truncate)
 
     def store_table(self, schema, table, table_pkey, master_status):
@@ -4075,9 +4080,9 @@ class pg_engine(object):
             schema_loading = self.schema_loading[schema]["loading"]
             schema_destination = self.schema_loading[schema]["destination"]
             schema_temporary = "_rename_%s" % self.schema_loading[schema]["destination"]
-            sql_dest_to_tmp = ("ALTER SCHEMA {} RENAME TO {};").format((schema_destination), (schema_temporary))
-            sql_load_to_dest = ("ALTER SCHEMA {} RENAME TO {};").format((schema_loading), (schema_destination))
-            sql_tmp_to_load = ("ALTER SCHEMA {} RENAME TO {};").format((schema_temporary), (schema_loading))
+            sql_dest_to_tmp = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((schema_destination), (schema_temporary))
+            sql_load_to_dest = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((schema_loading), (schema_destination))
+            sql_tmp_to_load = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((schema_temporary), (schema_loading))
             x = self.pgsql_conn.xact()
             x.start()
             self.logger.info("Swapping schema %s with %s" % (schema_destination, schema_loading))
@@ -4157,8 +4162,8 @@ class pg_engine(object):
             enum_list = stmt()
             for enumeration in enum_list:
                 type_name = enumeration[0]
-                sql_drop_origin = ("DROP TYPE IF EXISTS {}.{} CASCADE;").format((schema_destination),(type_name))
-                sql_set_schema_new = ("ALTER TYPE {}.{} SET SCHEMA {};").format((schema_loading),(type_name), (schema_destination))
+                sql_drop_origin = ("DROP TYPE IF EXISTS \"{}\".\"{}\" CASCADE;").format((schema_destination),(type_name))
+                sql_set_schema_new = ("ALTER TYPE \"{}\".\"{}\" SET SCHEMA \"{}\";").format((schema_loading),(type_name), (schema_destination))
                 self.logger.debug("Dropping the original tpye %s.%s " % (schema_destination, type_name))
                 self.pgsql_conn.execute(sql_drop_origin)
                 self.logger.debug("Changing the schema for type %s.%s to %s" % (schema_loading, type_name, schema_destination))
@@ -4174,8 +4179,8 @@ class pg_engine(object):
             schema_destination = self.schema_loading[schema]["destination"]
             for table in self.schema_tables[schema]:
                 self.logger.info("Swapping table %s.%s with %s.%s" % (schema_destination, table, schema_loading, table))
-                sql_drop_origin = ("DROP TABLE IF EXISTS {}.{} ;").format((schema_destination),(table))
-                sql_set_schema_new = ("ALTER TABLE {}.{} SET SCHEMA {};").format((schema_loading),(table), (schema_destination))
+                sql_drop_origin = ("DROP TABLE IF EXISTS \"{}\".\"{}\" ;").format((schema_destination),(table))
+                sql_set_schema_new = ("ALTER TABLE \"{}\".\"{}\" SET SCHEMA \"{}\";").format((schema_loading),(table), (schema_destination))
                 x = self.pgsql_conn.xact()
                 x.start()
                 self.logger.debug("Dropping the original table %s.%s " % (schema_destination, table))
@@ -4196,7 +4201,7 @@ class pg_engine(object):
         sql = 'select * from pg_namespace where nspname=$1'
         result = self.pgsql_conn.query.first(sql, schema_name)
         if not result:
-            sql_create = ("CREATE SCHEMA {};").format((schema_name))
+            sql_create = ("CREATE SCHEMA \"{}\";").format((schema_name))
             self.pgsql_conn.execute(sql_create)
 
     def drop_database_schema(self, schema_name, cascade):
@@ -4212,7 +4217,7 @@ class pg_engine(object):
             cascade_clause = "CASCADE"
         else:
             cascade_clause = ""
-        sql_drop = "DROP SCHEMA IF EXISTS {} %s;" % cascade_clause
+        sql_drop = "DROP SCHEMA IF EXISTS \"{}\" %s;" % cascade_clause
         sql_drop = (sql_drop).format((schema_name))
         self.set_lock_timeout()
         try:
