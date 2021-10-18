@@ -4,6 +4,7 @@ import io
 import gc
 import time
 
+import secrets
 import pymysql
 import codecs
 import binascii
@@ -30,6 +31,9 @@ MARIADB = "MariaDB"
 # we set the default max size of csv file is 2M
 DEFAULT_MAX_SIZE_OF_CSV: int = 2 * 1024 * 1024
 MINIUM_QUEUE_SIZE: int = 5
+# max_execution_time for MySQL(ms)
+MAX_EXECUTION_TIME = 9999000
+RANDOM_STR = "RANDOM_STR_SUFFIX"
 
 BINARY_BASE = 2
 # 6 means the significant figures, g is python format
@@ -550,8 +554,8 @@ class mysql_source(object):
                    s.referenced_table_schema,
                    s.fk_cols,
                    s.ref_columns,
-                   rc.update_rule,
-                   rc.delete_rule
+                   rc.update_rule as update_rule,
+                   rc.delete_rule as delete_rule
             FROM (
                 SELECT
                     table_name as table_name,
@@ -610,6 +614,7 @@ class mysql_source(object):
             :return: the select list statements for the copy to csv and  the fallback to inserts.
             :rtype: dictionary
         """
+        random = secrets.token_hex(16) + RANDOM_STR
         select_columns = {}
         sql_select = """
             SELECT
@@ -668,10 +673,14 @@ class mysql_source(object):
             cursor.execute(sql_select, (schema, table))
             select_data = cursor.fetchall()
 
-        select_csv = ["COALESCE(REPLACE(%s, '\"', '\"\"'),'NULL') " % statement["select_csv"] for statement in select_data]
+        # We use a random string here when the value is NULL, we can't use 'NULL' to represent a NULL value,
+        # cause we can store a string which is 'NULL'(4 byte length string). But a random string is also not
+        # a perfect method to slove this problem. We may need to find another method to slove this later.
+        select_csv = "COALESCE(REPLACE(%s, '\"', '\"\"'),'{}') ".format(random)
+        select_csv = [select_csv % statement["select_csv"] for statement in select_data]
         select_stat = [statement["select_csv"] for statement in select_data]
         column_list = ['"%s"' % statement["column_name"] for statement in select_data]
-        select_columns["select_csv"] = "REPLACE(CONCAT('\"',CONCAT_WS('\",\"',%s),'\"'),'\"NULL\"','NULL')" % ','.join(select_csv)
+        select_columns["select_csv"] = "REPLACE(CONCAT('\"',CONCAT_WS('\",\"',%s),'\"'),'\"%s\"','NULL')" % (','.join(select_csv), random)
         select_columns["select_stat"]  = ','.join(select_stat)
         select_columns["column_list"]  = ','.join(column_list)
         return select_columns
@@ -867,7 +876,8 @@ class mysql_source(object):
         master_status = self.get_master_coordinates(cursor_buffered)
 
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
-        sql_csv = "SELECT %s as data FROM `%s`.`%s`;" % (select_columns["select_csv"], schema, table)
+        sql_csv = "SELECT /*+ MAX_EXECUTION_TIME(%d) */ %s as data FROM `%s`.`%s`;" %\
+            (MAX_EXECUTION_TIME, select_columns["select_csv"], schema, table)
         self.logger.debug("Executing query for table %s.%s" % (schema, table))
 
         with self.reader_xact(self, cursor_buffered, table_txs):
@@ -881,7 +891,9 @@ class mysql_source(object):
                 csv_results = cursor_unbuffered.fetchmany(copy_limit)
                 if len(csv_results) == 0:
                     break
-                csv_data = "\n".join(d[0] for d in csv_results)
+                # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
+                # will lead to different value stored in MySQL and openGauss, we have no choice...
+                csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
                 if self.copy_mode == 'file':
                     csv_file = codecs.open(out_file, 'wb', self.charset)
                     csv_file.write(csv_data)
@@ -1094,9 +1106,9 @@ class mysql_source(object):
         readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
         writers = self.source_config["writers"] if self.source_config["writers"] > 0 else 1
         size = int(int(self.copy_max_memory) / DEFAULT_MAX_SIZE_OF_CSV)
-        self.write_task_queue = multiprocessing.Queue(size if size > MINIUM_QUEUE_SIZE else MINIUM_QUEUE_SIZE)
-        self.read_task_queue = multiprocessing.Queue()
-        self.index_waiting_queue = multiprocessing.Queue()
+        self.write_task_queue = multiprocessing.Manager().Queue(size if size > MINIUM_QUEUE_SIZE else MINIUM_QUEUE_SIZE)
+        self.read_task_queue = multiprocessing.Manager().Queue()
+        self.index_waiting_queue = multiprocessing.Manager().Queue()
         writer_pool = []
         reader_pool = []
 
@@ -1120,8 +1132,6 @@ class mysql_source(object):
             self.write_task_queue.put(task, block=True)
         self.write_task_queue.put(None, block=True)
         self.wait_for_finish(writer_pool)
-        self.write_task_queue.close()
-        self.read_task_queue.close()
         writer_pool.clear()
         reader_pool.clear()
 
