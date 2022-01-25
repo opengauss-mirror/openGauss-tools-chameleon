@@ -2,20 +2,41 @@ import logging
 import multiprocessing as mp
 import os
 import os.path
+import pickle
 import pprint
 import signal
 import sys
 import time
-import traceback
 from logging.handlers import TimedRotatingFileHandler
 from shutil import copy
-
 import rollbar
 import yaml
 from daemonize import Daemonize
 from tabulate import tabulate
-
 from pg_chameleon import pg_engine, mysql_source, pgsql_source, DBObjectType
+import traceback
+import struct
+import queue
+import threading
+from datetime import datetime
+from pymysql.util import byte2int
+from pymysqlreplication.event import QueryEvent, GtidEvent, XidEvent, RotateEvent
+from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, WriteRowsEvent, RowsEvent
+from pg_chameleon.lib.parallel_replication import TransactionDispatcher
+from pg_chameleon.lib.parallel_replication import MyBinLogStreamReader
+from pg_chameleon.lib.parallel_replication import MyBinLogPacketWrapper
+from pg_chameleon.lib.parallel_replication import ConvertToEvent
+from pg_chameleon.lib.parallel_replication import MyGtidEvent, modified_my_gtid_event
+from pg_chameleon.lib.parallel_replication import Transaction
+from pg_chameleon.lib.parallel_replication import Packet
+
+ROTATE_EVENT = 0X04
+TABLE_MAP_EVENT = 0x13
+FORMAT_DESCRIPTION_EVENT = 0x0f
+
+NUM_PACKET = 1000
+NUM_PACKET_TO_TRX = 250
+NUM_TRX = 500
 
 
 class rollbar_notifier(object):
@@ -485,7 +506,9 @@ class replica_engine(object):
             self.__stop_replica()
             self.pg_engine.update_schema_mappings()
 
-    def read_replica(self, queue, log_read):
+
+
+    def read_replica(self, log_queue, log_read, trx_queue):
         """
             The method reads the replica stream for the given source and stores the row images
             in the target postgresql database.
@@ -495,39 +518,277 @@ class replica_engine(object):
         else:
             keep_existing_schema = False
         self.mysql_source.keep_existing_schema = keep_existing_schema
-        self.mysql_source.logger = log_read[0]
-        self.pg_engine.logger = log_read[0]
+
+        self.mysql_source.logger  = log_read[0]
+        self.pg_engine.logger  = log_read[0]
+
+        self.mysql_source.init_read_replica()
+
+        new_packet_stream = MyBinLogStreamReader(
+            connection_settings=self.mysql_source.replica_conn,
+            server_id=self.mysql_source.my_server_id,
+            only_events=[RotateEvent, DeleteRowsEvent, WriteRowsEvent, UpdateRowsEvent, QueryEvent, MyGtidEvent,
+                         XidEvent],
+            resume_stream=True,
+            only_schemas=self.mysql_source.schema_replica,
+            slave_heartbeat=self.mysql_source.sleep_loop,
+        )
+        if not new_packet_stream._BinLogStreamReader__connected_ctl:
+            new_packet_stream._BinLogStreamReader__connect_to_ctl()
+
+        packet_queue_list = []
+        trx_queue_list = []
+        packet_queue_num = 8
+        initial_log_file = mp.Queue()
+        signal_queue = mp.Queue()
+
+        for i in range(packet_queue_num):
+            packet_queue_list.append(mp.Pipe())
+            trx_queue_list.append(mp.Pipe())
+
+        conn_in, conn_out = mp.Pipe()
+        dispatcher_packet_queue = queue.Queue(1 * 1024 * 1024)
+        threading.Thread(target=self.dispatcher_packet_to_pipe, args=(dispatcher_packet_queue, conn_in)).start()
+
+        dispatcher_packet_process = mp.Process(target=self.dispatcher_packet_to_multiple_process, name='dispatcher_packet_new', daemon=True, args=(conn_out, packet_queue_list, ))
+        dispatcher_packet_process.start()
+
+        for i in range(len(packet_queue_list)):
+            packet_to_trx_process = mp.Process(target=self.convert_packet_to_trx_new_2, name='convert_packet_to_trx', daemon=True, args=(new_packet_stream, packet_queue_list, trx_queue_list, i, signal_queue, initial_log_file, ))
+            packet_to_trx_process.start()
+
+        merge_trx_process = mp.Process(target=self.merge_trx_queue_new_pipe_new, name='merge_trx_queue', daemon=True, args=(trx_queue_list, trx_queue, ))
+        merge_trx_process.start()
+
         while True:
             try:
-                self.mysql_source.read_replica()
+                self.mysql_source.read_replica(dispatcher_packet_queue, signal_queue)
                 time.sleep(self.sleep_loop)
             except Exception:
-                queue.put(traceback.format_exc())
+                log_queue.put(traceback.format_exc())
                 break
 
-    def replay_replica(self, queue, log_replay):
+    def replay_replica(self, log_queue, log_replay, trx_queue):
         """
             The method replays the row images stored in the target postgresql database.
         """
         self.pg_engine.logger = log_replay[0]
-        tables_error = []
         self.pg_engine.connect_db()
         self.pg_engine.set_source_id()
-        while True:
-            try:
-                tables_error = self.pg_engine.replay_replica()
-                if len(tables_error) > 0:
-                    table_list = [item for sublist in tables_error for item in sublist]
-                    tables_removed = "\n".join(table_list)
-                    notifier_message = "There was an error during the replay of data. %s. The affected tables are no longer replicated." % (
-                        tables_removed)
-                    self.logger.error(notifier_message)
-                    self.notifier.send_message(notifier_message, 'error')
+        self.logger.debug("start replay process")
+        transaction_dispatcher = TransactionDispatcher(6, self.pg_engine)
+        transaction_dispatcher.dispatcher(trx_queue)
 
-            except Exception:
-                queue.put(traceback.format_exc())
-                break
-            time.sleep(self.sleep_loop)
+    def merge_trx_queue_new_pipe(self, trx_queue_list, trx_queue):
+        """
+            The method merges the transaction queue according to each packet to transaction process.
+        """
+        local_transaction_queue = queue.Queue()
+        threading.Thread(target=self.dispatcher_trx_queue_read, args=(local_transaction_queue, trx_queue)).start()
+        trx_queue_num = len(trx_queue_list)
+        batch_size = 1000
+        index = 0
+        num = 0
+        count = 0
+        while True:
+            if num == batch_size:
+                index += 1
+                num = 0
+                if index == trx_queue_num:
+                    index = 0
+            trx = trx_queue_list[index][1].recv()
+            local_transaction_queue.put(trx)
+            num += 1
+            count += 1
+
+
+    def merge_trx_queue_new_pipe_new(self, trx_queue_list, trx_queue):
+        """
+            The method merges the transaction queue according to each packet to transaction process.
+        """
+        local_transaction_queue = queue.Queue()
+        threading.Thread(target=self.dispatcher_trx_queue_read, args=(local_transaction_queue, trx_queue)).start()
+        while True:
+            for index in range(len(trx_queue_list)):
+                for i in range(int(NUM_PACKET / NUM_PACKET_TO_TRX)):
+                    for trx in trx_queue_list[index][1].recv():
+                        local_transaction_queue.put(trx)
+
+
+    def dispatcher_trx_queue_read(self, local_transaction_queue, trx_queue):
+        """
+            The method dispatches transaction queue to pipe, used for multi-process communication.
+        """
+        while True:
+            trxs = list()
+            num_trx = NUM_TRX
+            for i in range(num_trx):
+                trx = local_transaction_queue.get()
+                trxs.append(trx)
+            trx_queue.send(trxs)
+
+
+    def dispatcher_packet_to_pipe(self, dispatcher_packet_queue, conn_in):
+        """
+            The method dispatches packet queue to pipe, used for multi-process communication.
+        """
+        while True:
+            packets = list()
+            num_packet = NUM_PACKET
+            for i in range(num_packet):
+                packet = dispatcher_packet_queue.get()
+                packets.append(packet)
+            conn_in.send(packets)
+
+    def convert_packet_to_trx_new_2(self, new_packet_stream, packet_queue_list, trx_queue_list, i, signal_queue, initial_log_file):
+        """
+            The method receives packet from the pip and convert packet to transaction in each process.
+        """
+        packet_queue = queue.Queue()
+        a_packet_queue = packet_queue_list[i][1]
+        threading.Thread(target=self.packet_to_trx,
+                         args=(new_packet_stream, packet_queue, i, trx_queue_list, signal_queue, initial_log_file,)).start()
+        while True:
+            for packet in a_packet_queue.recv():
+                packet_queue.put(packet)
+
+    def packet_to_trx(self, new_packet_stream, packet_queue, k, trx_queue_list, signal_queue, initial_log_file):
+        """
+            The method converts packet to transaction in each process.
+        """
+        modified_my_gtid_event()
+        i = 0
+        j = 0
+        kk = 0
+        master_data = {}
+        close_batch = False
+        binlog_file = ""
+        a_trx_queue = trx_queue_list[k][0]
+        trx_list = list()
+        while True:
+            trx = Transaction()
+            trx.events = []
+            while True:
+                packet = packet_queue.get()
+                if packet is None:
+                    signal_queue.put(master_data)
+                    signal_queue.put(close_batch)
+                    close_batch = False
+                    break
+                i += 1
+                if not new_packet_stream._BinLogStreamReader__connected_ctl:
+                    new_packet_stream._BinLogStreamReader__connect_to_ctl()
+
+                unpack = struct.unpack('<cIcIIIH', packet[0:20])
+                a_packet = Packet(unpack[1], byte2int(unpack[2]), unpack[3], unpack[4], unpack[5], unpack[6],
+                                  packet[20: (20 + unpack[4] - 23)])
+
+                binlog_event = MyBinLogPacketWrapper(a_packet, new_packet_stream.table_map,
+                                                     new_packet_stream._ctl_connection,
+                                                     new_packet_stream._BinLogStreamReader__use_checksum,
+                                                     new_packet_stream._BinLogStreamReader__allowed_events_in_packet,
+                                                     new_packet_stream._BinLogStreamReader__only_tables,
+                                                     new_packet_stream._BinLogStreamReader__ignored_tables,
+                                                     new_packet_stream._BinLogStreamReader__only_schemas,
+                                                     new_packet_stream._BinLogStreamReader__ignored_schemas,
+                                                     new_packet_stream._BinLogStreamReader__freeze_schema,
+                                                     new_packet_stream._BinLogStreamReader__fail_on_table_metadata_unavailable)
+
+                # Process different events by referring to original code in python-mysql-replication
+                if binlog_event.event_type == RotateEvent:
+                    new_packet_stream.log_pos = binlog_event.event.position
+                    new_packet_stream.log_file = binlog_event.event.next_binlog
+                    new_packet_stream.table_map = {}
+                elif binlog_event.log_pos:
+                    new_packet_stream.log_pos = binlog_event.log_pos
+
+                if new_packet_stream.skip_to_timestamp and binlog_event.timestamp < new_packet_stream.skip_to_timestamp:
+                    continue
+
+                if binlog_event.event_type == TABLE_MAP_EVENT and \
+                        binlog_event.event is not None:
+                    new_packet_stream.table_map[binlog_event.event.table_id] = \
+                        binlog_event.event.get_table()
+
+                if binlog_event.event is None or (
+                        binlog_event.event.__class__ not in new_packet_stream._BinLogStreamReader__allowed_events):
+                    continue
+
+                if binlog_event.event_type == FORMAT_DESCRIPTION_EVENT:
+                    new_packet_stream.mysql_version = binlog_event.event.mysql_version
+
+                if isinstance(binlog_event.event, RowsEvent):
+                    binlog_event.event.rows
+
+                packet_str = binlog_event.event.packet.log_pos
+                event = binlog_event.event
+                if i == 1 and not isinstance(event, RotateEvent):
+                    binlog_file = initial_log_file.get()
+                    initial_log_file.put(binlog_file)
+                if isinstance(event, RotateEvent):
+                    trx.binlog_file = event.next_binlog
+                    binlog_file = trx.binlog_file
+                    if initial_log_file.qsize() == 0:
+                        initial_log_file.put(binlog_file)
+                elif isinstance(event, GtidEvent):
+                    if isinstance(event, MyGtidEvent):
+                        trx.gtid = event.gtid
+                        trx.last_committed = event.last_committed
+                        trx.sequence_number = event.sequence_number
+                        trx.binlog_file = binlog_file
+                else:
+                    finished = ConvertToEvent.feed_event(trx, event)
+                    if finished:
+                        trx.finished = finished
+                        trx.sql_list = trx.fetch_sql()
+                        trx.events = []
+                        trx.log_pos = packet_str
+                        kk += 1
+                        trx_dump = pickle.dumps(trx)
+                        trx_list.append(trx_dump)
+                        if kk == NUM_PACKET_TO_TRX:
+                            a_trx_queue.send(trx_list)
+                            kk = 0
+                            trx_list.clear()
+                        j += 1
+                        master_data = trx.get_gtid()
+                        close_batch = trx.finished
+                        break
+
+    def dispatcher_packet_to_multiple_process(self, conn_out, packet_queue_list):
+        """
+            The method receives packet from the pipe and dispatches packet to each packet to transaction process.
+        """
+        q_out = queue.Queue()
+        threading.Thread(target=self.dispatcher_packet_to_every_queue, args=(q_out, packet_queue_list)).start()
+        while True:
+            for packet in conn_out.recv():
+                q_out.put(packet)
+
+    def dispatcher_packet_to_every_queue(self, q_out, packet_queue_list):
+        """
+            The method dispatches packet to each packet to transaction process.
+        """
+        packet_queue_num = len(packet_queue_list)
+        batch_size = NUM_PACKET
+        num = 0
+        index = 0
+        packet_list = list()
+        while True:
+            packet = q_out.get()
+            if packet is not None:
+                unpack = struct.unpack('<cIcIIIH', packet[0:20])
+                event_type = byte2int(unpack[2])
+                if event_type == 0x10:
+                    num += 1
+            packet_list.append(packet)
+            if num == batch_size:
+                num = 0
+                packet_queue_list[index][0].send(packet_list)
+                packet_list.clear()
+                index += 1
+                if index == packet_queue_num:
+                    index = 0
 
     def __run_replica(self):
         """
@@ -551,17 +812,16 @@ class replica_engine(object):
         log_replay = self.__init_logger("replay")
 
         signal.signal(signal.SIGINT, self.terminate_replica)
-        queue = mp.Queue()
+        log_queue = mp.Queue()
         self.sleep_loop = self.config["sources"][self.args.source]["sleep_loop"]
         if self.args.debug:
             check_timeout = self.sleep_loop
         else:
-            check_timeout = self.sleep_loop * 10
+            check_timeout = self.sleep_loop*10
         self.logger.info("Starting the replica daemons for source %s " % (self.args.source))
-        self.read_daemon = mp.Process(target=self.read_replica, name='read_replica', daemon=True,
-                                      args=(queue, log_read,))
-        self.replay_daemon = mp.Process(target=self.replay_replica, name='replay_replica', daemon=True,
-                                        args=(queue, log_replay,))
+        trx_in, trx_out = mp.Pipe()
+        self.read_daemon = mp.Process(target=self.read_replica, name='read_replica', daemon=False, args=(log_queue, log_read, trx_in,))
+        self.replay_daemon = mp.Process(target=self.replay_replica, name='replay_replica', daemon=False, args=(log_queue, log_replay, trx_out,))
         self.read_daemon.start()
         self.replay_daemon.start()
         while True:
@@ -571,9 +831,9 @@ class replica_engine(object):
                 self.logger.debug("Replica process for source %s is running" % (self.args.source))
                 self.pg_engine.cleanup_replayed_batches()
             else:
-                stack_trace = queue.get()
-                self.logger.error("Read process alive: %s - Replay process alive: %s" % (read_alive, replay_alive,))
-                self.logger.error("Stack trace: %s" % (stack_trace,))
+                stack_trace = log_queue.get()
+                self.logger.error("Read process alive: %s - Replay process alive: %s" % (read_alive, replay_alive, ))
+                self.logger.error("Stack trace: %s" % (stack_trace, ))
                 if read_alive:
                     self.read_daemon.terminate()
                     self.logger.error("Replay daemon crashed. Terminating the read daemon.")
@@ -632,6 +892,7 @@ class replica_engine(object):
                 self.pg_engine.disconnect_db()
                 if self.args.debug:
                     self.__run_replica()
+                    print("enter into run replica based on debug")
                 else:
                     if self.config["log_dest"] == 'stdout':
                         foreground = True
@@ -641,13 +902,10 @@ class replica_engine(object):
 
                     keep_fds = [self.logger_fds]
                     app_name = "%s_replica" % self.args.source
-                    replica_daemon = Daemonize(app=app_name, pid=replica_pid, action=self.__run_replica,
-                                               foreground=foreground, keep_fds=keep_fds)
-                    try:
-                        replica_daemon.start()
-                    except:
-                        print("The replica process is already started. Aborting the command.")
 
+                    new_replay_daemon = mp.Process(target=self.__run_replica, name='__run_replica', daemon=False)
+                    new_replay_daemon.start()
+                    print("enter into run replica based on mp.Process")
 
 
     def __stop_replica(self):
@@ -912,9 +1170,9 @@ class replica_engine(object):
             sys.exit()
 
         if debug_mode:
-            log_level = 'debug'
+            log_level = 'warning'
 
-        fh.setLevel(log_level_map.get(log_level, logging.DEBUG))
+        fh.setLevel(log_level_map.get(log_level, logging.WARNING))
         fh.setFormatter(formatter)
         logger.addHandler(fh)
         logger_fds = fh.stream.fileno()
