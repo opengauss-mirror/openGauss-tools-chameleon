@@ -46,6 +46,10 @@ class ColumnType(Enum):
     M_DOUBLE = 'double'
     M_DOUBLE_P = 'double precision'
     M_FLOAT = 'float'
+    M_FLOAT4 = 'float4'
+    M_FLOAT8 = 'float8'
+    M_REAL = 'real'
+    M_FIXED = 'fixed'
     M_YEAR = 'year'
     M_ENUM = 'enum'
     M_SET = 'set'
@@ -218,7 +222,7 @@ class sql_token(object):
                 try:
                     numeric_scale = numeric_dims[1].strip()
                 except:
-                    numeric_scale = 0
+                    numeric_scale = "None"
 
                 col_dic["enum_list"] = enum_list
                 col_dic["character_maximum_length"] = dimensions
