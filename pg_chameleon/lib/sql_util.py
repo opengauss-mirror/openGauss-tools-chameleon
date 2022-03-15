@@ -1,6 +1,9 @@
 import re
 from enum import Enum
 
+DEFAULT_NUMERIC_PRECISION = 10
+DEFAULT_NUMERIC_SCALE = 0
+
 class ColumnType(Enum):
     """
         Some speical column type, pay attention to the enum prefix
@@ -228,6 +231,10 @@ class sql_token(object):
                 col_dic["character_maximum_length"] = dimensions
                 col_dic["numeric_precision"]=numeric_precision
                 col_dic["numeric_scale"]=numeric_scale
+            if col_dic["data_type"] in ["decimal", "dec", "numeric", "fixed"]:
+                col_dic["numeric_precision"] = DEFAULT_NUMERIC_PRECISION
+                col_dic["numeric_scale"] = DEFAULT_NUMERIC_SCALE
+                dimensions = "%s,%s" % (DEFAULT_NUMERIC_PRECISION, DEFAULT_NUMERIC_SCALE)
             nullcons=self.m_nulls.search(col_def)
             autoinc=self.m_autoinc.search(col_def)
             pkey_list=self.pkey_cols
