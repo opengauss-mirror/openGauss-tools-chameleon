@@ -561,6 +561,10 @@ class pg_engine(object):
             ColumnType.M_DOUBLE.value:ColumnType.O_NUM.value,
             ColumnType.M_DOUBLE_P.value:ColumnType.O_NUM.value,
             ColumnType.M_FLOAT.value:ColumnType.O_NUM.value,
+            ColumnType.M_FLOAT4.value:ColumnType.O_NUM.value,
+            ColumnType.M_FLOAT8.value:ColumnType.O_NUM.value,
+            ColumnType.M_REAL.value:ColumnType.O_NUM.value,
+            ColumnType.M_FIXED.value:ColumnType.O_NUM.value,
             ColumnType.M_BIT.value:ColumnType.O_INTEGER.value,
             ColumnType.M_YEAR.value:ColumnType.O_INTEGER.value,
             ColumnType.M_ENUM.value:ColumnType.O_ENUM.value,
@@ -2458,7 +2462,7 @@ class pg_engine(object):
             if (column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value) and\
                 int(column["character_maximum_length"]) > 0:
                 column_type="%s (%s)" % (column_type, str(column["character_maximum_length"]))
-            if column_type == ColumnType.O_NUM.value and str(column["numeric_scale"]) != "None":
+            if column_type == ColumnType.O_NUM.value and ('numeric_scale' in column.keys()) and str(column["numeric_scale"]) != "None":
                 column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
             if column["extra"] == "auto_increment":
                 column_type = ColumnType.O_BIGSERIAL.value
