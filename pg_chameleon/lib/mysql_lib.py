@@ -1535,7 +1535,7 @@ class mysql_source(object):
             else:
                 return origin_value
 
-        if ((origin_value == "inf") and (column_type in ["decimal", "double", "float"])):
+        if "inf" in str(origin_value) and column_type in ["decimal", "double", "float"]:
             return 0
         return self.decode_map.get(column_type, self.__decode_default_value)(origin_value, column_map["numeric_scale"][column_name])
 
