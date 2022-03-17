@@ -102,7 +102,7 @@ class pgsql_source(object):
         """
         if self.source_conn:
             strconn = "opengauss://%(host)s:%(port)s/%(database)s?[connect_timeout]=%(connect_timeout)s" % self.source_conn
-            pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"])
+            pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"], sslmode="disable")
             pgsql_conn.settings['client_encoding']=self.source_conn["charset"]
             pgsql_conn.execute("set session_timeout = 0;")
         else:
@@ -659,7 +659,7 @@ class pg_engine(object):
         """
         if self.dest_conn and not self.pgsql_conn:
             strconn = "opengauss://%(host)s:%(port)s/%(database)s" % self.dest_conn
-            self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"])
+            self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"], sslmode="disable")
             self.pgsql_conn.settings['client_encoding']=self.dest_conn["charset"]
             self.pgsql_conn.execute("set session_timeout = 0;")
         elif not self.dest_conn:
