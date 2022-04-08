@@ -592,6 +592,9 @@ class pg_engine(object):
             '0000-00-00 00:00:00': "NULL",
             '0000-00-00': "NULL"
         }
+        for i in range(7):
+            str = "current_timestamp(%s)" % i
+            self.default_value_map[str] = str
 
         self.migrations = [
             {'version': '2.0.1',  'script': '200_to_201.sql'},
