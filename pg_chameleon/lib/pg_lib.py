@@ -1306,18 +1306,25 @@ class pg_engine(object):
             table_metadata = token["columns"]
             table_name = token["name"]
             index_data = token["indices"]
+            fkey_data = token["fkey"]
             # now we don't support create parition table in start_replica stage
-            table_ddl = self.__build_create_table_mysql(table_metadata, None, table_name, destination_schema, temporary_schema=False)
+            # add create partition
+            partition_metadata = token["partition"]
+            table_ddl = self.__build_create_table_mysql(table_metadata, partition_metadata, table_name, destination_schema, temporary_schema=False)
             table_enum = ''.join(table_ddl["enum"])
             table_statement = table_ddl["table"]
             index_ddl = self.build_create_index( destination_schema, table_name, index_data)
             table_pkey = index_ddl[0]
             table_indices = ''.join([val for key ,val in index_ddl[1].items()])
             self.store_table(destination_schema, table_name, table_pkey, None)
-            query = "%s %s %s " % (table_enum, table_statement,  table_indices)
+            fkey_ddl = self.build_create_fkey(destination_schema, table_name, fkey_data)
+            table_fkey = fkey_ddl[0]
+            table_fkeys = ''.join([val for key ,val in fkey_ddl[1].items()])
+            self.store_table(destination_schema, table_name, table_fkey, None)
+            query = "%s %s %s %s" % (table_enum, table_statement,  table_indices, table_fkeys)
         else:
             if count_table == 1:
-                if token["command"] =="RENAME TABLE":
+                if token["command"] == "RENAME TABLE":
                     old_name = token["name"]
                     new_name = token["new_name"]
                     query = """ALTER TABLE "%s"."%s" RENAME TO "%s" """ % (destination_schema, old_name, new_name)
@@ -1327,11 +1334,40 @@ class pg_engine(object):
                     query=""" DROP TABLE IF EXISTS "%s"."%s";""" % (destination_schema, token["name"])
                 elif token["command"] == "TRUNCATE":
                     query=""" TRUNCATE TABLE "%s"."%s" CASCADE;""" % (destination_schema, token["name"])
-
                 elif token["command"] == "ALTER TABLE":
                     query=self.build_alter_table(destination_schema, token)
                 elif token["command"] == "DROP PRIMARY KEY":
                     self.__drop_primary_key(destination_schema, token)
+                elif token["command"] == "TALTER TABLE":
+                    # TALTER TABLE sum all the alter table DDL, so we need to move all into this part: build_talter_table
+                    query = self.build_talter_table(destination_schema, token)
+                elif token["command"] == "CREATE INDEX FULL":
+                    if token["UFS"] == "UNIQUE":
+                        command = "CREATE UNIQUE INDEX"
+                    else:
+                        command = "CREATE INDEX"
+                    index_concurrent = ""
+                    index_type = ''
+                    if token["index_type"]:
+                        index_type = "USING %s" % (token["index_type"])
+                    key_part = token["key_part"]
+                    index_option = token["index_option"]
+                    if index_option.upper().find("USING") != -1:
+                        index_type = index_option
+                    algorithm_lock_option = token["algorithm_lock_option"]
+                    index_name = token["index_name"]
+                    table_name = token["name"]
+                    query = """%s %s %s ON %s.%s %s (%s);""" % (
+                    command, index_concurrent, index_name, destination_schema, table_name, index_type, key_part)
+                elif token["command"] == "DROP INDEX FULL":
+                    command = "DROP INDEX"
+                    index_concurrent = ""
+                    index_exist = ""
+                    index_cascade = ""
+                    index_name = token["index_name"]
+                    table_name = token["name"]
+                    algorithm_lock_option = token["algorithm_lock_option"]
+                    query = """%s %s %s %s.%s %s ;""" % (command, index_concurrent, index_exist, destination_schema, index_name, index_cascade)
         return query
 
     def build_enum_ddl(self, schema, enm_dic):
@@ -1515,6 +1551,392 @@ class pg_engine(object):
         query += ' '.join(ddl_post_alter)
         return query
 
+    def build_talter_table(self, schema, token):
+        """
+        The method builds the alter table statement from the token data.
+        build_talter_table is just like parse_t_alter_table
+        Covers various types of alter table statements and guide different types of alter table statements to corresponding functions
+        the function is like build_t_alter_x where x is a number
+        and the build function build_t_alter_x is match the parse function parse_t_alter_x in sql_util
+
+        For better understanding please have a look to
+            the function parse_t_alter_table in sql_util.py
+
+        After build ALTER TABLE statement in function build_t_alter_x, we can build the partition_options
+
+            :param schema: The schema where the affected table is stored on postgres.
+            :param token: A dictionary with the tokenised sql statement
+            :return: query the DDL query in the PostgreSQL dialect
+            :rtype: string
+
+        """
+        query = ""
+        alter_id = token["alter_id"]
+        if alter_id < 100:
+            method_name = "build_t_alter_" + str(alter_id)
+            method = getattr(self, method_name)
+            query = method(schema, token)
+        alt_par = token["alt_partition"]
+        if not alt_par:
+            return query
+        for alt_item in alt_par["par_alt"]:
+            querys = ""
+            command = alt_item["command"]
+            if command == "ADD":
+                querys = "ALTER TABLE %s.%s %s ;" % (schema, alt_item["tbl_name"], alt_item["part"])
+            elif command == "DROP":
+                for dim in alt_item["part"]:
+                    querys += "ALTER TABLE %s.%s DROP PARTITION %s ;" % (schema, alt_item["tbl_name"], dim)
+            elif command == "TRUNCATE":
+                for dim in alt_item["part"]:
+                    if dim.upper() == "ALL":
+                        dimall = self.get_table_partitions(schema, alt_item["tbl_name"])
+                        for dim_item in dimall:
+                            querys += "ALTER TABLE %s.%s TRUNCATE PARTITION %s ;" % (schema, alt_item["tbl_name"], dim_item)
+                        break
+                    querys += "ALTER TABLE %s.%s TRUNCATE PARTITION %s ;" % (schema, alt_item["tbl_name"], dim)
+            elif command == "COALESCE":
+                num = int(alt_item["part"][0])
+                dims = self.get_table_partitions(schema, alt_item["tbl_name"])
+                querys += "ALTER TABLE %s.%s MERGE PARTITIONS " % (schema, alt_item["tbl_name"])
+                for dim in dims[-num:]:
+                    querys += "%s," % dim
+                querys = querys.rstrip(",")
+                querys += " INTO PARTITION %s;" % (dims[-num-1])
+            elif command == "REORGANIZE":
+                if len(alt_item["part1"]) == 1:
+                    querys += "ALTER TABLE %s.%s SPLIT PARTITION %s INTO (" % (schema, alt_item["tbl_name"], alt_item["part1"][0])
+                    for dim in alt_item["part2"]:
+                        querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
+                    querys = querys.rstrip(",")
+                    querys += ");"
+                elif len(alt_item["part2"]) == 1:
+                    querys += "ALTER TABLE %s.%s MERGE PARTITIONS " % (schema, alt_item["tbl_name"])
+                    for dim in alt_item["part1"]:
+                        querys += "%s," % dim
+                    querys = querys.rstrip(",")
+                    querys += " INTO PARTITION %s;"%(alt_item["part2"][0][0])
+                else:
+                    querys += "ALTER TABLE %s.%s MERGE PARTITIONS " % (schema, alt_item["tbl_name"])
+                    for dim in alt_item["part1"]:
+                        querys += "%s," % (dim)
+                    querys = querys.rstrip(",")
+                    querys += " INTO PARTITION p0_tmp;"
+                    querys += "ALTER TABLE %s.%s SPLIT PARTITION p0_tmp INTO (" % (
+                    schema, alt_item["tbl_name"])
+                    for dim in alt_item["part2"]:
+                        querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
+                    querys = querys.rstrip(",")
+                    querys += ");"
+            elif command == "EXCHANGE":
+                querys += "ALTER TABLE %s.%s EXCHANGE PARTITION (%s) WITH TABLE %s.%s ;" % (schema, alt_item["tbl_name"], alt_item["part1"], schema, alt_item["part2"])
+            else:
+                print("The statement is not supported")
+            query += querys
+        return query
+
+    def build_t_alter_0(self, schema, token):
+        """
+        Please have a look to build_talter_table.
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            | ADD [COLUMN] col_name column_definition
+                [FIRST | AFTER col_name]
+            | ADD [COLUMN] (col_name column_definition,...)
+        """
+        query = self.build_t_alter_1(schema, token)
+        return query
+
+    def build_t_alter_1(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            | ADD [COLUMN] col_name column_definition
+                [FIRST | AFTER col_name]
+            | ADD [COLUMN] (col_name column_definition,...)
+        """
+        query = ""
+        tbl_name = token["name"]
+        for alter_dic in token["alter_cmd"]:
+            idx = 0
+            tdx = 0
+            compress_mode = ""
+            collate = alter_dic["collate"]
+            querys = """ALTER TABLE "%s"."%s" ADD COLUMN %s %s %s %s""" % (
+                schema, tbl_name, alter_dic["col_name"], alter_dic["data_type"], compress_mode, collate)
+
+            constraint_name = tbl_name + '_' + alter_dic["col_name"] + '_key'
+            column_constraint = "CONSTRAINT %s " % (constraint_name)
+            column_constraint += """%s %s %s""" % (
+                alter_dic["null"], alter_dic["check"], alter_dic["default"]
+            )
+            if alter_dic["null"] or alter_dic["check"] or alter_dic["default"]:
+                tdx = 1
+            if alter_dic["unique"] or alter_dic["primary"] or alter_dic["references"]:
+                idx = 1
+            if alter_dic["unique"]:
+                column_constraint += " UNIQUE"
+            if alter_dic["primary"]:
+                column_constraint += " PRIMARY KEY"
+            # referenced
+            if alter_dic["references"]:
+                column_constraint += alter_dic["references"]
+                if alter_dic["references_match"]:
+                    column_constraint += alter_dic["references_match"]
+                if alter_dic["references_on"]:
+                    column_constraint += alter_dic["references_on"]
+            if tdx+idx:
+                querys = querys + column_constraint
+            querys += ';'
+            if idx:
+                querys += "ALTER TABLE %s.%s RENAME CONSTRAINT %s TO %s;" % (schema, tbl_name, constraint_name, alter_dic["col_name"] )
+            query += querys
+        return query
+
+    def build_t_alter_2(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            ADD {INDEX | KEY} [index_name]
+                [index_type] (key_part,...) [index_option] ...
+        """
+        query = ""
+
+        for alter_dic in token["alter_cmd"]:
+            index_option = []
+            for i in range(1, 6):
+                index_option[i] = alter_dic["index_option_"+str(i)]
+            if not alter_dic["index_name"]:
+                table_timestamp = str(int(time.time()))
+                alter_dic["index_name"] = "idx_"+table_timestamp
+            if index_option[2]:
+                alter_dic["index_type"] = index_option[2]
+            query = "CREATE INDEX %s.%s ON %s.%s %s %s;" % (schema, alter_dic["index_name"], schema, token["name"], alter_dic["index_type"], alter_dic["key_part"])
+        return query
+
+    def build_t_alter_3(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            ADD {FULLTEXT | SPATIAL} [INDEX | KEY] [index_name]
+                (key_part,...) [index_option] ...
+        """
+        query = self.build_t_alter_2(schema, token)
+        return query
+
+    def build_t_alter_4(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            ADD [CONSTRAINT [symbol]] PRIMARY KEY
+                [index_type] (key_part,...) [index_option] ...
+        """
+        query = ""
+        tbl_name = token["name"]
+        for alter_dic in token["alter_cmd"]:
+            index_type = alter_dic["index_type"]
+            key_part = alter_dic["key_part"]
+            index_option = []
+            for i in range(1, 6):
+                index_option[i] = alter_dic["index_option_" + str(i)]
+            if index_option[2]:
+                index_type = index_option[2]
+            index_constraint = ""
+            constraint_name = alter_dic["symbol"]
+            if constraint_name:
+                index_constraint = "CONSTRAINT %s " % (constraint_name)
+            index_parameters = ""
+            query = "ALTER TABLE %s.%s ADD %s PRIMARY KEY %s;" % (schema, tbl_name, index_constraint, key_part)
+        return query
+
+    def build_t_alter_5(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            ADD [CONSTRAINT [symbol]] UNIQUE [INDEX | KEY]
+                [index_name] [index_type] (key_part,...)
+                [index_option] ...
+        """
+        query = ""
+        tbl_name = token["name"]
+        for alter_dic in token["alter_cmd"]:
+            index_constraint = ""
+            constraint_name = alter_dic["symbol"]
+            if constraint_name:
+                index_constraint = "CONSTRAINT %s " % (constraint_name)
+            index_name = alter_dic["index_name"]
+            index_type = alter_dic["index_type"]
+            key_part = alter_dic["key_part"]
+            compress_mode = ""
+            collate_collation = ""
+            index_parameters = ""
+            index_option = []
+            for i in range(1, 6):
+                index_option[i] = alter_dic["index_option_" + str(i)]
+            if index_option[2]:
+                index_type = index_option[2]
+            # ADD table_constraint_using_index
+            if alter_dic["unique"] == 'INDEX':
+                query = """ALTER TABLE "%s"."%s" ADD %s UNIQUE USING INDEX %s;""" % (schema, tbl_name, index_constraint, index_name)
+            # ADD table_constraint
+            else:
+                query = """ALTER TABLE "%s"."%s" ADD %s UNIQUE %s;""" % (schema, tbl_name, index_constraint, key_part)
+            key_p = key_part.replace("(", "").replace(")", "").strip()
+            comm = key_p.find(',')
+            if comm == -1:
+                new_name = key_p.strip()
+            else:
+                new_name = key_p[0:comm].strip()
+            old_name = tbl_name
+            while True:
+                comm = key_p.find(',')
+                if comm == -1:
+                    break
+                namek = key_p[0:comm].strip()
+                old_name += "_%s" % namek
+                key_p = key_p[comm + 1:].strip()
+            old_name += "_%s_key" % key_p
+            if index_name:
+                new_name = index_name
+            if not index_constraint:
+                query += "ALTER TABLE %s.%s RENAME CONSTRAINT %s TO %s;" % (schema, tbl_name, old_name, new_name)
+        return query
+
+    def build_t_alter_6(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            ADD [CONSTRAINT [symbol]] FOREIGN KEY
+                [index_name] (col_name,...)
+                reference_definition
+        need to change child_parent_id_fkey to child_ibfk_1
+        """
+        query = ""
+        tbl_name = token["name"]
+        for alter_dic in token["alter_cmd"]:
+            index_constraint = ""
+            constraint_name = alter_dic["symbol"]
+            if constraint_name:
+                index_constraint = "CONSTRAINT %s " % (constraint_name)
+            index_name = alter_dic["index_name"]
+            index_type = alter_dic["index_type"]
+            key_part = alter_dic["key_part"]
+            compress_mode = ""
+            collate_collation = ""
+            index_parameters = ""
+            # ADD table_constraint
+            refer = ""
+            if alter_dic["references"]:
+                references = alter_dic["references"].replace('REFERENCES', 'REFERENCES %s.'%(schema))
+                refer += references
+                if alter_dic["references_match"]:
+                    refer += alter_dic["references_match"]
+                if alter_dic["references_on"]:
+                    refer += alter_dic["references_on"]
+            query = """ALTER TABLE "%s"."%s" ADD %s FOREIGN KEY %s""" % (
+                schema, tbl_name, index_constraint, key_part)
+            if refer:
+                query += " %s;" % refer
+            else:
+                query += ';'
+            if not index_constraint:
+                key_p = key_part.replace("(","").replace(")","").strip()
+                i = 1
+                old_name = "%s_%s_fkey" % (tbl_name, key_p)
+                new_name = "%s_ibfk_%s" % (tbl_name, i)
+                query += "ALTER TABLE %s.%s RENAME CONSTRAINT %s TO %s;" % (schema, tbl_name, old_name, new_name)
+        return query
+
+    def build_t_alter_8(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            DROP {CHECK | CONSTRAINT} symbol
+        """
+        query = ""
+        tbl_name = token["name"]
+        for alter_dic in token["alter_cmd"]:
+            symbol = alter_dic["symbol"]
+            query = "ALTER TABLE %s.%s DROP CONSTRAINT %s;" % (schema, tbl_name, symbol)
+        return query
+
+
+    def build_t_alter_19(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            DROP {INDEX | KEY} index_name
+        """
+        query = ""
+        for alter_dic in token["alter_cmd"]:
+            query = "DROP INDEX %s.%s;" % (schema, alter_dic["col_name"])
+        return query
+
+    def build_t_alter_20(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            DROP PRIMARY KEY
+        """
+        query = ""
+        self.__drop_primary_key(schema, token)
+        return query
+
+    def build_t_alter_21(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            DROP FOREIGN KEY fk_symbol
+        """
+        query = ""
+        for alter_dic in token["alter_cmd"]:
+            query = "ALTER TABLE %s.%s DROP CONSTRAINT %s;" % (schema, token["name"], alter_dic["col_name"])
+        return query
+
+    def build_t_alter_22(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            DROP [COLUMN] col_name
+        If you want to drop constraints with, please use DROP CONSTRAINT symbol
+        """
+        query = ""
+        for alter_dic in token["alter_cmd"]:
+            query = "ALTER TABLE %s.%s DROP COLUMN %s;" % (schema, token["name"], alter_dic["col_name"])
+        return query
+
+    def get_table_partitions(self, schema, tbl_name):
+        """
+        This function is used to extract all partition names in the partition table
+        """
+        self.logger.info("get partitions from the table %s.%s" % (schema, tbl_name))
+        sql_partition = """
+            SELECT relname
+            FROM
+                pg_partition
+            WHERE
+                parentid in(
+            SELECT relfilenode
+            FROM
+            pg_class tab
+            INNER JOIN pg_namespace sch
+            ON
+            sch.oid=tab.relnamespace
+            WHERE
+            tab.relname='%s'
+            AND sch.nspname='%s'
+            )
+            ;
+        """
+        stmt = self.pgsql_conn.prepare(sql_partition % (tbl_name, schema))
+        partition_names = stmt()
+        if partition_names is None:
+            return []
+        partitions = []
+        for part in partition_names:
+            if part[0]!=tbl_name:
+                partitions.append(part[0])
+        return partitions
 
     def __drop_primary_key(self, schema, token):
         """
@@ -2422,6 +2844,22 @@ class pg_engine(object):
         default_str = "DEFAULT %s%s%s%s" % (re_symbol, quote, origin_default, quote)
         return default_str
 
+    def metadata_method_check(self, metadata, check_method):
+        method = ""
+        if metadata[0][check_method] == "RANGE" or\
+            metadata[0][check_method] == "RANGE COLUMNS":
+            method += "RANGE"
+        elif metadata[0][check_method] == "LIST" or\
+            metadata[0][check_method] == "LIST COLUMNS":
+            method += "LIST"
+        elif metadata[0][check_method] == "HASH" or partition_metadata[0]["partition_method"] == "KEY" or\
+            metadata[0][check_method] == "LINEAR KEY" or\
+            metadata[0][check_method] == "LINEAR HASH":
+            method += "HASH"
+        else:
+            return False
+        return method
+
     def __build_create_table_mysql(self, table_metadata, partition_metadata, table_name,  schema, temporary_schema=True):
         """
             The method builds the create table statement with any enumeration associated using the mysql's metadata.
@@ -2478,7 +2916,13 @@ class pg_engine(object):
             return table_ddl
 
         if partition_metadata[0]["subpartition_method"] is not None:
-            self.logger.warning("%s.%s is a composite partition table, ignore subpartition" % (schema, table_name))
+            if partition_metadata[0]["subpartition_method"] == "":
+                self.logger.warning("%s.%s is a composite partition table, ignore subpartition" % (schema, table_name))
+        #now we get the subpartition part
+            else:
+                subpartition_method = self.build_sub_partition(schema, table_name, table_metadata, partition_metadata)
+                table_ddl["table"] = (ddl_head + def_columns + subpartition_method + ddl_tail)
+                return table_ddl
 
         # get partition key num
         part_key = partition_metadata[0]["partition_expression"].replace('`', '')
@@ -2499,21 +2943,14 @@ class pg_engine(object):
 
         # ok, let's make the partition clause
         partition_method = ") PARTITION BY "
-        if partition_metadata[0]["partition_method"] == "RANGE" or\
-            partition_metadata[0]["partition_method"] == "RANGE COLUMNS":
-            partition_method += "RANGE"
-        elif partition_metadata[0]["partition_method"] == "LIST" or\
-            partition_metadata[0]["partition_method"] == "LIST COLUMNS":
-            partition_method += "LIST"
-        elif partition_metadata[0]["partition_method"] == "HASH" or partition_metadata[0]["partition_method"] == "KEY" or\
-            partition_metadata[0]["partition_method"] == "LINEAR KEY" or\
-            partition_metadata[0]["partition_method"] == "LINEAR HASH":
-            partition_method += "HASH"
-        else:
-            self.logger.warning("Unknown partition type: %s, create this table(%s.%s) as non-part table"\
-                % (partition_metadata[0]["partition_method"], schema, table_name))
-            table_ddl["table"] = (ddl_head+def_columns+ddl_tail)
+        method = self.metadata_method_check(partition_metadata,"partition_method")
+        if not method:
+            self.logger.warning("Unknown partition type: %s, create this table(%s.%s) as non-part table" \
+                                % (partition_metadata[0]["partition_method"], schema, table_name))
+            table_ddl["table"] = (ddl_head + def_columns + ddl_tail)
             return table_ddl
+        else:
+            partition_method += method
 
         partition_method += "(" + part_key + ") ("
         part_column = []
@@ -2536,6 +2973,83 @@ class pg_engine(object):
         def_part = str(',').join(part_column)
         table_ddl["table"] = (ddl_head+def_columns+partition_method+def_part+ddl_tail)
         return table_ddl
+
+    def build_sub_partition(self, schema, table_name, sub_table_metadata, sub_partition_metadata):
+        """
+        This function is used to compile DDL statements that generate child partitions
+        Range-Range, Range-List, Range-Hash
+        List-Range, List-List, List-Hash
+        Hash-Range, Hash-List, Hash-Hash
+        """
+        part_key = sub_partition_metadata[0]["partition_expression"].replace('`', '')
+        part_key_split = part_key.split(',')
+        sub_part_key = sub_partition_metadata[0]["subpartition_expression"].replace('`', '')
+
+        if len(part_key_split) > self.max_range_column or \
+                (sub_partition_metadata[0]["partition_method"] != "RANGE COLUMNS" and len(part_key_split) > 1):
+            self.logger.warning("%s.%s's partition key num(%d) exceed max value, create as normal table" \
+                                % (schema, table_name, len(part_key_split)))
+            return ""
+
+        # special case for KEY partition
+        # but KEY is not support in subpartition
+        if sub_partition_metadata[0]["partition_method"] == "KEY" or sub_partition_metadata[0][
+            "partition_method"] == "LINEAR KEY":
+                return ""
+
+        # ok, let's make the partition clause
+        partition_method = ") PARTITION BY "
+        method = self.metadata_method_check(sub_partition_metadata,"partition_method")
+        if not method:
+            self.logger.warning("Unknown partition type: %s, create this table(%s.%s) as non-part table" \
+                                % (sub_partition_metadata[0]["partition_method"], schema, table_name))
+            return ""
+        else:
+            partition_method += method
+
+        # and make the subpartition clause
+        partition_method += "(" + part_key + ") SUBPARTITION BY "
+        method = self.metadata_method_check(sub_partition_metadata, "subpartition_method")
+        if not method:
+            self.logger.warning("Unknown partition type: %s, create this table(%s.%s) as non-part table" \
+                                % (sub_partition_metadata[0]["subpartition_method"], schema, table_name))
+            return ""
+        else:
+            partition_method += method
+        partition_method += "(" + sub_part_key + ") ("
+
+        part_pcolumn = []
+        part_scolumn = []
+        part_p = ""
+        part_s = ""
+        for part_data in sub_partition_metadata:
+            # partition
+            if part_data["subpartition_ordinal_position"] == 0 or part_pcolumn==[]:
+                if part_data["partition_method"] == "RANGE" or part_data["partition_method"] == "RANGE COLUMNS":
+                    part_p = ' PARTITION %s VALUES LESS THAN (%s) '%(part_data["partition_name"], part_data["partition_description"])
+                elif part_data["partition_method"] == "LIST" or part_data["partition_method"] == "LIST COLUMNS":
+                    part_p = ' partition %s values(%s) ' % (part_data["partition_name"], part_data["partition_description"])
+                elif part_data["partition_method"] == "HASH" or part_data["partition_method"] == "LINEAR HASH":
+                    part_p = ' partition %s ' % (part_data["partition_name"])
+                else:
+                    self.logger.warning("Unknown partition type: %s, create this table(%s) as non-part table" \
+                                        % (sub_partition_metadata[0]["partition_method"], table_name))
+                    return ""
+                if part_data["tablespace_name"] != "":
+                    part_p += " TABLESPACE %s " % (part_data["tablespace_name"])
+                part_pcolumn.append(part_p)
+                part_scolumn = []
+            # subpartition
+            else:
+                part_s = " SUBPARTITION %s " % (part_data["subpartition_name"])
+                if part_data["tablespace_name"] != "":
+                    part_s += " TABLESPACE %s " % (part_data["tablespace_name"])
+                part_scolumn.append(part_s)
+                def_part_c = str(',').join(part_scolumn)
+                part_pcolumn.pop()
+                part_pcolumn.append(part_p + " (" + def_part_c + " )")
+        def_part = str(',').join(part_pcolumn)
+        return partition_method + def_part
 
     def build_create_index(self, schema, table, index_data):
         """
@@ -2575,6 +3089,19 @@ class pg_engine(object):
                     idx_ddl[index_name] = idx_def
                 self.idx_sequence+=1
         return [table_primary, idx_ddl]
+
+    def build_create_fkey(self, schema, table, fkey_data):
+        """
+            just like build_create_index but for foreign key
+        """
+        fkey_ddl = {}
+        table_primary = []
+        for fkey in fkey_data:
+            fkey_name = fkey["fkey_name"]
+            fkey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s FOREIGN KEY %s REFERENCES %s.%s;"""%(schema, table, fkey_name, fkey["fkey_id"], schema, fkey["fkey_ref"] )
+            fkey_ddl[fkey_name] = fkey_def
+            self.idx_sequence += 1
+        return [table_primary, fkey_ddl]
 
 
     def get_log_data(self, log_id):
@@ -2892,7 +3419,7 @@ class pg_engine(object):
             app_name = "[pg_chameleon] - source: %s, action: %s" % (self.source, action)
         else:
             app_name = "[pg_chameleon] -  action: %s" % (action)
-        self.pgsql_conn.settings['application_name']=app_name
+        self.pgsql_conn.settings['application_name'] = app_name
 
     def write_batch(self, group_insert):
         """
@@ -3412,7 +3939,7 @@ class pg_engine(object):
         self.logger.debug("Checking consistent status for source: %s" %(self.source, ) )
         source_consistent = stmt.first()
         if source_consistent:
-            self.logger.info("The source: %s reached the consistent status" %(self.source, ) )
+            self.logger.info("The source: %s reached the consistent status" % (self.source, ) )
             sql_set_source_consistent = """
                 UPDATE sch_chameleon.t_sources
                     SET

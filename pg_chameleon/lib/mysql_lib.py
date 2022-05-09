@@ -480,11 +480,15 @@ class mysql_source(object):
         sql_metadata="""
             SELECT DISTINCT
                 partition_ordinal_position as partition_ordinal_position,
+                subpartition_ordinal_position as subpartition_ordinal_position,
+                subpartition_name as subpartition_name,
                 subpartition_method as subpartition_method,
+                subpartition_expression as subpartition_expression,
                 partition_name as partition_name,
                 partition_method as partition_method,
                 partition_expression as partition_expression,
-                partition_description as partition_description
+                partition_description as partition_description,
+                tablespace_name as tablespace_name
             FROM
                 information_schema.partitions
             WHERE
@@ -1406,7 +1410,7 @@ class mysql_source(object):
                 column_data = self.cursor_buffered.fetchall()
                 for column in column_data:
                     column_type[column["column_name"]] = column["data_type"]
-                    numeric_scale[column["column_name"]] = column["numeric_scale"]
+                    numeric_scale[column["column_name"]] = column["NUMERIC_SCALE"]
                 table_dict = {}
                 table_dict["table_charset"] = table_charset
                 table_dict["column_type"] = column_type
