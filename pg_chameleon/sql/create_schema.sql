@@ -1107,3 +1107,23 @@ WHERE
     AND con.contype='f'
 ) fk
 ;
+-- Create the enumeration type of the database object
+CREATE TYPE sch_chameleon.en_object_type AS ENUM ('VIEW','TRIGGER','FUNC','PROC');
+
+CREATE TABLE sch_chameleon.t_replica_object
+(
+    -- id
+    i_id_object      BIGSERIAL,
+    -- Connect to t_sources table, t_sources is a mapping table with some other replicate informations.
+    i_id_source      BIGINT                       NOT NULL REFERENCES sch_chameleon.t_sources on update restrict on delete cascade,
+    -- type of replicate object (view/trigger/func/proc)
+    en_object_type   sch_chameleon.en_object_type NULL,
+    -- replicate time
+    ts_created       TIMESTAMP WITH TIME ZONE     NOT NULL DEFAULT clock_timestamp(),
+    -- replicate result, True if success, else False
+    b_status         BOOLEAN                      NOT NULL,
+    -- raw sql from mysql
+    t_src_object_sql TEXT                         NOT NULL,
+    -- translated sql statement, it is null in case of failure to execute or error in translation
+    t_dst_object_sql TEXT                         NULL
+);

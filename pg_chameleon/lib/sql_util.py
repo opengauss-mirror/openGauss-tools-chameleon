@@ -1,5 +1,9 @@
+import logging
+import os
 import re
-from enum import Enum
+import subprocess
+from enum import Enum, unique
+
 
 class ColumnType(Enum):
     """
@@ -640,3 +644,65 @@ class sql_token(object):
         for v in split_num:
             version_num = version_num * sql_token.VERSION_SCALE + int(v)
         return version_num
+
+
+@unique
+class DBObjectType(Enum):
+    """
+    Enumeration class for database object types.
+    """
+    VIEW = "view"
+    TRIGGER = "trigger"
+    PROC = "procedure"
+    FUNC = "function"
+
+    def sql_to_get_object_metadata(self):
+        """
+        This method can obtain the sql which can get the object metadata.
+        The obtained sql is in mysql dialect format.
+
+        :return: target sql string
+        """
+        sql_on_dict = {
+            DBObjectType.VIEW: "SELECT TABLE_NAME AS OBJECT_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '%s';",
+            DBObjectType.TRIGGER: "SELECT TRIGGER_NAME AS OBJECT_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = '%s';",
+            DBObjectType.PROC: "SELECT NAME AS OBJECT_NAME FROM mysql.proc WHERE type = 'PROCEDURE' AND db = '%s';",
+            DBObjectType.FUNC: "SELECT NAME AS OBJECT_NAME FROM mysql.proc WHERE type = 'FUNCTION' AND db = '%s';"
+        }
+        return sql_on_dict[self]
+
+    def sql_to_get_create_object_statement(self):
+        """
+        This method can obtain the sql, which use to get source database details about creating object.
+        The obtained sql is in mysql dialect format.
+
+        :return: target sql string
+        """
+        return "SHOW CREATE {} %s.%s;".format(self.value.upper())
+
+
+class SqlTranslator():
+
+    def __init__(self):
+        """
+        Class constructor.
+        This method sets the value of lib_dir to the absolute path of the lib directory.
+
+        """
+        self.lib_dir = os.path.dirname(os.path.realpath(__file__))
+
+    def mysql_to_opengauss(self, raw_sql):
+        """
+        Translate sql dialect in mysql format to opengauss format.
+        Implement the power of translating sql statements with calling java subproject og-translator through CMD.
+
+        :param raw_sql: the sql in mysql dialect format
+        :return: a tuple with stdout, stderr_in_list
+        """
+        # chameleon calling the java subproject og-translator to implement the power of translating sql statements
+        cmd = "java -jar %s/sql-translator-1.0.jar '%s'" % (self.lib_dir, raw_sql.replace("\'", "\""))
+        communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+
+        stdout = communicate[0].decode("utf-8").replace("`", "")  # sql translated into opengauss dialect format
+        stderr = communicate[1].decode("utf-8")  # logs generated during translation
+        return stdout, stderr

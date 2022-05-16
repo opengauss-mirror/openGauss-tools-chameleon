@@ -1,25 +1,27 @@
-import multiprocessing
-import sys
-import io
-import gc
-import time
-
-import secrets
-import pymysql
 import codecs
-import binascii
-from pymysqlreplication import BinLogStreamReader
-from pymysqlreplication.event import QueryEvent, GtidEvent, HeartbeatLogEvent
-from pymysqlreplication.row_event import DeleteRowsEvent,UpdateRowsEvent,WriteRowsEvent
-from pymysqlreplication.event import RotateEvent
-from pg_chameleon import sql_token, ColumnType
+import gc
+import io
+import logging
+import multiprocessing
+import re
+import secrets
+import sys
 from os import remove
-from geomet import wkb
-from geomet import wkt
+
 import MySQLdb
 import MySQLdb.cursors
+import binascii
+import pymysql
+from geomet import wkb
+from geomet import wkt
+from pymysqlreplication import BinLogStreamReader
+from pymysqlreplication.event import QueryEvent, GtidEvent, HeartbeatLogEvent
+from pymysqlreplication.event import RotateEvent
+from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, WriteRowsEvent
 
+from pg_chameleon import sql_token, ColumnType
 from pg_chameleon.lib.pg_lib import pg_engine
+from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
 from pg_chameleon.lib.task_lib import copy_data_task, create_index_task, read_data_task
 
 POINT_PREFIX_LEN = len('POINT ')
@@ -82,6 +84,7 @@ class mysql_source(object):
         """
         self.index_waiting_queue = None
         self.__init_decode_map()
+        self.sql_translator = SqlTranslator()
 
     @classmethod
     def __decode_hexify_value(cls, origin_value, numeric_scale):
@@ -117,8 +120,8 @@ class mysql_source(object):
     def __decode_float_value(cls, float_type):
         def __real_decode(origin_value, numeric_scale):
             if not numeric_scale or numeric_scale == 'NULL':
-                format_str = DEFAULT_FLOAT_FORMAT_STR if (float_type == ColumnType.M_FLOAT.value)\
-                    else DEFAULT_DOUBLE_FORMAT_STR
+                format_str = DEFAULT_FLOAT_FORMAT_STR if (
+                            float_type == ColumnType.M_FLOAT.value) else DEFAULT_DOUBLE_FORMAT_STR
             else:
                 format_str = '{:.' + str(numeric_scale) +'f}'
             return float(format_str.format(origin_value))
@@ -525,7 +528,8 @@ class mysql_source(object):
                     WHEN data_type="enum"
                 THEN
                     SUBSTRING(COLUMN_TYPE,5)
-                END AS enum_list
+                END AS enum_list,
+                column_comment AS column_comment
             FROM
                 information_schema.COLUMNS
             WHERE
@@ -1887,3 +1891,116 @@ class mysql_source(object):
             self.logger.critical(notifier_message)
             self.notifier.send_message(notifier_message, 'critical')
             raise
+
+    def start_database_object_replica(self, db_object_type):
+        """
+        The method start a database object's replication from mysql to destination with configuration.
+
+        :param db_object_type: the database object type, refer to enumeration class DBObjectType
+        """
+        self.logger.info("Starting the %s replica for source %s." % (db_object_type.value, self.source))
+        self.__init_sync()
+
+        sql_to_get_object_metadata = db_object_type.sql_to_get_object_metadata()
+        sql_to_get_create_object_statement = db_object_type.sql_to_get_create_object_statement()
+
+        for schema in self.schema_mappings:
+            self.logger.info("Starting the %s replica for schema %s." % (db_object_type.value, schema))
+            success_num = 0  # number of replication success records
+            failure_num = 0  # number of replication fail records
+
+            # get metadata (object name) of all objects on schema
+            self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
+            for object_metadata in self.cursor_buffered.fetchall():
+                object_name = object_metadata["OBJECT_NAME"]
+
+                # get the details required to create the object
+                self.cursor_buffered.execute(sql_to_get_create_object_statement % (schema, object_name))
+                create_object_metadata = self.cursor_buffered.fetchone()
+                create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
+
+                # translate sql dialect in mysql format to opengauss format.
+                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
+                tran_create_view_statement = self.__get_tran_create_view_statement(db_object_type, schema, stdout)
+                has_error = self.__unified_log(stderr)
+                if has_error:
+                    # if translation has any error, this replication also fail
+                    # insert a failure record into the object replication status table
+                    self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
+                    failure_num += 1
+                    continue
+                # if translate successful, add the corresponding database object to opengauss
+                try:
+                    self.pg_engine.add_object(object_name, self.schema_mappings[schema], tran_create_view_statement)
+                    self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement,
+                                                                  tran_create_view_statement)
+                    success_num += 1
+                except Exception as e:
+                    self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
+                    self.logger.error(e)
+                    failure_num += 1
+
+            self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
+                db_object_type.value, schema, success_num + failure_num, success_num, failure_num))
+
+    def __get_tran_create_view_statement(self, db_object_type, schema, stdout):
+        """
+        Stdout should not be execute on opengauss directly, it needs to do some field replacement.
+        :param db_object_type:
+        :param schema:
+        :param stdout:
+        :return:
+        """
+        if db_object_type == DBObjectType.VIEW:
+            tran_create_view_statement = stdout.replace("CREATE ", "CREATE OR REPLACE ")\
+                .replace(schema,self.schema_mappings[schema])
+        elif db_object_type == DBObjectType.TRIGGER:
+            tran_create_view_statement = stdout
+        elif db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
+            # can not end with '/', so delete it.
+            tran_create_view_statement = re.sub(r"/[\s]*$", "", stdout).replace(schema, self.schema_mappings[schema])
+        else:
+            tran_create_view_statement = stdout
+        return tran_create_view_statement
+
+    def __unified_log(self, stderr):
+        """
+        embed og-translator's log records into chameleon's log system
+        :param stderr:
+        :return:
+        """
+        has_error = False  # a sign of whether the translation is successful
+        # the log format on og-translator is: %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{100} - %msg%n
+        for log in stderr.splitlines():
+            level_name = logging.getLevelName(log.split(' ')[3])
+            if level_name == logging.ERROR or not isinstance(level_name, int):
+                # when level_name value is ERROR
+                # it means there is an error log record in the translation, maybe the sql statement cannot be translated
+                # when level_name could not be got
+                # it means there is a problem with the project og-translator itself
+                has_error = True
+                self.logger.error(log)
+            else:
+                self.logger.log(level_name, log)
+        return has_error
+
+    def __get_create_object_statement(self, create_object_metadata, db_object_type):
+        """
+        Get the sql required to create the object, which in mysql dialect format
+
+        :param create_object_metadata:
+        :param db_object_type:
+        :return:
+        """
+        if db_object_type == DBObjectType.VIEW:
+            create_object_statement = create_object_metadata["Create View"]
+        elif db_object_type == DBObjectType.TRIGGER:
+            create_object_statement = create_object_metadata["SQL Original Statement"]
+        elif db_object_type == DBObjectType.PROC:
+            create_object_statement = create_object_metadata["Create Procedure"]
+        elif db_object_type == DBObjectType.FUNC:
+            create_object_statement = create_object_metadata["Create Function"]
+        else:
+            create_object_statement = ""
+        # self.logger.debug("The statement of creating object is %s" % (create_object_statement,))
+        return create_object_statement

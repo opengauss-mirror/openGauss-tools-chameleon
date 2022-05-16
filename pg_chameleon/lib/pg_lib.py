@@ -1,21 +1,22 @@
-import io
-import sys
-import json
-import py_opengauss
-from py_opengauss import copyman
 import datetime
 import decimal
-import time
-import os
-import binascii
-from distutils.sysconfig import get_python_lib
+import io
+import json
 import multiprocessing as mp
+import os
+import sys
+import time
+
+import binascii
+import py_opengauss
+
 from pg_chameleon import sql_token, ColumnType
 
 # from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
-COLUMNDEFAULT_INCLUDE_QUOTE_VER = 7 + sql_token.VERSION_SCALE * 2 +\
-    (sql_token.VERSION_SCALE * sql_token.VERSION_SCALE) * 10
+COLUMNDEFAULT_INCLUDE_QUOTE_VER = 7 + sql_token.VERSION_SCALE * 2 + \
+                                  (sql_token.VERSION_SCALE * sql_token.VERSION_SCALE) * 10
+
 
 class pg_encoder(json.JSONEncoder):
     def default(self, obj):
@@ -2435,6 +2436,8 @@ class pg_engine(object):
             destination_schema = self.schema_loading[schema]["loading"]
         else:
             destination_schema = schema
+
+        column_comments = ''
         ddl_head = 'CREATE TABLE "%s"."%s" (' % (destination_schema, table_name)
         ddl_tail = ");"
         ddl_columns = []
@@ -2464,6 +2467,12 @@ class pg_engine(object):
                 column_type = ColumnType.O_BIGSERIAL.value
 
             ddl_columns.append(  ' "%s" %s %s %s   ' %  (column["column_name"], column_type, default_value, col_is_null ))
+
+            if column["column_comment"] != "":
+                column_comments = column_comments + ( 'comment on column "%s"."%s"."%s" is \'%s\';\n'\
+                    % (destination_schema, table_name, column["column_name"], column["column_comment"] ) )
+
+        table_ddl["column_comments"] = column_comments
         def_columns=str(',').join(ddl_columns)
         table_ddl["enum"] = ddl_enum
         table_ddl["composite"] = []
@@ -3102,6 +3111,7 @@ class pg_engine(object):
             table_ddl = self.__build_create_table_pgsql( table_metadata,table_name,  schema)
         enum_ddl = table_ddl["enum"]
         composite_ddl = table_ddl["composite"]
+        column_comments_ddl = ( table_ddl["column_comments"] if "column_comments" in table_ddl else '' )
         table_ddl = table_ddl["table"]
 
         for enum_statement in enum_ddl:
@@ -3111,6 +3121,9 @@ class pg_engine(object):
             self.pgsql_conn.execute(composite_statement)
 
         self.pgsql_conn.execute(table_ddl)
+
+        if column_comments_ddl != '':
+            self.pgsql_conn.execute(column_comments_ddl)
 
     def update_schema_mappings(self):
         """
@@ -4224,3 +4237,47 @@ class pg_engine(object):
             self.pgsql_conn.execute(sql_drop)
         except:
             self.logger.error("could not drop the schema %s. You will need to drop it manually." % schema_name)
+
+    def add_object(self, object_name, schema, dst_object_sql):
+        """
+        Create an object on opengauss.
+
+        :param object_name:  the object name, use for log output
+        :param schema: the object's src schema
+        :param dst_object_sql: The sql statement of creating this object, which is used to dst database
+        :return:
+        """
+        self.logger.info("Create an object %s on opengauss." % (object_name,))
+        self.connect_db()
+        self.pgsql_conn.execute("SET SCHEMA '%s';" % (schema,))
+        self.pgsql_conn.execute(dst_object_sql)
+
+    def insert_object_replicate_record(self, object_name, db_object_type, src_object_sql, dst_object_sql=None):
+        """
+        Insert a result entry of object replication into the table sch_chameleon.t_replica_object.
+
+        :param object_name: A str of the object name, use for log output
+        :param db_object_type: The object type
+        :param src_object_sql: The sql statement of creating this object, which is read from src database.
+        :param dst_object_sql: The sql statement of creating this object, which is used to dst database
+        """
+        self.logger.info("Insert an entry of %s replication into the object replication status table." % (object_name,))
+        self.connect_db()
+
+        sql_to_get_replica_source_id = """SELECT I_ID_SOURCE FROM SCH_CHAMELEON.T_SOURCES WHERE T_SOURCE = '%s';"""
+        i_id_source = self.pgsql_conn.prepare(sql_to_get_replica_source_id % (self.source,)).first()
+        self.logger.debug("The replication source id is %s." % (i_id_source,))
+
+        sql = """INSERT INTO sch_chameleon.t_replica_object(i_id_source,
+                                           en_object_type,
+                                           b_status,
+                                           t_src_object_sql,
+                                           t_dst_object_sql)
+                        VALUES ('%s','%s', %s, $$%s$$, %s);"""
+
+        # if dst_object_sql value is no none, it means the replication is successful, else failed
+        if dst_object_sql:
+            sql_insert = sql % (i_id_source, db_object_type.name, True, src_object_sql, "$$" + dst_object_sql + "$$")
+        else:
+            sql_insert = sql % (i_id_source, db_object_type.name, False, src_object_sql, "NULL")
+        self.pgsql_conn.execute(sql_insert)

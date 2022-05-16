@@ -6,7 +6,7 @@ def readme():
     with open('README.rst') as f:
         return f.read()
 
-package_data = {'pg_chameleon': ['configuration/config-example.yml','sql/upgrade/*.sql','sql/drop_schema.sql','sql/create_schema.sql', 'LICENSE.txt']}
+package_data = {'pg_chameleon': ['configuration/config-example.yml','sql/upgrade/*.sql','sql/drop_schema.sql','sql/create_schema.sql', 'LICENSE.txt','lib/*.jar']}
 
 setup(
     name="chameleon",

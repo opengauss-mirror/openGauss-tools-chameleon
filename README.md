@@ -13,7 +13,7 @@ chameleon初始代码源自pg_chameleon (https://github.com/the4thdoctor/pg_cham
 ⦁	通过守护进程实现实时复制，包含两个子进程，一个负责读取MySQL侧的日志，一个负责在openGauss侧重演变更。
 
 #### 安装教程
-1.  安装环境： Linux, FreeBSD, OpenBSD. Python: CPython 3.5+ 
+1.  安装环境： Linux, FreeBSD, OpenBSD. Python: CPython 3.5+, java,maven,git 
 2.  源数据库要求：MySQL 5.5+。目的数据库要求：openGauss 2.1.0+
 3.  安装命令（建议在python虚拟环境中安装）：python setup.py install
 

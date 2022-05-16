@@ -24,8 +24,12 @@ commands = [
     'set_configuration_files',
     'show_errors',
     'run_maintenance',
-    'stop_all_replicas'
-    ]
+    'stop_all_replicas',
+    'start_view_replica',
+    'start_trigger_replica',
+    'start_proc_replica',
+    'start_func_replica'
+]
 
 command_help = ','.join(commands)
 config_help = """Specifies the configuration to use without the suffix yml. If  the parameter is omitted then ~/.pg_chameleon/configuration/default.yml is used"""
