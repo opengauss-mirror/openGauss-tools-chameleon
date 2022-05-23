@@ -159,7 +159,7 @@ class sql_token(object):
         self.m_ukeys=re.compile(r',\s*UNIQUE\s*KEY\s*`?\w*`?\s*\((.*?)\)\s*', re.IGNORECASE)
         self.m_keys=re.compile(r',\s*(?:UNIQUE|FULLTEXT)?\s*(?:KEY|INDEX)\s*`?\w*`?\s*\((?:.*?)\)\s*', re.IGNORECASE)
         self.m_idx=re.compile(r',\s*(?:KEY|INDEX)\s*`?\w*`?\s*\((.*?)\)\s*', re.IGNORECASE)
-        self.m_fkeys=re.compile(r',\s*(?:CONSTRAINT)?\s*`?\w*`?\s*FOREIGN\s*KEY(?:\(?.*\(??)(?:\s*REFERENCES\s*`?\w*`)?(?:ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?', re.IGNORECASE)
+        self.m_fkeys=re.compile(r',\s*(?:CONSTRAINT)?\s*`?\w*`?\s*FOREIGN\s*KEY\s*(\(?[^\)]*\))?(?:\s*REFERENCES\s*(\w*\(?[^\)]*\)))?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?', re.IGNORECASE)
         self.m_inline_pkeys=re.compile(r'(.*?)\bPRIMARY\b\s*\bKEY\b,', re.IGNORECASE)
 
         #re for fields
@@ -172,14 +172,12 @@ class sql_token(object):
         #re for column constraint and auto incremental
         self.m_nulls=re.compile(r'(NOT)?\s*(NULL)', re.IGNORECASE)
         self.m_autoinc=re.compile(r'(AUTO_INCREMENT)', re.IGNORECASE)
-
         #re for query type
         self.m_rename_table = re.compile(r'(RENAME\s*TABLE)\s*(.*)', re.IGNORECASE)
         self.m_alter_rename_table = re.compile(r'(?:(ALTER\s+?TABLE)\s+(`?\b.*?\b`?))\s+(?:RENAME)\s+(?:TO)?\s+(.*)', re.IGNORECASE)
         self.m_create_table = re.compile(r'(CREATE\s*TABLE)\s*(?:IF\s*NOT\s*EXISTS)?\s*(?:(?:`)?(?:\w*)(?:`)?\.)?(?:`)?(\w*)(?:`)?', re.IGNORECASE)
         self.m_drop_table = re.compile(r'(DROP\s*TABLE)\s*(?:IF\s*EXISTS)?\s*(?:`)?(\w*)(?:`)?', re.IGNORECASE)
         self.m_truncate_table = re.compile(r'(TRUNCATE)\s*(?:TABLE)?\s*(?:(?:`)?(\w*)(?:`)?)(?:.)?(?:`)?(\w*)(?:`)?', re.IGNORECASE)
-        self.m_alter_index = re.compile(r'(?:(ALTER\s+?TABLE)\s+(`?\b.*?\b`?))\s+((?:ADD|DROP)\s+(?:UNIQUE)?\s*?(?:INDEX).*,?)', re.IGNORECASE)
         self.m_alter_table = re.compile(r'(?:(ALTER\s+?TABLE)\s+(?:`?\b.*?\b`\.?)?(`?\b.*?\b`?))\s+((?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?.*,?)', re.IGNORECASE)
         self.m_alter_list = re.compile(r'((?:\b(?:ADD|DROP|CHANGE|MODIFY)\b\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
         self.m_alter_column = re.compile(r'\(?\s*`?(\w*)`?\s*(\w*(?:\s*\w*)?)\s*(?:\((.*?)\))?\)?', re.IGNORECASE)
@@ -188,7 +186,57 @@ class sql_token(object):
         self.m_drop_primary = re.compile(r'(?:(?:ALTER\s+?TABLE)\s+(`?\b.*?\b`?)\s+(DROP\s+PRIMARY\s+KEY))', re.IGNORECASE)
         #self.m_modify = re.compile(r'((?:(?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
         self.m_ignore_keywords = re.compile(r'(CONSTRAINT)|(PRIMARY)|(INDEX)|(KEY)|(UNIQUE)|(FOREIGN\s*KEY)', re.IGNORECASE)
-
+        self.m_create_full_index = re.compile(
+            r"""(CREATE)\s*(UNIQUE|FULLTEXT|SPATIAL)?\s*(INDEX)\s*(\w*)\s*(?:(?:USING)?\s*(BTREE|HASH))?\s*?(?:ON)\s*(\w*)\s*\(\s*(\w*)?(\(?[^\;]*\)?\s*)?\s*\)\s*(KEY_BLOCK_SIZE\s(?:=)\s\w*|(?:USING\s(?:BTREE|HASH))|WITH\sPARSER\s\w*|COMMENT\s*\'[^']*\'|ENGINE_ATTRIBUTE(?:\=)?\'[^']*\'|SECONDARY_ENGINE_ATTRIBUTE(?:\=)?\'[^']*\'|\w*)?\s*(ALGORITHM\s*(?:=)?\s*(?:DEFAULT|INPLACE|COPY)|LOCK\s*(?:=)?\s*(?:DEFAULT|NONE|SHARED|EXCLUSIVE))?\s*""",
+            re.IGNORECASE)
+        self.m_drop_full_index = re.compile(
+            r"""(DROP\s*INDEX)\s*(\w*)\s*(?:ON)\s*(\w*)\s*(ALGORITHM\s*(?:=)?\s*(?:DEFAULT|INPLACE|COPY)|LOCK\s*(?:=)?\s*(?:DEFAULT|NONE|SHARED|EXCLUSIVE))?\s*""",
+            re.IGNORECASE)
+        #this part t_alter_table aims to match all kind of ALTER TABLE DDL
+        self.t_alter_table = re.compile(r"""(ALTER\s*TABLE)\s*(\w*)\s*([^\;]*)""", re.IGNORECASE)
+        self.t_ignore_keywords = re.compile(r'(CONSTRAINT)|(FULLTEXT)|(SPATIAL)|(PRIMARY)|(INDEX)|(KEY)|(UNIQUE)|(FOREIGN)', re.IGNORECASE)
+        self.t_alter_table_ = []
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(?:COLUMN)?\s*\(?\s*(\w*)\s*(\w*(?:\s*\(\s*\w*\s*\))?)\s*(COLLATE\s*\w*)?\s*(GENERATED\s*ALWAYS)?AS\s*(\([^\)]*\))\s*(VIRTUAL|STORED)?\s*(NOT NULL|NULL)?\s*(VISIBLE|INVISIBLE)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(?:FIRST)?(?:AFTER\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(?:COLUMN)?\s*\(?\s*(\w*)\s*(\w*(?:\s*\(\s*\w*\s*\))?)\s*(NOT NULL|NULL)?\s*(DEFAULT \s*(?:\w*|(?:\([^\)]*\)))?)?\s*(VISIBLE|INVISIBLE)?\s*(AUTO_INCREMENT)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(COLLATE\s*\w*)?\s*(COLUMN_FORMAT\s*(?:FIXED|DYNAMIC|DEFAULT))?\s*((?:ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*\=\s*\'\w*\')?\s*(STORAGE\s*(?:DISK|MEMORY))?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(FIRST)?(AFTER\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(INDEX|KEY)\s*(\w*)?\s*(USING\s*(?:BTREE|HASH))?\s*((?:\(\s*\w*\s*\(\s*.*?\s*\)\s*\w*\s*\))|(?:\(\s*.*?\s*\)))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(FULLTEXT|SPATIAL)\s*(INDEX|KEY)?\s*(\w*)?\s*(\(.*?\))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(PRIMARY\s*KEY)\s*(USING\s*(?:BTREE|HASH)\s*)?\s*(\(.*?\))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(UNIQUE\s*(INDEX|KEY)?)\s*\`?(\w*)?\`?\s*(USING\s*(?:BTREE|HASH)\s*)?\s*(\(.*?\))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(FOREIGN\s*KEY)\s*(\w*)?\s*(\(.*?\))\s*(REFERENCES\s*\w*\s*(?:\(.*?\)))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(CHECK)\s*(\(.*?\))\s*((?:NOT\s*)?ENFORCED)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DROP)\s*(CHECK|CONSTRAINT)\s*(\w*)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ALTER)\s*(CHECK|CONSTRAINT)\s*(\w*)\s*(NOT)?\s*ENFORCED""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ALGORITHM)\s*(\=)?\s*(DEFAULT|INSTANT|INPLACE|COPY)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ALTER)\s*(COLUMN)?\s*(\w*)\s*((?:SET\s*DEFAULT\s*\(.*?\))|(?:SET\s*DEFAULT\s*(?:\w*))|SET\s*(?:VISIBLE|INVISIBLE)|DROP\s*DEFAULT)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ALTER)\s*(INDEX)\s*(\w*)\s*(VISIBLE|INVISIBLE)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(CHANGE)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(\w*)\s*(COLLATE\s*\w*)?\s*(GENERATED\s*ALWAYS)?AS\s*(\([^\)]*\))\s*(VIRTUAL|STORED)?\s*(NOT NULL|NULL)?\s*(VISIBLE|INVISIBLE)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(?:FIRST)?(?:AFTER\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(CHANGE)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(\w*)\s*(NOT NULL|NULL)?\s*(DEFAULT \s*(?:\w*|(?:\([^\)]*\)))?)?\s*(VISIBLE|INVISIBLE)?\s*(AUTO_INCREMENT)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(COLLATE\s*\w*)?\s*(COLUMN_FORMAT\s*(?:FIXED|DYNAMIC|DEFAULT))?\s*((?:ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*\=\s*\'\w*\')?\s*(STORAGE\s*(?:DISK|MEMORY))?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(FIRST)?(AFTER\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DEFAULT)?\s*(CHARACTER)\s*(SET)\s*(\=)?\s*(\w*)\s*(COLLATE\s*(?:\=)?\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(CONVERT\s*TO\s*CHARACTER\s*SET)\s*(\w*)\s*(COLLATE\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DISABLE|ENABLE)\s*KEYS""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DISCARD|IMPORT)\s*TABLESPACE""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DROP)\s*(INDEX|KEY)\s*(\w*)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DROP)\s*PRIMARY\s*KEY""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DROP)\s*FOREIGN\s*KEY\s*(\w*)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(DROP)\s*(COLUMN)?\s*(\w*)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""FORCE\s*""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(LOCK)\s*(\=)?\s*(DEFAULT|NONE|SHARED|EXCLUSIVE)\s*""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(MODIFY)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(COLLATE\s*\w*)?\s*(GENERATED\s*ALWAYS)?AS\s*(\([^\)]*\))\s*(VIRTUAL|STORED)?\s*(NOT NULL|NULL)?\s*(VISIBLE|INVISIBLE)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(?:FIRST)?(?:AFTER\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(MODIFY)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(NOT NULL|NULL)?\s*(DEFAULT \s*(?:\w*|(?:\([^\)]*\)))?)?\s*(VISIBLE|INVISIBLE)?\s*(AUTO_INCREMENT)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(COLLATE\s*\w*)?\s*(COLUMN_FORMAT\s*(?:FIXED|DYNAMIC|DEFAULT))?\s*((?:ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*\=\s*\'\w*\')?\s*(STORAGE\s*(?:DISK|MEMORY))?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(FIRST)?(AFTER\s*\w*)?""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(ORDER)\s*(BY)\s*([^\;]*)""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(RENAME)\s*(COLUMN)\s*(\w*)\s*(TO)\s*(\w*)\s*""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(RENAME)\s*(INDEX|KEY)\s*(\w*)\s*(TO)\s*(\w*)\s*""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(RENAME)\s*(TO|AS)?\s*(\w*)\s*""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""(WITHOUT|WITH)\s*VALIDATION\s*""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""pass""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""pass""", re.IGNORECASE))
+        self.t_alter_table_.append(re.compile(r"""pass""", re.IGNORECASE))
+        #adding partition table
+        self.t_par_table = re.compile(r"""PARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([\s\w]*\(?[\s\w]*\)?\s*\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*)|(?:RANGE\s*(?:COLUMNS)?\s*\([^\)]*\)\s*)|(?:LIST\s*(?:COLUMNS)?\s*\([^\)]*\)\s*))\s*(?:PARTITIONS\s*(\w*))?\s*\(?([^\;]*)\)?""", re.IGNORECASE)
+        self.t_par_sub = re.compile(r"""SUBPARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([^\)]*(?:[\s\)]*)?\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*))\s*(?:SUBPARTITIONS\s*(\w*))?\s*\(([^\;]*)\)""", re.IGNORECASE)
+        self.t_par_def = re.compile(r"""PARTITION\s*(\w*)\s*(?:(?:VALUES\s*LESS\s*THAN\s*\(?\s*([\w\,\s]*)\s*\)?)|(?:VALUES\s*IN\s*\(\s*(.*?)\s*\)))?\s*(?:TABLESPACE\s*\=?\s*(\w*))?\s*""", re.IGNORECASE)
+        self.t_alter_part = re.compile(r"""ALTER\s*TABLE\s*(\w*)\s*(\w*)\s*PARTITION\s*([\w\,\s]*)\s*(?:\(([^\;]*)\))?""", re.IGNORECASE)
+        self.expression = re.compile(r"""\(([\s\w]*\(?[\s\w\,]*\)?\s*)\)""", re.IGNORECASE)
     VERSION_SCALE = 1000
 
     def reset_lists(self):
@@ -330,7 +378,7 @@ class sql_token(object):
             idx_list.append(dict(list(key_dic.items())))
             key_dic={}
         elif pkey:
-            key_dic["index_name"]='PRIMARY'
+            key_dic["index_name"] = 'PRIMARY'
             index_columns = pkey[0].strip().split(',')
             idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
             key_dic["index_columns"] = idx_cols
@@ -364,6 +412,27 @@ class sql_token(object):
                 idx_counter+=1
         return idx_list
 
+    def build_fkey_dic(self, inner_stat, table_name):
+        """
+            Just like build_key_dic, due with the foreign key
+        """
+        key_dic = {}
+        idx_list = []
+        idx_counter = 1
+        inner_stat = "%s," % inner_stat.strip()
+        fkey = self.m_fkeys.findall(inner_stat)
+        if fkey:
+            for cols in fkey:
+                key_dic["fkey_name"] = table_name[0:20]+'_ibfk_'+str(idx_counter)
+                key_dic["fkey_id"] = cols[0]
+                key_dic["fkey_ref"] = cols[1]
+                key_dic["fkey_on1"] = cols[2]
+                key_dic["fkey_on2"] = cols[3]
+                idx_list.append(dict(list(key_dic.items())))
+                key_dic={}
+                idx_counter+=1
+        return idx_list
+
     def build_column_dic(self, inner_stat):
         """
             The method builds a list of dictionaries with the column definitions.
@@ -384,6 +453,168 @@ class sql_token(object):
             if col_dic:
                 cols_parse.append(col_dic)
         return cols_parse
+
+    def parse_partition(self, sql):
+        """
+        Split the partition table into three parts for parsing
+        And generate partition table metadata according to different situations
+        partition_options:
+        PARTITION BY
+            { [LINEAR] HASH(expr)
+            | [LINEAR] KEY [ALGORITHM={1 | 2}] (column_list)
+            | RANGE{(expr) | COLUMNS(column_list)}
+            | LIST{(expr) | COLUMNS(column_list)} }
+        [PARTITIONS num]
+
+        [SUBPARTITION BY
+            { [LINEAR] HASH(expr)
+            | [LINEAR] KEY [ALGORITHM={1 | 2}] (column_list) }
+          [SUBPARTITIONS num]
+        ]
+        [(partition_definition [, partition_definition] ...)]
+        par_item:
+            [0]:partition_name/subpartition_name
+            [1]:VALUES LESS THAN
+            [2]:VALUES IN
+            [3]:TABLESPACE
+        """
+        stat_dic = []
+        par_cmd = []
+        count = 0
+        scount = 0
+        # partition by
+        par_stat = self.t_par_table.match(sql)
+        if par_stat is None:
+            return []
+        par_method = par_stat.group(1).strip()
+        partition_method = par_method[:par_method.find("(")].strip()
+        partition_expression = self.expression.search(par_method).group(1).strip()
+        if partition_expression.find('(') != -1:
+            print("Now we do not support the expression expr as the key value partitions_keys")
+            partition_expression = self.expression.search(partition_expression).group(1).strip()
+        partition_number = par_stat.group(2)
+        # subpartition by
+        par_stat_1 = par_stat.group(3).strip()
+        par_sub = self.t_par_sub.match(par_stat_1)
+        if par_sub:
+            subpar_method = par_sub.group(1).strip()
+            subpartition_method = subpar_method[:subpar_method.find("(")].strip()
+            subpartition_expression = self.expression.search(subpar_method).group(1).strip()
+            if subpartition_expression.find('(') != -1:
+                print("Now we do not support the expression expr as the key value partitions_keys")
+                subpartition_expression = self.expression.search(subpartition_expression).group(1).strip()
+            subpartition_number = par_sub.group(2)
+            par_stat_2 = par_sub.group(3).strip()
+            par_def = self.t_par_def.findall(par_stat_2)
+            partition_name = ""
+            subpartition_name = ""
+            for par_item in par_def:
+                par_dic = {}
+                # subpartition
+                # add the subpartition part position/name/method/expression/table_name
+                # but MySQL subpartition does not have description like VALUES LESS THAN
+                if par_item[1] == "" and par_item[2] == "" :
+                    scount += 1
+                    subpartition_name = partition_name + par_item[0]
+                # partition
+                # Infact this part is not a new partition
+                # but reserved to distinguish between partition and subpartition
+                else:
+                    partition_name = par_item[0]
+                    count += 1
+                    scount = 0
+                par_dic["partition_ordinal_position"] = count
+                par_dic["subpartition_ordinal_position"] = scount
+                par_dic["subpartition_name"] = subpartition_name
+                par_dic["subpartition_method"] = subpartition_method
+                par_dic["subpartition_expression"] = subpartition_expression
+                par_dic["partition_name"] = partition_name
+                par_dic["partition_method"] = partition_method
+                par_dic["partition_expression"] = partition_expression
+                par_dic["partition_description"] = par_item[1]+par_item[2]
+                par_dic["tablespace_name"] = par_item[3]
+                par_cmd.append(par_dic)
+                stat_dic = par_cmd
+            return stat_dic
+        else:
+            subpartition_method = ""
+            subpartition_expression = ""
+            par_stat_2 = par_stat_1
+        # partition_definition
+        par_def = self.t_par_def.findall(par_stat_2)
+        for par_item in par_def:
+            par_dic = {}
+            count += 1
+            par_dic["partition_ordinal_position"] = count
+            par_dic["subpartition_method"] = subpartition_method
+            par_dic["partition_name"] = par_item[0]
+            par_dic["partition_method"] = partition_method
+            par_dic["partition_expression"] = partition_expression
+            par_dic["partition_description"] = par_item[1]+par_item[2]
+            par_cmd.append(par_dic)
+            stat_dic = par_cmd
+        #hash with partition_number
+        if partition_number :
+            for i in range(int(partition_number)):
+                par_dic = {}
+                par_dic["partition_ordinal_position"] = i+1
+                par_dic["subpartition_method"] = subpartition_method
+                par_dic["partition_name"] = "p"+str(i)
+                par_dic["partition_method"] = partition_method
+                par_dic["partition_expression"] = partition_expression
+                par_dic["partition_description"] = ""
+                stat_dic.append(par_dic)
+        # hash without partition_number
+        if stat_dic == []:
+            par_dic = {}
+            par_dic["partition_ordinal_position"] = 1
+            par_dic["subpartition_method"] = subpartition_method
+            par_dic["partition_name"] = "p0"
+            par_dic["partition_method"] = partition_method
+            par_dic["partition_expression"] = partition_expression
+            par_dic["partition_description"] = ""
+            stat_dic.append(par_dic)
+        return stat_dic
+
+    def parse_alter_partition(self, sql):
+        """
+        This part is to parse alter table with partition
+        """
+        partition = {}
+        par_alt = []
+        par_stat = self.t_alter_part.findall(sql)
+        for par_item in par_stat:
+            par_dic = {}
+            par_dic["tbl_name"] = par_item[0]
+            command = par_item[1].upper()
+            par_dic["command"] = command
+            if command == "ADD":
+                par_dic["part"] = par_item[3].replace("MAXVALUE", "(MAXVALUE)").replace("maxvalue", "(MAXVALUE)").replace("PARTITION", " ADD PARTITION ").replace(
+                    "partition", " ADD PARTITION").replace("IN", "").strip()
+            elif command == "DROP":
+                par_dic["part"] = par_item[2].replace(" ", "").split(',')
+            elif command == "TRUNCATE":
+                par_dic["part"] = par_item[2].replace(" ", "").split(',')
+            elif command == "COALESCE":
+                par_dic["part"] = par_item[2].replace(" ", "").split(',')
+            elif command == "REORGANIZE":
+                par_dic["part1"] = par_item[2].replace(" ","").replace("INTO","").replace("into", "").split(",")
+                part2 = self.t_par_def.findall(par_item[3])
+                par_dic["part2"] = []
+                for part2_item in part2:
+                    try:
+                        par_dic["part2"].append(part2_item)
+                    except:
+                        par_dic["part2"] = []
+            elif command == "EXCHANGE":
+                part_tmp = par_item[2].replace("WITH","with").replace("TABLE","table")
+                par_dic["part1"] = part_tmp[0:part_tmp.find("with")].strip()
+                par_dic["part2"] = part_tmp[part_tmp.find("table"):].replace("table","").strip()
+            else:
+                print("The statement is not supported")
+            par_alt.append(par_dic)
+            partition["par_alt"] = par_alt
+        return partition
 
 
     def parse_create_table(self, sql_create, table_name):
@@ -412,8 +643,9 @@ class sql_token(object):
         column_list = self.m_pkeys.sub( '', inner_stat)
         column_list = self.m_keys.sub( '', column_list)
         column_list = self.m_idx.sub( '', column_list)
-        column_list = self.m_fkeys.sub( '', column_list)
         table_dic["indices"] = self.build_key_dic(inner_stat, table_name)
+        column_list = self.m_fkeys.sub('', column_list)
+        table_dic["fkey"] = self.build_fkey_dic(inner_stat, table_name)
         mpars  =self.m_pars.findall(column_list)
         for match in mpars:
             new_group=str(match[0]).replace(',', '|')
@@ -534,6 +766,587 @@ class sql_token(object):
             stat_dic["alter_cmd"]=alter_cmd
         return stat_dic
 
+    def parse_t_alter_table(self, talter_table):
+        """
+        The method parses all ALTER TABLE statement from the token data.
+        Covers various types of alter table statements and guide different types of alter table statements to corresponding functions
+        from parse_t_alter_0 to parse_t_alter_31, and the parse function parse_t_alter_x is match the build function build_t_alter_x in pg_lib.
+
+        For better understanding please have a look to
+            https://dev.mysql.com/doc/refman/8.0/en/alter-table.html
+
+        But not all functions are completed,
+        we only wrote functions related to the current requirements,
+        and other functions left function names for subsequent development
+
+            :param talter_table: ALTER TABLE Statement to which regular expression matches
+            :return: stat_dic: Key information dictionary parsed from statement
+            :rtype: list
+        """
+        stat_dic = {}
+        matchlist  = []
+        stat_dic["command"] = "TALTER TABLE"
+        stat_dic["name"] = talter_table.group(2).strip().strip('`')
+        stat_dic["alter_cmd"] = []
+        stat_dic["alter_id"] = 999
+        for index, tmatch in enumerate(self.t_alter_table_):
+            matchlist.append(tmatch.match(talter_table.group(3)))
+            if matchlist[index]:
+                stat_dic["alter_id"] = index
+                method_name = "parse_t_alter_"+str(index)
+                method = getattr(self, method_name)
+                alter_cmd = method(matchlist[index])
+                if alter_cmd:
+                    stat_dic["alter_cmd"] = alter_cmd
+                    col_name = 'col_name'
+                    try:
+                        if stat_dic["alter_cmd"][0][col_name].upper() == "PARTITION":
+                            stat_dic["alter_cmd"] = []
+                            stat_dic["alter_id"] = 999
+                            return stat_dic
+                    except:
+                        return stat_dic
+        return stat_dic
+
+    def parse_t_alter_0(self, talter_table):
+        """
+        Please have a look to parse_t_alter_table.
+        In the ALTER TABLE statement, match the first two MySQL alter_options, but there are two forms of column_definition
+        alter_option：
+            | ADD [COLUMN] col_name column_definition
+                [FIRST | AFTER col_name]
+            | ADD [COLUMN] (col_name column_definition,...)
+        parse_t_alter_0 prase the second kind of column_column_definition
+            column_definition:
+                data_type
+                  [COLLATE collation_name]
+                  [GENERATED ALWAYS] AS (expr)
+                  [VIRTUAL | STORED] [NOT NULL | NULL]
+                  [VISIBLE | INVISIBLE]
+                  [UNIQUE [KEY]] [[PRIMARY] KEY]
+                  [COMMENT 'string']
+                  [reference_definition]
+                  [check_constraint_definition]
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[0].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "ADD"
+            alter_dic["col_name"] = alter_item[1]
+            alter_dic["data_type"] = alter_item[2]
+            alter_dic["collate"] = alter_item[3].replace('collate', 'COLLATE')
+            alter_dic["generated"] = alter_item[4].upper()
+            alter_dic["expr"] = alter_item[5]
+            alter_dic["virtual"] = alter_item[6].upper()
+            alter_dic["null"] = alter_item[7].upper()
+            alter_dic["visible"] = alter_item[8].upper()
+            alter_dic["unique"] = alter_item[9].upper()
+            alter_dic["primary"] = alter_item[10].upper()
+            alter_dic["comment"] = alter_item[11].replace('comment', 'COMMENT')
+            alter_dic["references"] = alter_item[12].replace('references', 'REFERENCES')
+            alter_dic["references_match"] = alter_item[13].upper()
+            alter_dic["references_on"] = alter_item[14].upper()
+            alter_dic["check"] = alter_item[15]
+            alter_dic["first"] = alter_item[16]
+            alter_dic["after"] = alter_item[17]
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_1(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the first two MySQL alter_options, but there are two forms of column_definition
+        alter_option：
+            | ADD [COLUMN] col_name column_definition
+                [FIRST | AFTER col_name]
+            | ADD [COLUMN] (col_name column_definition,...)
+        parse_t_alter_1 prase the first kind of column_column_definition
+            column_definition:
+                data_type [NOT NULL | NULL] [DEFAULT {literal | (expr)} ]
+                  [VISIBLE | INVISIBLE]
+                  [AUTO_INCREMENT] [UNIQUE [KEY]] [[PRIMARY] KEY]
+                  [COMMENT 'string']
+                  [COLLATE collation_name]
+                  [COLUMN_FORMAT {FIXED | DYNAMIC | DEFAULT}]
+                  [ENGINE_ATTRIBUTE [=] 'string']
+                  [SECONDARY_ENGINE_ATTRIBUTE [=] 'string']
+                  [STORAGE {DISK | MEMORY}]
+                  [reference_definition]
+                  [check_constraint_definition]
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[1].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            t_ig = self.t_ignore_keywords.search(alter_item[1])
+            if t_ig:
+                continue
+            alter_dic = {}
+            alter_dic["command"] = "ADD"
+            alter_dic["col_name"] = alter_item[1]
+            alter_dic["data_type"] = alter_item[2]
+            alter_dic["null"] = alter_item[3].upper()
+            alter_dic["default"] = alter_item[4].replace('default', 'DEFAULT')
+            alter_dic["visible"] = alter_item[5].upper()
+            alter_dic["auto_inc"] = alter_item[6].upper()
+            alter_dic["unique"] = alter_item[7].upper()
+            alter_dic["primary"] = alter_item[8].upper()
+            alter_dic["comment"] = alter_item[9].replace('comment', 'COMMENT')
+            alter_dic["collate"] = alter_item[10].replace('collate', 'COLLATE')
+            alter_dic["column_format"] = alter_item[11].upper()
+            alter_dic["engine"] = alter_item[12].replace('engine_attribute', 'ENGINE_ATTRIBUTE').replace(
+                'secondary_engine_attribute', 'SECONDARY_ENGINE_ATTRIBUTE')
+            alter_dic["storage"] = alter_item[13].upper()
+            alter_dic["references"] = alter_item[14].replace('references', 'REFERENCES')
+            alter_dic["references_match"] = alter_item[15].upper()
+            alter_dic["references_on"] = (alter_item[16].upper()+" "+alter_item[17].upper()).strip()
+            alter_dic["check"] = alter_item[18]
+            alter_dic["first"] = alter_item[21]
+            alter_dic["after"] = alter_item[22]
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_2(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ADD {INDEX | KEY} [index_name]
+                [index_type] (key_part,...) [index_option] ...
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[2].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "ADD"
+            alter_dic["index_name"] = alter_item[2]
+            alter_dic["index_type"] = alter_item[3].upper()
+            alter_dic["key_part"] = alter_item[4]
+            alter_dic["index_option_1"] = alter_item[6]
+            alter_dic["index_option_2"] = alter_item[7]
+            alter_dic["index_option_3"] = alter_item[8]
+            alter_dic["index_option_4"] = alter_item[9]
+            alter_dic["index_option_5"] = alter_item[10]
+            alter_dic["col_name"] = ""
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_3(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ADD {FULLTEXT | SPATIAL} [INDEX | KEY] [index_name]
+                (key_part,...) [index_option] ...
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[3].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "ADD"
+            alter_dic["fs"] = alter_item[1]
+            alter_dic["ik"] = alter_item[2]
+            alter_dic["index_name"] = alter_item[3]
+            alter_dic["index_type"] = ""
+            alter_dic["key_part"] = alter_item[4]
+            alter_dic["index_option_1"] = alter_item[6]
+            alter_dic["index_option_2"] = alter_item[7]
+            alter_dic["index_option_3"] = alter_item[8]
+            alter_dic["index_option_4"] = alter_item[9]
+            alter_dic["index_option_5"] = alter_item[10]
+            alter_dic["col_name"] = ""
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_4(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ADD [CONSTRAINT [symbol]] PRIMARY KEY
+                [index_type] (key_part,...) [index_option] ...
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[4].findall(alter_stat)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "ADD"
+            alter_dic["constraint"] = alter_item[1].replace('constraint', "CONSTRAINT")
+            alter_dic["symbol"] = alter_item[2]
+            alter_dic["primary"] = alter_item[3]
+            alter_dic["index_type"] = alter_item[4].upper().strip()
+            alter_dic["key_part"] = alter_item[5]
+            alter_dic["index_option_1"] = alter_item[7]
+            alter_dic["index_option_2"] = alter_item[8]
+            alter_dic["index_option_3"] = alter_item[9]
+            alter_dic["index_option_4"] = alter_item[10]
+            alter_dic["index_option_5"] = alter_item[11]
+            alter_dic["col_name"] = ""
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_5(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ADD [CONSTRAINT [symbol]] UNIQUE [INDEX | KEY]
+                [index_name] [index_type] (key_part,...)
+                [index_option] ...
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[5].findall(alter_stat)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "ADD"
+            alter_dic["constraint"] = alter_item[1].replace('constraint', "CONSTRAINT")
+            alter_dic["symbol"] = alter_item[2]
+            alter_dic["unique"] = alter_item[3].upper().strip()
+            alter_dic["key"] = alter_item[4]
+            alter_dic["index_name"] = alter_item[5]
+            alter_dic["index_type"] = alter_item[6]
+            alter_dic["key_part"] = alter_item[7]
+            alter_dic["index_option_1"] = alter_item[9]
+            alter_dic["index_option_2"] = alter_item[10]
+            alter_dic["index_option_3"] = alter_item[11]
+            alter_dic["index_option_4"] = alter_item[12]
+            alter_dic["index_option_5"] = alter_item[13]
+            alter_dic["col_name"] = ""
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_6(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ADD [CONSTRAINT [symbol]] FOREIGN KEY
+                [index_name] (col_name,...)
+                reference_definition
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[6].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "ADD"
+            alter_dic["constraint"] = alter_item[1].replace('constraint', "CONSTRAINT")
+            alter_dic["symbol"] = alter_item[2]
+            alter_dic["foreign"] = alter_item[3].upper()
+            alter_dic["index_name"] = alter_item[4]
+            alter_dic["index_type"] = ""
+            alter_dic["key_part"] = alter_item[5]
+            alter_dic["references"] = alter_item[6].replace('references', 'REFERENCES')
+            alter_dic["references_match"] = alter_item[7].upper()
+            alter_dic["references_on"] = (alter_item[8].upper()+' '+alter_item[9].upper()).strip()
+            alter_dic["col_name"] = ""
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_7(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ADD [CONSTRAINT [symbol]] CHECK (expr) [[NOT] ENFORCED]
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_8(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            DROP {CHECK | CONSTRAINT} symbol
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[8].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "DROP"
+            alter_dic["cc"] = alter_item[1]
+            alter_dic["symbol"] = alter_item[2]
+            alter_dic["col_name"] = ""
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_9(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ALTER {CHECK | CONSTRAINT} symbol [NOT] ENFORCED
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_10(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ALGORITHM [=] {DEFAULT | INSTANT | INPLACE | COPY}
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_11(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ALTER [COLUMN] col_name {
+            SET DEFAULT {literal | (expr)}
+            | SET {VISIBLE | INVISIBLE}
+            | DROP DEFAULT
+            }
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_12(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ALTER INDEX index_name {VISIBLE | INVISIBLE}
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_13(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            CHANGE [COLUMN] old_col_name new_col_name column_definition
+            [FIRST | AFTER col_name]
+            THE FIRST KIND column definition
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_14(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            CHANGE [COLUMN] old_col_name new_col_name column_definition
+            [FIRST | AFTER col_name]
+            THE second kind column definition
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_15(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            [DEFAULT] CHARACTER SET [=] charset_name [COLLATE [=] collation_name]
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_16(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            CONVERT TO CHARACTER SET charset_name [COLLATE collation_name]
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_17(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            {DISABLE | ENABLE} KEYS
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_18(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            {DISCARD | IMPORT} TABLESPACE
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_19(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            DROP {INDEX | KEY} index_name
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[19].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "DROP"
+            alter_dic["col_name"] = alter_item[2]
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_20(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            DROP PRIMARY KEY
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[20].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "DROP"
+            alter_dic["col_name"] = alter_item[1]
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_21(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            DROP FOREIGN KEY fk_symbol
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[21].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "DROP"
+            alter_dic["col_name"] = alter_item[1]
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_22(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            DROP [COLUMN] col_name
+        """
+        alter_cmd = []
+        alter_stat = talter_table.group(0) + ','
+        alter_list = self.t_alter_table_[22].findall(alter_stat)
+        print(alter_list)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "DROP"
+            alter_dic["col_name"] = alter_item[2]
+            alter_cmd.append(alter_dic)
+        return alter_cmd
+
+    def parse_t_alter_23(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            FORCE
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_24(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            LOCK [=] {DEFAULT | NONE | SHARED | EXCLUSIVE}
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_25(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            MODIFY [COLUMN] col_name column_definition
+            [FIRST | AFTER col_name
+            the second kind of column_definition
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_26(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            MODIFY [COLUMN] col_name column_definition
+            [FIRST | AFTER col_name
+            the first kind of column_definition
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_27(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            ORDER BY col_name [, col_name] ...
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_28(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            RENAME COLUMN old_col_name TO new_col_name
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_29(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            RENAME {INDEX | KEY} old_index_name TO new_index_name
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_30(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            RENAME [TO | AS] new_tbl_name
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
+    def parse_t_alter_31(self, talter_table):
+        """
+        In the ALTER TABLE statement, match the alter_option
+        alter_option：
+            {WITHOUT | WITH} VALIDATION
+        """
+        alter_cmd = []
+        pass
+        return alter_cmd
+
     def parse_rename_table(self, rename_statement):
         """
             The method parses the rename statements storing in a list the
@@ -570,6 +1383,10 @@ class sql_token(object):
             DROP PRIMARY KEY
             TRUNCATE TABLE
 
+            CREATE INDEX
+            DROP INDEX
+            (T)ALTER TABLE the T is written to distinguish between different developer versions
+
             The match which is successful determines the parsing of the rest of the statement.
             Each parse builds a dictionary with at least two keys "name" and "command".
 
@@ -595,10 +1412,20 @@ class sql_token(object):
             mcreate_table = self.m_create_table.match(stat_cleanup)
             mdrop_table = self.m_drop_table.match(stat_cleanup)
             malter_table = self.m_alter_table.match(stat_cleanup)
-            malter_index = self.m_alter_index.match(stat_cleanup)
             mdrop_primary = self.m_drop_primary.match(stat_cleanup)
             mtruncate_table = self.m_truncate_table.match(stat_cleanup)
-            if malter_rename:
+            mcreate_full_index = self.m_create_full_index.match(stat_cleanup)
+            mdrop_full_index = self.m_drop_full_index.match(stat_cleanup)
+            talter_table = self.t_alter_table.match(stat_cleanup)
+            if talter_table:
+                stat_dic = self.parse_t_alter_table(talter_table)
+                try:
+                    stat_dic["alt_partition"] = self.parse_alter_partition(stat_cleanup)
+                except:
+                    stat_dic = {}
+                if len(stat_dic["alter_cmd"]) == 0 and len(stat_dic["alt_partition"]) == 0:
+                    stat_dic = {}
+            elif malter_rename:
                 stat_dic["command"] = "RENAME TABLE"
                 stat_dic["name"] = malter_rename.group(2)
                 stat_dic["new_name"] = malter_rename.group(3)
@@ -612,14 +1439,40 @@ class sql_token(object):
                     stat_dic["new_name"] = rename_table[1]
                     self.tokenised.append(stat_dic)
                     stat_dic = {}
-
+            elif mcreate_full_index:
+                command = "CREATE INDEX FULL"
+                stat_dic["command"] = command
+                stat_dic["UFS"] = mcreate_full_index.group(2)
+                stat_dic["index_name"] = mcreate_full_index.group(4)
+                stat_dic["index_type"] = mcreate_full_index.group(5)
+                stat_dic["name"] = mcreate_full_index.group(6)
+                stat_dic["key_part"] = ''.join((mcreate_full_index.group(7), mcreate_full_index.group(8)))
+                stat_dic["index_option"] = mcreate_full_index.group(9)
+                stat_dic["algorithm_lock_option"] = mcreate_full_index.group(10)
+            elif mdrop_full_index:
+                command = "DROP INDEX FULL"
+                stat_dic["command"] = command
+                stat_dic["index_name"] = mdrop_full_index.group(2)
+                stat_dic["name"] = mdrop_full_index.group(3)
+                stat_dic["algorithm_lock_option"] = mdrop_full_index.group(4)
             elif mcreate_table:
                 command=' '.join(mcreate_table.group(1).split()).upper().strip()
                 stat_dic["command"]=command
-                stat_dic["name"]=mcreate_table.group(2)
+                stat_dic["name"] = mcreate_table.group(2)
+                gp2 = stat_cleanup.replace("partition", "PARTITION")
+                par = gp2.find("PARTITION")
+                parti = ""
+                if (par == -1):
+                    stat_cleanup = gp2
+                else:
+                    stat_cleanup = gp2[:par]
+                    parti = gp2[par:]
                 create_parsed=self.parse_create_table(stat_cleanup, stat_dic["name"])
-                stat_dic["columns"]=create_parsed["columns"]
-                stat_dic["indices"]=create_parsed["indices"]
+                stat_dic["columns"] = create_parsed["columns"]
+                stat_dic["indices"] = create_parsed["indices"]
+                stat_dic["fkey"] = create_parsed["fkey"]
+                partition = self.parse_partition(parti)
+                stat_dic["partition"] = partition
             elif mdrop_table:
                 command=' '.join(mdrop_table.group(1).split()).upper().strip()
                 stat_dic["command"]=command
@@ -634,10 +1487,8 @@ class sql_token(object):
             elif mdrop_primary:
                 stat_dic["command"]="DROP PRIMARY KEY"
                 stat_dic["name"]=mdrop_primary.group(1).strip().strip(',').replace('`', '').strip()
-            elif malter_index:
-                pass
             elif malter_table:
-                stat_dic=self.parse_alter_table(malter_table)
+                stat_dic = self.parse_alter_table(malter_table)
                 if len(stat_dic["alter_cmd"]) == 0:
                     stat_dic = {}
 
