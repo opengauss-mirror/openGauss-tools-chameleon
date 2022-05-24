@@ -2468,7 +2468,7 @@ class pg_engine(object):
 
             ddl_columns.append(  ' "%s" %s %s %s   ' %  (column["column_name"], column_type, default_value, col_is_null ))
 
-            if column["column_comment"] != "":
+            if "column_comment" in column and column["column_comment"] != "":
                 column_comments = column_comments + ( 'comment on column "%s"."%s"."%s" is \'%s\';\n'\
                     % (destination_schema, table_name, column["column_name"], column["column_comment"] ) )
 
