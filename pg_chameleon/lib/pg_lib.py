@@ -1350,7 +1350,6 @@ class pg_engine(object):
                         command = "CREATE UNIQUE INDEX"
                     else:
                         command = "CREATE INDEX"
-                    index_concurrent = ""
                     index_type = ''
                     if token["index_type"]:
                         index_type = "USING %s" % (token["index_type"])
@@ -1358,20 +1357,14 @@ class pg_engine(object):
                     index_option = token["index_option"]
                     if index_option.upper().find("USING") != -1:
                         index_type = index_option
-                    algorithm_lock_option = token["algorithm_lock_option"]
-                    index_name = token["index_name"]
+                    index_name = token["name"] + "_" + token["index_name"]
                     table_name = token["name"]
-                    query = """%s %s %s ON %s.%s %s (%s);""" % (
-                    command, index_concurrent, index_name, destination_schema, table_name, index_type, key_part)
+                    query = """%s %s ON %s.%s %s (%s);""" % (
+                        command, index_name, destination_schema, table_name, index_type, key_part)
                 elif token["command"] == "DROP INDEX FULL":
                     command = "DROP INDEX"
-                    index_concurrent = ""
-                    index_exist = ""
-                    index_cascade = ""
-                    index_name = token["index_name"]
-                    table_name = token["name"]
-                    algorithm_lock_option = token["algorithm_lock_option"]
-                    query = """%s %s %s %s.%s %s ;""" % (command, index_concurrent, index_exist, destination_schema, index_name, index_cascade)
+                    index_name = token["name"] + "_" + token["index_name"]
+                    query = """%s %s.%s ;""" % (command, destination_schema, index_name)
         return query
 
     def build_enum_ddl(self, schema, enm_dic):
@@ -2923,8 +2916,8 @@ class pg_engine(object):
         table_ddl["composite"] = []
 
         # non partition table or subpartition table, ignore partition_metadata
-        if partition_metadata is None or partition_metadata[0]["partition_method"] is None:
-            table_ddl["table"] = (ddl_head+def_columns+ddl_tail)
+        if partition_metadata is None or len(partition_metadata) == 0 or partition_metadata[0]["partition_method"] is None:
+            table_ddl["table"] = (ddl_head + def_columns + ddl_tail)
             return table_ddl
 
         if partition_metadata[0]["subpartition_method"] is not None:
