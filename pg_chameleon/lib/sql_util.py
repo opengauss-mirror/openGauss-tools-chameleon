@@ -678,7 +678,7 @@ class DBObjectType(Enum):
 
         :return: target sql string
         """
-        return "SHOW CREATE {} %s.%s;".format(self.value.upper())
+        return "SHOW CREATE {} `%s`.`%s`;".format(self.value.upper())
 
 
 class SqlTranslator():
