@@ -2004,7 +2004,7 @@ class mysql_source(object):
         if db_object_type == DBObjectType.VIEW:
             create_object_statement = create_object_metadata["Create View"]
         elif db_object_type == DBObjectType.TRIGGER:
-            create_object_statement = create_object_metadata["SQL Original Statement"]
+            create_object_statement = create_object_metadata["SQL Original Statement"] + ";" 
         elif db_object_type == DBObjectType.PROC:
             create_object_statement = create_object_metadata["Create Procedure"]
         elif db_object_type == DBObjectType.FUNC:

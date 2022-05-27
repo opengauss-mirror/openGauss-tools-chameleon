@@ -4804,7 +4804,8 @@ class pg_engine(object):
 
         # if dst_object_sql value is no none, it means the replication is successful, else failed
         if dst_object_sql:
-            sql_insert = sql % (i_id_source, db_object_type.name, True, src_object_sql, "$$" + dst_object_sql + "$$")
+            sql_insert = sql % (i_id_source, db_object_type.name, True, src_object_sql,
+                                "$dst_object_sql$" + dst_object_sql + "$dst_object_sql$")
         else:
             sql_insert = sql % (i_id_source, db_object_type.name, False, src_object_sql, "NULL")
         self.pgsql_conn.execute(sql_insert)
