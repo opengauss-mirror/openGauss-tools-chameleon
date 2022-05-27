@@ -1920,6 +1920,9 @@ class mysql_source(object):
             for object_metadata in self.cursor_buffered.fetchall():
                 object_name = object_metadata["OBJECT_NAME"]
 
+                # set sql mode to ANSI_QUOTES, avoiding backticks in SQL statements
+                self.cursor_buffered.execute("SET SQL_MODE = 'ANSI_QUOTES';")
+
                 # get the details required to create the object
                 self.cursor_buffered.execute(sql_to_get_create_object_statement % (schema, object_name))
                 create_object_metadata = self.cursor_buffered.fetchone()
