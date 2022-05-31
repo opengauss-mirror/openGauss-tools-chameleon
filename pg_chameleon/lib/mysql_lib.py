@@ -1399,7 +1399,7 @@ class mysql_source(object):
                     SELECT
                         column_name as column_name,
                         data_type as data_type,
-                        numeric_scale
+                        numeric_scale as numeric_scale
                     FROM
                         information_schema.COLUMNS
                     WHERE
@@ -1414,7 +1414,7 @@ class mysql_source(object):
                 column_data = self.cursor_buffered.fetchall()
                 for column in column_data:
                     column_type[column["column_name"]] = column["data_type"]
-                    numeric_scale[column["column_name"]] = column["NUMERIC_SCALE"]
+                    numeric_scale[column["column_name"]] = column["numeric_scale"]
                 table_dict = {}
                 table_dict["table_charset"] = table_charset
                 table_dict["column_type"] = column_type
