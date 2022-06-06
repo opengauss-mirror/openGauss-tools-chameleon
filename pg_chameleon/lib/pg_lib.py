@@ -2842,20 +2842,19 @@ class pg_engine(object):
         return default_str
 
     def metadata_method_check(self, metadata, check_method):
-        method = ""
-        if metadata[0][check_method] == "RANGE" or\
-            metadata[0][check_method] == "RANGE COLUMNS":
-            method += "RANGE"
-        elif metadata[0][check_method] == "LIST" or\
-            metadata[0][check_method] == "LIST COLUMNS":
-            method += "LIST"
-        elif metadata[0][check_method] == "HASH" or partition_metadata[0]["partition_method"] == "KEY" or\
-            metadata[0][check_method] == "LINEAR KEY" or\
-            metadata[0][check_method] == "LINEAR HASH":
-            method += "HASH"
+        method_ck = metadata[0][check_method].upper()
+        if method_ck == "RANGE" or\
+            method_ck == "RANGE COLUMNS":
+            return "RANGE"
+        elif method_ck == "LIST" or\
+            method_ck == "LIST COLUMNS":
+            return "LIST"
+        elif method_ck == "HASH" or method_ck == "KEY" or\
+            method_ck == "LINEAR KEY" or\
+            method_ck == "LINEAR HASH":
+            return "HASH"
         else:
             return False
-        return method
 
     def __build_create_table_mysql(self, table_metadata, partition_metadata, table_name,  schema, temporary_schema=True):
         """

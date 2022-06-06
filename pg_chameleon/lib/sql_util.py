@@ -526,10 +526,10 @@ class sql_token(object):
                 par_dic["partition_ordinal_position"] = count
                 par_dic["subpartition_ordinal_position"] = scount
                 par_dic["subpartition_name"] = subpartition_name
-                par_dic["subpartition_method"] = subpartition_method
+                par_dic["subpartition_method"] = subpartition_method.upper()
                 par_dic["subpartition_expression"] = subpartition_expression
                 par_dic["partition_name"] = partition_name
-                par_dic["partition_method"] = partition_method
+                par_dic["partition_method"] = partition_method.upper()
                 par_dic["partition_expression"] = partition_expression
                 par_dic["partition_description"] = par_item[1]+par_item[2]
                 par_dic["tablespace_name"] = par_item[3]
@@ -546,9 +546,9 @@ class sql_token(object):
             par_dic = {}
             count += 1
             par_dic["partition_ordinal_position"] = count
-            par_dic["subpartition_method"] = subpartition_method
+            par_dic["subpartition_method"] = subpartition_method.upper()
             par_dic["partition_name"] = par_item[0]
-            par_dic["partition_method"] = partition_method
+            par_dic["partition_method"] = partition_method.upper()
             par_dic["partition_expression"] = partition_expression
             par_dic["partition_description"] = par_item[1]+par_item[2]
             par_cmd.append(par_dic)
@@ -558,9 +558,9 @@ class sql_token(object):
             for i in range(int(partition_number)):
                 par_dic = {}
                 par_dic["partition_ordinal_position"] = i+1
-                par_dic["subpartition_method"] = subpartition_method
+                par_dic["subpartition_method"] = subpartition_method.upper()
                 par_dic["partition_name"] = "p"+str(i)
-                par_dic["partition_method"] = partition_method
+                par_dic["partition_method"] = partition_method.upper()
                 par_dic["partition_expression"] = partition_expression
                 par_dic["partition_description"] = ""
                 stat_dic.append(par_dic)
@@ -568,9 +568,9 @@ class sql_token(object):
         if stat_dic == []:
             par_dic = {}
             par_dic["partition_ordinal_position"] = 1
-            par_dic["subpartition_method"] = subpartition_method
+            par_dic["subpartition_method"] = subpartition_method.upper()
             par_dic["partition_name"] = "p0"
-            par_dic["partition_method"] = partition_method
+            par_dic["partition_method"] = partition_method.upper()
             par_dic["partition_expression"] = partition_expression
             par_dic["partition_description"] = ""
             stat_dic.append(par_dic)
