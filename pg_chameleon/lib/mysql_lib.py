@@ -7,19 +7,24 @@ import re
 import secrets
 import sys
 from os import remove
-
 import MySQLdb
 import MySQLdb.cursors
+import queue
+import secrets
+import pymysql
+import codecs
 import binascii
 import pymysql
 from geomet import wkb
 from geomet import wkt
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.event import QueryEvent, GtidEvent, HeartbeatLogEvent
+from pymysqlreplication.event import QueryEvent, GtidEvent, HeartbeatLogEvent, XidEvent
+from pymysqlreplication.row_event import DeleteRowsEvent,UpdateRowsEvent,WriteRowsEvent
 from pymysqlreplication.event import RotateEvent
 from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, WriteRowsEvent
-
 from pg_chameleon import sql_token, ColumnType
+from pg_chameleon.lib.parallel_replication import BinlogTrxReader, MyGtidEvent, modified_my_gtid_event
 from pg_chameleon.lib.pg_lib import pg_engine
 from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
 from pg_chameleon.lib.task_lib import copy_data_task, create_index_task, read_data_task
@@ -214,6 +219,11 @@ class mysql_source(object):
         else:
             binlog_row_image = 'FULL'
 
+        sql_gtid_mode = """SHOW GLOBAL VARIABLES LIKE 'gtid_mode';"""
+        self.cursor_buffered.execute(sql_gtid_mode)
+        variable_check = self.cursor_buffered.fetchone()
+        gtid_mode = variable_check["Value"]
+
         sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'version';"""
         self.cursor_buffered.execute(sql_log_bin)
         variable_check = self.cursor_buffered.fetchone()
@@ -222,14 +232,14 @@ class mysql_source(object):
         self.pg_engine.mysql_version = -1 if self.is_mariadb == False else self.version
         self.logger.debug("mysql version %d" % self.version)
 
-        if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL':
+        if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL' and gtid_mode.upper() == 'ON':
             self.replica_possible = True
         else:
             self.replica_possible = False
             self.pg_engine.set_source_status("error")
             self.logger.error("The MySQL configuration does not allow the replica. Exiting now")
-            self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s" % (log_bin.upper(),  binlog_format.upper(), binlog_row_image.upper() ))
-            self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL (only for MySQL 5.6+) ")
+            self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s" % (log_bin.upper(),  binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
+            self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
             sys.exit()
 
     def get_connect(self, is_buffered=True):
@@ -1188,7 +1198,7 @@ class mysql_source(object):
                 # update postgis_spatial_datatypes value in map, decode them as hex
                 self.decode_map[v] = self.__decode_hexify_value
 
-    def __init_read_replica(self):
+    def init_read_replica(self):
         """
             The method calls the pre-steps required by the read replica method.
 
@@ -1547,7 +1557,7 @@ class mysql_source(object):
             return 0
         return self.decode_map.get(column_type, self.__decode_default_value)(origin_value, column_map["numeric_scale"][column_name])
 
-    def __read_replica_stream(self, batch_data):
+    def __read_replica_stream(self, batch_data, dispatcher_packet_queue, signal_queue):
         """
         Stream the replica using the batch data. This method evaluates the different events streamed from MySQL
         and manages them accordingly. The BinLogStreamReader function is called with the only_event parameter which
@@ -1600,204 +1610,26 @@ class mysql_source(object):
         else:
             gtid_set = None
         stream_connected = False
-        my_stream = BinLogStreamReader(
+
+        modified_my_gtid_event()
+        my_stream = BinlogTrxReader(
             connection_settings = self.replica_conn,
             server_id = self.my_server_id,
-            only_events = [RotateEvent, DeleteRowsEvent, WriteRowsEvent, UpdateRowsEvent, QueryEvent, GtidEvent, HeartbeatLogEvent],
             log_file = log_file,
             log_pos = log_position,
             auto_position = gtid_set,
-            resume_stream = True,
             only_schemas = self.schema_replica,
             slave_heartbeat = self.sleep_loop,
-
+            packet_queue = dispatcher_packet_queue
         )
-        if gtid_set:
-            self.logger.debug("GTID ENABLED - gtid: %s. id_batch: %s " % (gtid_set, id_batch))
-        else:
-            self.logger.debug("GTID DISABLED - log_file %s, log_position %s. id_batch: %s " % (log_file, log_position, id_batch))
+        for trx in my_stream:
+            print("expect enter into fetch one")
 
-        for binlogevent in my_stream:
-            if isinstance(binlogevent, GtidEvent):
-                if close_batch:
-                    break
-                gtid  = binlogevent.gtid.split(':')
-                next_gtid[gtid [0]]  = gtid [1]
-                master_data["gtid"] = next_gtid
-
-            elif isinstance(binlogevent, RotateEvent):
-                event_time = binlogevent.timestamp
-                binlogfile = binlogevent.next_binlog
-                position = binlogevent.position
-                self.logger.debug("ROTATE EVENT - binlogfile %s, position %s. " % (binlogfile, position))
-                if (log_file != binlogfile and stream_connected) or len(group_insert)>0:
-                    close_batch = True
-                master_data["File"]=binlogfile
-                master_data["Position"]=position
-                master_data["Time"]=event_time
-                master_data["gtid"] = next_gtid
-                stream_connected = True
-                if close_batch:
-                    break
-
-            elif isinstance(binlogevent, HeartbeatLogEvent):
-                self.logger.debug("HEARTBEAT EVENT - binlogfile %s " % (binlogevent.ident,))
-                if len(group_insert)>0 or log_file != binlogevent.ident:
-                    self.logger.debug("WRITING ROWS - binlogfile %s " % (binlogevent.ident,))
-                    master_data["File"] = binlogevent.ident
-                    close_batch = True
-                    break
-
-            elif isinstance(binlogevent, QueryEvent):
-                event_time = binlogevent.timestamp
-                try:
-                    schema_query = binlogevent.schema.decode()
-                except:
-                    schema_query = binlogevent.schema
-
-                if binlogevent.query.strip().upper() not in self.statement_skip and schema_query in self.schema_mappings:
-                    close_batch=True
-                    destination_schema = self.schema_mappings[schema_query]
-                    log_position = binlogevent.packet.log_pos
-                    master_data["File"] = binlogfile
-                    master_data["Position"] = log_position
-                    master_data["Time"] = event_time
-                    master_data["gtid"] = next_gtid
-                    if len(group_insert)>0:
-                        self.pg_engine.write_batch(group_insert)
-                        group_insert=[]
-                    self.logger.info("QUERY EVENT - binlogfile %s, position %s.\n--------\n%s\n-------- " % (binlogfile, log_position, binlogevent.query))
-                    sql_tokeniser.parse_sql(binlogevent.query)
-                    for token in sql_tokeniser.tokenised:
-                        write_ddl = True
-                        table_name = token["name"]
-                        store_query = self.__store_binlog_event(table_name, schema_query)
-                        if store_query:
-                            table_key_dic = "%s.%s" % (destination_schema, table_name)
-                            if table_key_dic in inc_tables:
-                                write_ddl = False
-                                log_seq = int(log_file.split('.')[1])
-                                log_pos = int(log_position)
-                                table_dic = inc_tables[table_key_dic]
-                                if log_seq > table_dic["log_seq"]:
-                                    write_ddl = True
-                                elif log_seq == table_dic["log_seq"] and log_pos >= table_dic["log_pos"]:
-                                    write_ddl = True
-                                if write_ddl:
-                                    self.logger.info("CONSISTENT POINT FOR TABLE %s REACHED  - binlogfile %s, position %s" % (table_key_dic, binlogfile, log_position))
-                                    self.pg_engine.set_consistent_table(table_name, destination_schema)
-                                    inc_tables = self.pg_engine.get_inconsistent_tables()
-                            if write_ddl:
-                                event_time = binlogevent.timestamp
-                                self.logger.debug("TOKEN: %s" % (token))
-
-                                if len(token)>0:
-                                    query_data={
-                                        "binlog":log_file,
-                                        "logpos":log_position,
-                                        "schema": destination_schema,
-                                        "batch_id":id_batch,
-                                        "log_table":log_table
-                                    }
-                                    self.pg_engine.write_ddl(token, query_data, destination_schema)
-
-
-
-                    sql_tokeniser.reset_lists()
-                if close_batch:
-                    break
-            else:
-
-                for row in binlogevent.rows:
-                    event_after={}
-                    event_before={}
-                    event_insert = {}
-                    add_row = True
-                    log_file=binlogfile
-                    log_position=binlogevent.packet.log_pos
-                    table_name=binlogevent.table
-                    event_time=binlogevent.timestamp
-                    schema_row = binlogevent.schema
-                    destination_schema = self.schema_mappings[schema_row]
-                    table_key_dic = "%s.%s" % (destination_schema, table_name)
-                    store_row = self.__store_binlog_event(table_name, schema_row)
-                    skip_event = self.__skip_event(table_name, schema_row, binlogevent)
-                    if store_row and not skip_event[0]:
-                        if table_key_dic in inc_tables:
-                            table_consistent = False
-                            log_seq = int(log_file.split('.')[1])
-                            log_pos = int(log_position)
-                            table_dic = inc_tables[table_key_dic]
-                            if log_seq > table_dic["log_seq"]:
-                                table_consistent = True
-                            elif log_seq == table_dic["log_seq"] and log_pos >= table_dic["log_pos"]:
-                                table_consistent = True
-                                self.logger.info("CONSISTENT POINT FOR TABLE %s REACHED  - binlogfile %s, position %s" % (table_key_dic, binlogfile, log_position))
-                            if table_consistent:
-                                add_row = True
-                                self.pg_engine.set_consistent_table(table_name, destination_schema)
-                                inc_tables = self.pg_engine.get_inconsistent_tables()
-                            else:
-                                add_row = False
-                        column_map = table_type_map[schema_row][table_name]
-                        table_charset = table_type_map[schema_row][table_name]["table_charset"]
-
-                        global_data={
-                                            "binlog":log_file,
-                                            "logpos":log_position,
-                                            "schema": destination_schema,
-                                            "table": table_name,
-                                            "batch_id":id_batch,
-                                            "log_table":log_table,
-                                            "event_time":event_time
-                                        }
-                        if add_row:
-                            if skip_event[1] == "delete":
-                                global_data["action"] = "delete"
-                                event_after=row["values"]
-                            elif skip_event[1] == "update":
-                                global_data["action"] = "update"
-                                event_after=row["after_values"]
-                                event_before=row["before_values"]
-                            elif skip_event[1] == "insert":
-                                global_data["action"] = "insert"
-                                event_after=row["values"]
-
-                            for column_name in event_after:
-                                event_after[column_name] = self.__decode_event_value(table_name, column_map, column_name, event_after[column_name])
-
-                            for column_name in event_before:
-                                event_before[column_name] = self.__decode_event_value(table_name, column_map, column_name, event_before[column_name])
-
-                            event_insert={"global_data":global_data,"event_after":event_after,  "event_before":event_before}
-                            size_insert += len(str(event_insert))
-                            group_insert.append(event_insert)
-
-                        master_data["File"]=log_file
-                        master_data["Position"]=log_position
-                        master_data["Time"]=event_time
-                        master_data["gtid"] = next_gtid
-
-                        if len(group_insert)>=self.replica_batch_size:
-
-                            self.logger.info("Max rows per batch reached. Writing %s. rows. Size in bytes: %s " % (len(group_insert), size_insert))
-                            self.logger.debug("Master coordinates: %s" % (master_data, ))
-                            self.pg_engine.write_batch(group_insert)
-                            size_insert=0
-                            group_insert=[]
-                            close_batch=True
-
-
-
-        my_stream.close()
-        if len(group_insert)>0:
-            self.logger.debug("writing the last %s events" % (len(group_insert), ))
-            self.pg_engine.write_batch(group_insert)
-            close_batch=True
-
+        master_data = signal_queue.get()
+        close_batch = signal_queue.get()
         return [master_data, close_batch]
 
-    def read_replica(self):
+    def read_replica(self, dispatcher_packet_queue, signal_queue):
         """
             The method gets the batch data from PostgreSQL.
             If the batch data is not empty then method read_replica_stream is executed to get the rows from
@@ -1810,7 +1642,7 @@ class mysql_source(object):
 
         """
 
-        skip = self.__init_read_replica()
+        skip = self.init_read_replica()
         if skip:
             self.logger.warning("Couldn't connect to the source database for reading the replica. Ignoring.")
         else:
@@ -1825,7 +1657,7 @@ class mysql_source(object):
                 if len(batch_data)>0:
                     id_batch=batch_data[0][0]
                     self.logger.debug("Batch data %s " % (batch_data))
-                    replica_data=self.__read_replica_stream(batch_data)
+                    replica_data=self.__read_replica_stream(batch_data, dispatcher_packet_queue, signal_queue)
                     master_data=replica_data[0]
                     close_batch=replica_data[1]
                     if "gtid" in master_data:
