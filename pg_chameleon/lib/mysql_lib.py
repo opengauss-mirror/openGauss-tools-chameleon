@@ -1844,4 +1844,5 @@ class mysql_source(object):
         else:
             create_object_statement = ""
         # self.logger.debug("The statement of creating object is %s" % (create_object_statement,))
+        create_object_statement = create_object_statement.replace("elseif", "else if")
         return create_object_statement
