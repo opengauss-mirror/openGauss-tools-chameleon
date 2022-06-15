@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 import re
@@ -1561,8 +1562,10 @@ class SqlTranslator():
         :param raw_sql: the sql in mysql dialect format
         :return: a tuple with stdout, stderr_in_list
         """
+        # use base64 to encode raw sql, avoiding the impact of special symbols on bash
+        sql_encoded = str(base64.b64encode(raw_sql.encode("utf-8")), "utf-8")
         # chameleon calling the java subproject og-translator to implement the power of translating sql statements
-        cmd = "java -jar %s/sql-translator-1.0.jar '%s'" % (self.lib_dir, raw_sql.replace("\'", "\""))
+        cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
         communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 
         stdout = communicate[0].decode("utf-8").replace("`", "")  # sql translated into opengauss dialect format
