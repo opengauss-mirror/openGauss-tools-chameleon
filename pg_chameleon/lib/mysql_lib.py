@@ -1793,12 +1793,12 @@ class mysql_source(object):
         """
         if db_object_type == DBObjectType.VIEW:
             tran_create_view_statement = stdout.replace("CREATE ", "CREATE OR REPLACE ")\
-                .replace(schema,self.schema_mappings[schema])
+                .replace(schema + ".", self.schema_mappings[schema] + ".").replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
         elif db_object_type == DBObjectType.TRIGGER:
-            tran_create_view_statement = stdout
+            tran_create_view_statement = stdout.replace(schema + ".", self.schema_mappings[schema] + ".").replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
         elif db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
             # can not end with '/', so delete it.
-            tran_create_view_statement = re.sub(r"/[\s]*$", "", stdout).replace(schema, self.schema_mappings[schema])
+            tran_create_view_statement = re.sub(r"/[\s]*$", "", stdout).replace(schema + ".", self.schema_mappings[schema] + ".").replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
         else:
             tran_create_view_statement = stdout
         return tran_create_view_statement
