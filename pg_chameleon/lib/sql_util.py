@@ -156,12 +156,14 @@ class sql_token(object):
         self.m_inner=re.compile(r'\((.*)\)', re.IGNORECASE)
 
         #re for keys and indices
-        self.m_pkeys=re.compile(r',\s*(?:CONSTRAINT)?\s*`?\w*`?\s*PRIMARY\s*KEY\s*\((.*?)\)\s?', re.IGNORECASE)
-        self.m_ukeys=re.compile(r',\s*UNIQUE\s*KEY\s*`?\w*`?\s*\((.*?)\)\s*', re.IGNORECASE)
-        self.m_keys=re.compile(r',\s*(?:UNIQUE|FULLTEXT)?\s*(?:KEY|INDEX)\s*`?\w*`?\s*\((?:.*?)\)\s*', re.IGNORECASE)
-        self.m_idx=re.compile(r',\s*(?:KEY|INDEX)\s*`?\w*`?\s*\((.*?)\)\s*', re.IGNORECASE)
-        self.m_fkeys=re.compile(r',\s*(?:CONSTRAINT)?\s*`?\w*`?\s*FOREIGN\s*KEY\s*(\(?[^\)]*\))?(?:\s*REFERENCES\s*(\w*\(?[^\)]*\)))?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?', re.IGNORECASE)
-        self.m_inline_pkeys=re.compile(r'(.*?)\bPRIMARY\b\s*\bKEY\b,', re.IGNORECASE)
+        self.m_idx = re.compile(r',\s*(?:KEY|INDEX)\s*`?(\w*)?`?\s*\((.*?)\)\s*', re.IGNORECASE)
+        self.m_idx_2 = re.compile(r',\s*(FULLTEXT|SPATIAL)\s*(INDEX|KEY)\s*`?(\w*)`?\s*\((.*?)\)\s*', re.IGNORECASE)
+        self.m_pkeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*PRIMARY\s*KEY\s*\((.*?)\)\s?', re.IGNORECASE)
+        self.m_ukeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*UNIQUE\s*(?:KEY|INDEX)?\s*`?(\w*)?`?\s*\((.*?)\)\s*', re.IGNORECASE)
+        self.m_fkeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*FOREIGN\s*KEY\s*(\(?[^\)]*\))?(?:\s*REFERENCES\s*(\w*\(?[^\)]*\)))?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?', re.IGNORECASE)
+        self.m_check=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*CHECK\s*\(([^()]*\(?[^()]*\)?[^()]*)\)\s*', re.IGNORECASE)
+        self.m_inline_pkeys=re.compile(r'(.*?)\bPRIMARY\b\s*\bKEY\b', re.IGNORECASE)
+        self.m_inline2_pkeys=re.compile(r'.*,\s*([^,]*?)\bPRIMARY\b\s*\bKEY\b', re.IGNORECASE)
 
         #re for fields
         self.m_field=re.compile(r'(?:`)?(\w*)(?:`)?\s*(?:`)?(\w*\s*(?:precision|varying)?)(?:`)?\s*((\(\s*\d*\s*\)|\(\s*\d*\s*,\s*\d*\s*\))?)', re.IGNORECASE)
@@ -361,37 +363,46 @@ class sql_token(object):
         idx_list=[]
         idx_counter=0
         inner_stat= "%s," % inner_stat.strip()
-
+        inner_stat = ' '.join(inner_stat.split()).replace("USING BTREE","").replace("USING HASH","")
+        inner_stat = inner_stat.replace("using btree","").replace("using hash","")
 
         pk_match =  self.m_inline_pkeys.match(inner_stat)
+        pk_match2 = self.m_inline2_pkeys.match(inner_stat)
         pkey=self.m_pkeys.findall(inner_stat)
 
         ukey=self.m_ukeys.findall(inner_stat)
         idx=self.m_idx.findall(inner_stat)
-
+        idx2=self.m_idx_2.findall(inner_stat)
+        fkey=self.m_fkeys.findall(inner_stat)
+        ckey=self.m_check.findall(inner_stat)
+        #need to change the type
         if pk_match:
             key_dic["index_name"] = 'PRIMARY'
-            index_columns = ((pk_match.group(1).strip().split()[0]).replace('`', '')).split(',')
+            key_dic["index_n"] = 'PRIMARY'
+            if pkey:
+                key_dic["constraint_name"] = pkey[0][0]
+                index_columns = {pkey[0][1]}
+            elif pk_match2:
+                index_columns = ((pk_match2.group(1).strip().split()[0]).replace('`', '')).split(',')
+            else:
+                index_columns = ((pk_match.group(1).strip().split()[0]).replace('`', '')).split(',')
             idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
             key_dic["index_columns"] = idx_cols
             key_dic["non_unique"]=0
             self.pkey_cols = idx_cols
             idx_list.append(dict(list(key_dic.items())))
             key_dic={}
-        elif pkey:
-            key_dic["index_name"] = 'PRIMARY'
-            index_columns = pkey[0].strip().split(',')
-            idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
-            key_dic["index_columns"] = idx_cols
-            key_dic["non_unique"]=0
-            self.pkey_cols = idx_cols
-            idx_list.append(dict(list(key_dic.items())))
-            key_dic = {}
         if ukey:
             for cols in ukey:
-                key_dic["index_name"] = 'ukidx_'+table_name[0:20]+'_'+str(idx_counter)
-                cols = cols.replace('`', '')
-                index_columns = cols.strip().split(',')
+                if cols[0]:
+                    name_tmp = cols[0]
+                elif cols[1]:
+                    name_tmp = cols[1]
+                else:
+                    name_tmp = cols[2]
+                key_dic["index_name"] = name_tmp.replace('`', '').strip()
+                key_dic["index_n"] = 'UNIQUE'
+                index_columns = cols[2].strip().split(',')
                 idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
                 key_dic["index_columns"] = idx_cols
                 key_dic["non_unique"]=0
@@ -402,36 +413,48 @@ class sql_token(object):
         if idx:
             for cols in idx:
                 key_dic["index_name"]='idx_'+table_name[0:20]+'_'+str(idx_counter)
+                key_dic["index_n"] = 'INDEX'
                 cols = cols.replace('`', '')
                 index_columns = cols.strip().split(',')
                 idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
                 key_dic["index_columns"] = idx_cols
-
                 key_dic["non_unique"]=1
                 idx_list.append(dict(list(key_dic.items())))
                 key_dic={}
                 idx_counter+=1
-        return idx_list
-
-    def build_fkey_dic(self, inner_stat, table_name):
-        """
-            Just like build_key_dic, due with the foreign key
-        """
-        key_dic = {}
-        idx_list = []
-        idx_counter = 1
-        inner_stat = "%s," % inner_stat.strip()
-        fkey = self.m_fkeys.findall(inner_stat)
+        if idx2:
+            for cols in idx:
+                key_dic["index_name"]='idx_'+table_name[0:20]+'_'+str(idx_counter)
+                key_dic["index_n"] = 'INDEX'
+                cols = cols.replace('`', '')
+                index_columns = cols.strip().split(',')
+                idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
+                key_dic["index_columns"] = idx_cols
+                key_dic["non_unique"]=1
+                idx_list.append(dict(list(key_dic.items())))
+                key_dic={}
+                idx_counter+=1
         if fkey:
             for cols in fkey:
-                key_dic["fkey_name"] = table_name[0:20]+'_ibfk_'+str(idx_counter)
-                key_dic["fkey_id"] = cols[0]
-                key_dic["fkey_ref"] = cols[1]
+                key_dic["constraint_name"] = cols[0]
+                key_dic["index_name"] = table_name+'_ibfk'
+                key_dic["index_n"] = 'FOREIGN'
+                key_dic["index_columns"] = cols[1].replace("(","").replace(")","").strip()
                 key_dic["fkey_on1"] = cols[2]
                 key_dic["fkey_on2"] = cols[3]
                 idx_list.append(dict(list(key_dic.items())))
                 key_dic={}
                 idx_counter+=1
+        if ckey:
+            for cols in ckey:
+                key_dic["constraint_name"] = cols[0]
+                key_dic["index_name"] = table_name+"_chk"
+                key_dic["index_n"] = 'CHECK'
+                key_dic["index_columns"] = cols[1]
+                key_dic["non_unique"] = 1
+                idx_list.append(dict(list(key_dic.items())))
+                key_dic = {}
+                idx_counter += 1
         return idx_list
 
     def build_column_dic(self, inner_stat):
@@ -508,34 +531,51 @@ class sql_token(object):
             par_stat_2 = par_sub.group(3).strip()
             par_def = self.t_par_def.findall(par_stat_2)
             partition_name = ""
-            subpartition_name = ""
+            partition_description = ""
             for par_item in par_def:
                 par_dic = {}
-                # subpartition
-                # add the subpartition part position/name/method/expression/table_name
-                # but MySQL subpartition does not have description like VALUES LESS THAN
-                if par_item[1] == "" and par_item[2] == "" :
-                    scount += 1
-                    subpartition_name = partition_name + par_item[0]
-                # partition
-                # Infact this part is not a new partition
-                # but reserved to distinguish between partition and subpartition
-                else:
-                    partition_name = par_item[0]
+                partition_string = ' '.join(par_stat_2.upper().split())
+                find_string = "SUBPARTITION "+par_item[0].upper()
+                if partition_string.find(find_string+" ")==-1 and partition_string.find(find_string+",")==-1:
+                    #partition
                     count += 1
                     scount = 0
-                par_dic["partition_ordinal_position"] = count
-                par_dic["subpartition_ordinal_position"] = scount
-                par_dic["subpartition_name"] = subpartition_name
-                par_dic["subpartition_method"] = subpartition_method.upper()
-                par_dic["subpartition_expression"] = subpartition_expression
-                par_dic["partition_name"] = partition_name
-                par_dic["partition_method"] = partition_method.upper()
-                par_dic["partition_expression"] = partition_expression
-                par_dic["partition_description"] = par_item[1]+par_item[2]
-                par_dic["tablespace_name"] = par_item[3]
-                par_cmd.append(par_dic)
-                stat_dic = par_cmd
+                    partition_name = par_item[0]
+                    partition_description = par_item[1]+par_item[2]
+                else:
+                    # subpartition
+                    scount +=1
+                    subpartition_name = par_item[0]
+                    par_dic = {}
+                    par_dic["partition_ordinal_position"] = count
+                    par_dic["subpartition_ordinal_position"] = scount
+                    par_dic["subpartition_name"] = subpartition_name
+                    par_dic["subpartition_method"] = subpartition_method.upper()
+                    par_dic["subpartition_expression"] = subpartition_expression
+                    par_dic["partition_name"] = partition_name
+                    par_dic["partition_method"] = partition_method.upper()
+                    par_dic["partition_expression"] = partition_expression
+                    par_dic["partition_description"] = partition_description
+                    par_dic["tablespace_name"] = par_item[3]
+                    par_cmd.append(par_dic)
+                    stat_dic = par_cmd
+                if subpartition_number:
+                    for i in range(0, int(subpartition_number)):
+                        scount += 1
+                        subpartition_name = par_item[0] + "_" + str(i)
+                        par_dic = {}
+                        par_dic["partition_ordinal_position"] = count
+                        par_dic["subpartition_ordinal_position"] = scount
+                        par_dic["subpartition_name"] = subpartition_name
+                        par_dic["subpartition_method"] = subpartition_method.upper()
+                        par_dic["subpartition_expression"] = subpartition_expression
+                        par_dic["partition_name"] = partition_name
+                        par_dic["partition_method"] = partition_method.upper()
+                        par_dic["partition_expression"] = partition_expression
+                        par_dic["partition_description"] = partition_description
+                        par_dic["tablespace_name"] = par_item[3]
+                        par_cmd.append(par_dic)
+                        stat_dic = par_cmd
             return stat_dic
         else:
             subpartition_method = ""
@@ -642,11 +682,12 @@ class sql_token(object):
         table_dic = {}
 
         column_list = self.m_pkeys.sub( '', inner_stat)
-        column_list = self.m_keys.sub( '', column_list)
+        column_list = self.m_ukeys.sub( '', column_list)
         column_list = self.m_idx.sub( '', column_list)
-        table_dic["indices"] = self.build_key_dic(inner_stat, table_name)
+        column_list = self.m_idx_2.sub( '', column_list)
         column_list = self.m_fkeys.sub('', column_list)
-        table_dic["fkey"] = self.build_fkey_dic(inner_stat, table_name)
+        column_list = self.m_check.sub('', column_list)
+        table_dic["indices"] = self.build_key_dic(inner_stat, table_name)
         mpars  =self.m_pars.findall(column_list)
         for match in mpars:
             new_group=str(match[0]).replace(',', '|')
@@ -804,7 +845,7 @@ class sql_token(object):
                         if stat_dic["alter_cmd"][0][col_name].upper() == "PARTITION":
                             stat_dic["alter_cmd"] = []
                             stat_dic["alter_id"] = 999
-                            return stat_dic
+                        return stat_dic
                     except:
                         return stat_dic
         return stat_dic
@@ -1471,7 +1512,6 @@ class sql_token(object):
                 create_parsed=self.parse_create_table(stat_cleanup, stat_dic["name"])
                 stat_dic["columns"] = create_parsed["columns"]
                 stat_dic["indices"] = create_parsed["indices"]
-                stat_dic["fkey"] = create_parsed["fkey"]
                 partition = self.parse_partition(parti)
                 stat_dic["partition"] = partition
             elif mdrop_table:

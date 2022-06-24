@@ -1310,7 +1310,6 @@ class pg_engine(object):
             table_metadata = token["columns"]
             table_name = token["name"]
             index_data = token["indices"]
-            fkey_data = token["fkey"]
             # now we don't support create parition table in start_replica stage
             # add create partition
             partition_metadata = token["partition"]
@@ -1321,11 +1320,7 @@ class pg_engine(object):
             table_pkey = index_ddl[0]
             table_indices = ''.join([val for key ,val in index_ddl[1].items()])
             self.store_table(destination_schema, table_name, table_pkey, None)
-            fkey_ddl = self.build_create_fkey(destination_schema, table_name, fkey_data)
-            table_fkey = fkey_ddl[0]
-            table_fkeys = ''.join([val for key ,val in fkey_ddl[1].items()])
-            self.store_table(destination_schema, table_name, table_fkey, None)
-            query = "%s %s %s %s" % (table_enum, table_statement,  table_indices, table_fkeys)
+            query = "%s %s %s" % (table_enum, table_statement,  table_indices)
         else:
             if count_table == 1:
                 if token["command"] == "RENAME TABLE":
@@ -1365,6 +1360,8 @@ class pg_engine(object):
                     command = "DROP INDEX"
                     index_name = token["name"] + "_" + token["index_name"]
                     query = """%s %s.%s ;""" % (command, destination_schema, index_name)
+            else:
+                self.logger.debug('Only one table can be operated on at a time !')
         return query
 
     def build_enum_ddl(self, schema, enm_dic):
@@ -1700,12 +1697,27 @@ class pg_engine(object):
         query = ""
 
         for alter_dic in token["alter_cmd"]:
-            index_option = []
+            index_option = {}
             for i in range(1, 6):
                 index_option[i] = alter_dic["index_option_"+str(i)]
             if not alter_dic["index_name"]:
-                table_timestamp = str(int(time.time()))
-                alter_dic["index_name"] = "idx_"+table_timestamp
+                key = alter_dic["key_part"].strip('\)').strip('\(').strip(' ')
+                #deal with expr
+                if key.find("(")==-1:
+                    alter_dic["index_name"] = token["name"] + "_" + key
+                else:
+                    #function_index
+                    function_index = "function_index"
+                    index_name = get_table_indexes(schema, token["name"])
+                    i = 1
+                    tmp = function_index
+                    while tmp in index_name:
+                        tmp = function_index + "_" + str(i)
+                        i += 1
+                    function_index = token["name"] + "_" + tmp
+                    alter_dic["index_name"] = function_index
+            else:
+                alter_dic["index_name"] = token["name"] + "_" + alter_dic["index_name"]
             if index_option[2]:
                 alter_dic["index_type"] = index_option[2]
             query = "CREATE INDEX %s.%s ON %s.%s %s %s;" % (schema, alter_dic["index_name"], schema, token["name"], alter_dic["index_type"], alter_dic["key_part"])
@@ -1733,7 +1745,7 @@ class pg_engine(object):
         for alter_dic in token["alter_cmd"]:
             index_type = alter_dic["index_type"]
             key_part = alter_dic["key_part"]
-            index_option = []
+            index_option = {}
             for i in range(1, 6):
                 index_option[i] = alter_dic["index_option_" + str(i)]
             if index_option[2]:
@@ -1767,7 +1779,7 @@ class pg_engine(object):
             compress_mode = ""
             collate_collation = ""
             index_parameters = ""
-            index_option = []
+            index_option = {}
             for i in range(1, 6):
                 index_option[i] = alter_dic["index_option_" + str(i)]
             if index_option[2]:
@@ -1866,7 +1878,7 @@ class pg_engine(object):
         """
         query = ""
         for alter_dic in token["alter_cmd"]:
-            query = "DROP INDEX %s.%s;" % (schema, alter_dic["col_name"])
+            query = "DROP INDEX %s.%s_%s;" % (schema, token["name"],alter_dic["col_name"])
         return query
 
     def build_t_alter_20(self, schema, token):
@@ -1901,6 +1913,31 @@ class pg_engine(object):
         for alter_dic in token["alter_cmd"]:
             query = "ALTER TABLE %s.%s DROP COLUMN %s;" % (schema, token["name"], alter_dic["col_name"])
         return query
+
+    def get_table_indexes(self, schema, tbl_name):
+        """
+        This function is used to extract all index names in the table
+        """
+        self.logger.info("get indexes from the table %s.%s" % (schema, tbl_name))
+        sql_indexes = """
+                    SELECT indexname
+                    FROM
+                        pg_indexes
+                    WHERE
+                    tablename='%s'
+                    AND schemaname='%s'
+                    ;
+                """
+        stmt = self.pgsql_conn.prepare(sql_indexes % (tbl_name, schema))
+        indexes_names = stmt()
+        if indexes_names is None:
+            return []
+        indexes = []
+        for part in indexes_names:
+            if part[0]!=tbl_name:
+                indexes.append(part[0])
+        return indexes
+
 
     def get_table_partitions(self, schema, tbl_name):
         """
@@ -3028,7 +3065,7 @@ class pg_engine(object):
         part_s = ""
         for part_data in sub_partition_metadata:
             # partition
-            if part_data["subpartition_ordinal_position"] == 0 or part_pcolumn==[]:
+            if part_data["subpartition_ordinal_position"] == 1:
                 if part_data["partition_method"] == "RANGE" or part_data["partition_method"] == "RANGE COLUMNS":
                     part_p = ' PARTITION %s VALUES LESS THAN (%s) '%(part_data["partition_name"], part_data["partition_description"])
                 elif part_data["partition_method"] == "LIST" or part_data["partition_method"] == "LIST COLUMNS":
@@ -3039,19 +3076,18 @@ class pg_engine(object):
                     self.logger.warning("Unknown partition type: %s, create this table(%s) as non-part table" \
                                         % (sub_partition_metadata[0]["partition_method"], table_name))
                     return ""
-                if part_data["tablespace_name"] != "":
+                if part_data["tablespace_name"] != "" and part_data["tablespace_name"]!= None:
                     part_p += " TABLESPACE %s " % (part_data["tablespace_name"])
                 part_pcolumn.append(part_p)
                 part_scolumn = []
             # subpartition
-            else:
-                part_s = " SUBPARTITION %s " % (part_data["subpartition_name"])
-                if part_data["tablespace_name"] != "":
-                    part_s += " TABLESPACE %s " % (part_data["tablespace_name"])
-                part_scolumn.append(part_s)
-                def_part_c = str(',').join(part_scolumn)
-                part_pcolumn.pop()
-                part_pcolumn.append(part_p + " (" + def_part_c + " )")
+            part_s = " SUBPARTITION %s " % (part_data["subpartition_name"])
+            if part_data["tablespace_name"] != "" and part_data["tablespace_name"]!= None:
+                part_s += " TABLESPACE %s " % (part_data["tablespace_name"])
+            part_scolumn.append(part_s)
+            def_part_c = str(',').join(part_scolumn)
+            part_pcolumn.pop()
+            part_pcolumn.append(part_p + " (" + def_part_c + " )")
         def_part = str(',').join(part_pcolumn)
         return partition_method + def_part
 
@@ -3071,42 +3107,51 @@ class pg_engine(object):
 
         for index in index_data:
                 table_timestamp = str(int(time.time()))
-                indx = index["index_name"]
-                self.logger.debug("Generating the DDL for index %s" % (indx))
+                type = index['index_n']
+                self.logger.debug("Generating the DDL for index %s" % (type))
                 index_columns = ['"%s"' % column for column in index["index_columns"]]
-                non_unique = index["non_unique"]
-                if indx =='PRIMARY':
+                if type =='PRIMARY':
                     pkey_name = "pk_%s_%s_%s " % (table[0:10],table_timestamp,  self.idx_sequence)
                     pkey_def = 'ALTER TABLE "%s"."%s" ADD CONSTRAINT "%s" PRIMARY KEY (%s) ;' % (schema, table, pkey_name, ','.join(index_columns))
                     idx_ddl[pkey_name] = pkey_def
                     table_primary = index["index_columns"]
-                else:
-                    if non_unique == 0:
-                        unique_key = 'UNIQUE'
-                        if table_primary == []:
-                            table_primary = index["index_columns"]
-
-                    else:
-                        unique_key = ''
-                    index_name='idx_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp, self.idx_sequence)
-                    idx_def='CREATE %s INDEX "%s" ON "%s"."%s" (%s);' % (unique_key, index_name, schema, table, ','.join(index_columns) )
+                elif type =='UNIQUE':
+                    index_name = "%s_%s" %(table,index["index_name"])
+                    idx_def = 'CREATE UNIQUE INDEX "%s" ON "%s"."%s" (%s);' % ( index_name, schema, table, ','.join(index_columns))
                     idx_ddl[index_name] = idx_def
+                elif type == 'INDEX':
+                    index_name = "%s_%s" %(table,index["index_name"])
+                    idx_def='CREATE INDEX "%s" ON "%s"."%s" (%s);' % ( index_name, schema, table, ','.join(index_columns) )
+                    idx_ddl[S] = idx_def
+                elif type == 'FOREIGN':
+                    index_name = self.get_table_indexes(schema, table)
+                    i = 1
+                    function_index = index["index_name"]
+                    tmp = function_index + "_" + str(i)
+                    while tmp in index_name:
+                        i += 1
+                        tmp = function_index + "_" + str(i)
+                    fkey_name = table + "_" + tmp
+                    fkey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s.%s;""" % (
+                    schema, table, fkey_name, index["index_columns"], schema, index["fkey_on1"])
+                    idx_ddl[fkey_name] = fkey_def
+                elif type == 'CHECK':
+                    if index["constraint_name"]:
+                        ckey_name = table + "_" + index["constraint_name"]
+                    else:
+                        index_name = self.get_table_indexes(schema, table)
+                        i = 1
+                        function_index = index["index_name"]
+                        tmp = function_index + "_" + str(i)
+                        while tmp in index_name:
+                            i += 1
+                            tmp = function_index + "_" + str(i)
+                        ckey_name = table + "_" + tmp
+                    ckey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s CHECK (%s);""" % (
+                        schema, table, ckey_name, index["index_columns"])
+                    idx_ddl[ckey_name] = ckey_def
                 self.idx_sequence+=1
         return [table_primary, idx_ddl]
-
-    def build_create_fkey(self, schema, table, fkey_data):
-        """
-            just like build_create_index but for foreign key
-        """
-        fkey_ddl = {}
-        table_primary = []
-        for fkey in fkey_data:
-            fkey_name = fkey["fkey_name"]
-            fkey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s FOREIGN KEY %s REFERENCES %s.%s;"""%(schema, table, fkey_name, fkey["fkey_id"], schema, fkey["fkey_ref"] )
-            fkey_ddl[fkey_name] = fkey_def
-            self.idx_sequence += 1
-        return [table_primary, fkey_ddl]
-
 
     def get_log_data(self, log_id):
         """
