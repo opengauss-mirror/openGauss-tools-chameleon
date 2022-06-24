@@ -19,6 +19,7 @@ from pg_chameleon.lib.pg_lib import pg_engine
 from multiprocessing import Process, Array
 from ctypes import Structure, c_char_p, c_int, c_char
 
+NUM_TRX_PRINT = 10000
 
 class MyBinLogStreamReader(BinLogStreamReader):
     """
@@ -73,14 +74,14 @@ class MyBinLogStreamReader(BinLogStreamReader):
                     self._BinLogStreamReader__connected_stream = False
                     continue
                 raise
-            '''
-            # if pkt.is_eof_packet():
-            #     self.close()
-            #     return None
+            
+            if pkt.is_eof_packet():
+                self.close()
+                return None
 
-            #if not pkt.is_ok_packet():
-                #continue
-            '''
+            if not pkt.is_ok_packet():
+                continue
+            
             return pkt.read_all()
 
 
@@ -501,7 +502,7 @@ def create_connection(pg_engine):
     """
     str_conn = "opengauss://%(host)s:%(port)s/%(database)s" % pg_engine.dest_conn
     conn = py_opengauss.open(str_conn, user=pg_engine.dest_conn["user"],
-                             password=pg_engine.dest_conn["password"], host="20.20.20.82", port=19000)
+                             password=pg_engine.dest_conn["password"])
     conn.settings['client_encoding'] = pg_engine.dest_conn["charset"]
     conn.execute("set session_timeout = 0;")
     return conn
@@ -558,20 +559,18 @@ class TransactionDispatcher:
         threading.Thread(target=self.receive_packet, args=(trx_queue_list, trx_out, index, )).start()
 
         while True:
-            self.pg_engine.logger.debug("while true xunhuan")
-
             for trx_queue_index in range(3):
                 next_index = (trx_queue_index + 1) % 3
                 index.put(next_index)
                 kk = 0
-                while kk < 500:
+                trx_num = trx_queue_list[trx_queue_index].qsize()
+                while kk < trx_num:
                     trx = None
                     if self.selected_trx is None:
                         trx_load = trx_queue_list[trx_queue_index].get(block=True)
                         trx = pickle.loads(trx_load)
                         i = i + 1
-                        kk = kk + 1
-                        if i % 10000 == 0:
+                        if i % NUM_TRX_PRINT == 0:
                             result_queue.put(i)
                     else:
                         trx = self.selected_trx
@@ -586,6 +585,7 @@ class TransactionDispatcher:
                         arr[free_thread_index].sequence_number = trx.sequence_number
                         arr[free_thread_index].flag = 0
                         self.selected_trx = None
+                        kk = kk + 1
                     else:
                         time.sleep(0.00014)
                         self.selected_trx = trx
@@ -609,3 +609,43 @@ class TransactionDispatcher:
             process = Process(target=process_work, args=(pg_engine, arr, i, ))
             self.thread_list.append(process)
             process.start()
+
+
+class ReplicaPosition:
+    """
+        The class ReplicaPosition is used to record replica progress.
+    """
+    def __init__(self, master_data={}, close_batch=False):
+        """
+            Class constructor.
+        """
+        self.master_data = master_data
+        self.close_batch = close_batch
+
+    def reset_data(self):
+        """
+            Reset data.
+        """
+        self.master_data = {}
+        self.close_batch = False
+
+    def copy_data(self, replica_position):
+        """
+            Copy data.
+        """
+        self.master_data = replica_position.master_data
+        self.close_batch = replica_position.close_batch
+
+    def set_data(self, master_data, close_batch):
+        """
+            Set data.
+        """
+        self.master_data = master_data
+        self.close_batch = close_batch
+
+    def new_object(self):
+        """
+            New a object
+        """
+        replica_position_object = ReplicaPosition(self.master_data, self.close_batch)
+        return replica_position_object

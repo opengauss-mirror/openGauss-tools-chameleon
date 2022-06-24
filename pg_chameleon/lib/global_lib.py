@@ -28,15 +28,17 @@ from pg_chameleon.lib.parallel_replication import MyBinLogPacketWrapper
 from pg_chameleon.lib.parallel_replication import ConvertToEvent
 from pg_chameleon.lib.parallel_replication import MyGtidEvent, modified_my_gtid_event
 from pg_chameleon.lib.parallel_replication import Transaction
-from pg_chameleon.lib.parallel_replication import Packet
+from pg_chameleon.lib.parallel_replication import Packet, ReplicaPosition
 
-ROTATE_EVENT = 0X04
+ROTATE_EVENT = 0x04
 TABLE_MAP_EVENT = 0x13
 FORMAT_DESCRIPTION_EVENT = 0x0f
+GTID_EVENT = 0x10
 
 NUM_PACKET = 1000
-NUM_PACKET_TO_TRX = 250
 NUM_TRX = 500
+
+MYSQL_PACKET_HAED_LENGTH = 20
 
 
 class rollbar_notifier(object):
@@ -579,29 +581,6 @@ class replica_engine(object):
         transaction_dispatcher = TransactionDispatcher(6, self.pg_engine)
         transaction_dispatcher.dispatcher(trx_queue)
 
-    def merge_trx_queue_new_pipe(self, trx_queue_list, trx_queue):
-        """
-            The method merges the transaction queue according to each packet to transaction process.
-        """
-        local_transaction_queue = queue.Queue()
-        threading.Thread(target=self.dispatcher_trx_queue_read, args=(local_transaction_queue, trx_queue)).start()
-        trx_queue_num = len(trx_queue_list)
-        batch_size = 1000
-        index = 0
-        num = 0
-        count = 0
-        while True:
-            if num == batch_size:
-                index += 1
-                num = 0
-                if index == trx_queue_num:
-                    index = 0
-            trx = trx_queue_list[index][1].recv()
-            local_transaction_queue.put(trx)
-            num += 1
-            count += 1
-
-
     def merge_trx_queue_new_pipe_new(self, trx_queue_list, trx_queue):
         """
             The method merges the transaction queue according to each packet to transaction process.
@@ -610,35 +589,35 @@ class replica_engine(object):
         threading.Thread(target=self.dispatcher_trx_queue_read, args=(local_transaction_queue, trx_queue)).start()
         while True:
             for index in range(len(trx_queue_list)):
-                for i in range(int(NUM_PACKET / NUM_PACKET_TO_TRX)):
-                    for trx in trx_queue_list[index][1].recv():
-                        local_transaction_queue.put(trx)
-
+                for trx in trx_queue_list[index][1].recv():
+                    local_transaction_queue.put(trx)
+                time.sleep(0.000001)
 
     def dispatcher_trx_queue_read(self, local_transaction_queue, trx_queue):
-        """
-            The method dispatches transaction queue to pipe, used for multi-process communication.
-        """
         while True:
             trxs = list()
-            num_trx = NUM_TRX
-            for i in range(num_trx):
-                trx = local_transaction_queue.get()
-                trxs.append(trx)
-            trx_queue.send(trxs)
-
+            try:
+                for i in range(NUM_TRX):
+                    trx = local_transaction_queue.get(timeout=1)
+                    trxs.append(trx)
+                trx_queue.send(trxs)
+            except Exception:
+                trx_queue.send(trxs)
+                time.sleep(1)
 
     def dispatcher_packet_to_pipe(self, dispatcher_packet_queue, conn_in):
         """
             The method dispatches packet queue to pipe, used for multi-process communication.
         """
+        packets = list()
         while True:
-            packets = list()
-            num_packet = NUM_PACKET
-            for i in range(num_packet):
-                packet = dispatcher_packet_queue.get()
+            for i in range(NUM_PACKET):
+                packet = dispatcher_packet_queue.get(block=True)
                 packets.append(packet)
+                if packet is None:
+                    break
             conn_in.send(packets)
+            packets.clear()
 
     def convert_packet_to_trx_new_2(self, new_packet_stream, packet_queue_list, trx_queue_list, i, signal_queue, initial_log_file):
         """
@@ -654,26 +633,63 @@ class replica_engine(object):
 
     def packet_to_trx(self, new_packet_stream, packet_queue, k, trx_queue_list, signal_queue, initial_log_file):
         """
-            The method converts packet to transaction in each process.
+            The method converts packet to transaction in each process and updates the next replica position according to
+            the two params. The param master_data records the binlog file and position for next replica, and the param
+            close_batch decides whether to write the value of the master_data to replica progress table.
+            Corresponding to packets sent, the packets received may be one of the following four forms:
+            (1) no transaction, that is, it only contains three packets: RotateEvent, FormatDescriptionEvent, and None,
+            which means the ending of binlog file;
+            (2) n transactions(n < NUM_PACKET) and None;
+            (3) NUM_PACKET transaction;
+            (4) NUM_PACKET transaction and None.
+            When the packets received includes None packet, it will update the master_data and close_batch, so the
+            format (1), (2) and (4) need to update the two params master_data and close_batch, and each form needs to
+            send transactions.
         """
         modified_my_gtid_event()
         i = 0
-        j = 0
         kk = 0
-        master_data = {}
-        close_batch = False
+
         binlog_file = ""
         a_trx_queue = trx_queue_list[k][0]
         trx_list = list()
+
+        trx_event_index = 0  # the index of the event in a transaction
+        full_transmission = 0  # whether received NUM_PACKET transaction
+        full_transmission_none = 0  # whether the next packet is none when NUM_PACKET transaction have received
+
+        replica_position = ReplicaPosition()
+        replica_position_backup = ReplicaPosition()
+
         while True:
             trx = Transaction()
             trx.events = []
+            trx_event_index = 0
             while True:
                 packet = packet_queue.get()
+                trx_event_index += 1
+                full_transmission_none += 1
                 if packet is None:
-                    signal_queue.put(master_data)
-                    signal_queue.put(close_batch)
-                    close_batch = False
+                    if trx_event_index == 3:  # Corresponding to form(1)
+                        time.sleep(2)
+                        trx_event_index = 0
+                        signal_queue.put(replica_position.new_object())
+                        replica_position.reset_data()
+                        a_trx_queue.send(trx_list)
+                        trx_list.clear()
+                    else:
+                        trx_event_index = 0
+                        if full_transmission == 1 and full_transmission_none == 0:  # Corresponding to form(4)
+                            signal_queue.put(replica_position_backup.new_object())
+                            full_transmission = 0
+                            replica_position.reset_data()
+                            replica_position_backup.reset_data()
+                        else:  # Corresponding to form(2)
+                            a_trx_queue.send(trx_list)
+                            trx_list.clear()
+                            signal_queue.put(replica_position.new_object())
+                            replica_position.reset_data()
+                            kk = 0
                     break
                 i += 1
                 if not new_packet_stream._BinLogStreamReader__connected_ctl:
@@ -746,13 +762,17 @@ class replica_engine(object):
                         kk += 1
                         trx_dump = pickle.dumps(trx)
                         trx_list.append(trx_dump)
-                        if kk == NUM_PACKET_TO_TRX:
-                            a_trx_queue.send(trx_list)
-                            kk = 0
-                            trx_list.clear()
-                        j += 1
                         master_data = trx.get_gtid()
                         close_batch = trx.finished
+                        replica_position.set_data(master_data, close_batch)
+                        if kk == NUM_PACKET:  # Corresponding to form(3) and send transactions for form(4)
+                            kk = 0
+                            full_transmission_none = -1
+                            a_trx_queue.send(trx_list)
+                            trx_list.clear()
+                            full_transmission = 1
+                            replica_position_backup.copy_data(replica_position)
+                            replica_position.reset_data()
                         break
 
     def dispatcher_packet_to_multiple_process(self, conn_out, packet_queue_list):
@@ -767,25 +787,49 @@ class replica_engine(object):
 
     def dispatcher_packet_to_every_queue(self, q_out, packet_queue_list):
         """
-            The method dispatches packet to each packet to transaction process.
+            The method dispatches packets in order to each packet to transaction process based on the process index.
+            The following parameters are explained:
+            (1) None means the ending of reading packets once;
+            (2) NUM_PACKET means the maximum number of transactions which will be sent, not the number of packets;
+            The packets received by each process may be one of the following four forms:
+            (1) no transaction, that is, it only contains three packets: RotateEvent, FormatDescriptionEvent, and None,
+            which means the ending of binlog file;
+            (2) n transactions(n < NUM_PACKET) and None;
+            (3) NUM_PACKET transaction;
+            (4) NUM_PACKET transaction and None.
         """
         packet_queue_num = len(packet_queue_list)
         batch_size = NUM_PACKET
         num = 0
         index = 0
         packet_list = list()
+        packet_new = None
+        trx_num = 0
         while True:
             packet = q_out.get()
-            if packet is not None:
+            if packet is not None and len(packet) > MYSQL_PACKET_HAED_LENGTH:
                 unpack = struct.unpack('<cIcIIIH', packet[0:20])
                 event_type = byte2int(unpack[2])
-                if event_type == 0x10:
+                if event_type == GTID_EVENT:
                     num += 1
-            packet_list.append(packet)
-            if num == batch_size:
+                    trx_num += 1
+                packet_list.append(packet)
+            if num == batch_size or packet is None:
+                if packet is None:
+                    packet_list.append(packet)
+                fflag = 0
+                if num == batch_size:
+                    packet_new = q_out.get()
+                    if packet_new is None:
+                        fflag = 1
+                        packet_list.append(packet_new)
+                else:
+                    fflag = 2
                 num = 0
                 packet_queue_list[index][0].send(packet_list)
                 packet_list.clear()
+                if fflag == 0:
+                    packet_list.append(packet_new)
                 index += 1
                 if index == packet_queue_num:
                     index = 0
@@ -1170,9 +1214,9 @@ class replica_engine(object):
             sys.exit()
 
         if debug_mode:
-            log_level = 'warning'
+            log_level = 'debug'
 
-        fh.setLevel(log_level_map.get(log_level, logging.WARNING))
+        fh.setLevel(log_level_map.get(log_level, logging.DEBUG))
         fh.setFormatter(formatter)
         logger.addHandler(fh)
         logger_fds = fh.stream.fileno()

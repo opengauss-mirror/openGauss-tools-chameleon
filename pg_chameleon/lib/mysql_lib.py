@@ -1625,9 +1625,8 @@ class mysql_source(object):
         for trx in my_stream:
             print("expect enter into fetch one")
 
-        master_data = signal_queue.get()
-        close_batch = signal_queue.get()
-        return [master_data, close_batch]
+        replica_position = signal_queue.get()
+        return replica_position
 
     def read_replica(self, dispatcher_packet_queue, signal_queue):
         """
@@ -1658,8 +1657,8 @@ class mysql_source(object):
                     id_batch=batch_data[0][0]
                     self.logger.debug("Batch data %s " % (batch_data))
                     replica_data=self.__read_replica_stream(batch_data, dispatcher_packet_queue, signal_queue)
-                    master_data=replica_data[0]
-                    close_batch=replica_data[1]
+                    master_data = replica_data.master_data
+                    close_batch = replica_data.close_batch
                     if "gtid" in master_data:
                         master_data["Executed_Gtid_Set"] = self.__build_gtid_set(master_data["gtid"])
                     else:
