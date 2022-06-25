@@ -1286,7 +1286,7 @@ class pg_engine(object):
         self.pgsql_conn.execute(sql_cleanup % (batch_retention, self.i_id_source ))
         self.disconnect_db()
 
-    def __generate_ddl(self, token,  destination_schema):
+    def generate_ddl(self, token,  destination_schema):
         """
             The method builds the DDL using the tokenised SQL stored in token.
             The supported commands are

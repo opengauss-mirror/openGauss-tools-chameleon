@@ -1434,7 +1434,7 @@ class mysql_source(object):
             table_map = {}
         return table_type_map
 
-    def __store_binlog_event(self, table, schema):
+    def store_binlog_event(self, table, schema):
         """
         The private method returns whether the table event should be stored or not in the postgresql log replica.
 
@@ -1443,6 +1443,8 @@ class mysql_source(object):
         :return: true if the table should be replicated, false if shouldn't
         :rtype: boolean
         """
+        self.tables_disabled = self.pg_engine.get_tables_disabled(format='list')
+
         if self.tables_disabled:
             if  "%s.%s" % (schema, table) in self.tables_disabled:
                 return False
