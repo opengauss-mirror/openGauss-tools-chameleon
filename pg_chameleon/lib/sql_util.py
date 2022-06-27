@@ -160,7 +160,7 @@ class sql_token(object):
         self.m_idx_2 = re.compile(r',\s*(FULLTEXT|SPATIAL)\s*(INDEX|KEY)\s*`?(\w*)`?\s*\((.*?)\)\s*', re.IGNORECASE)
         self.m_pkeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*PRIMARY\s*KEY\s*\((.*?)\)\s?', re.IGNORECASE)
         self.m_ukeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*UNIQUE\s*(?:KEY|INDEX)?\s*`?(\w*)?`?\s*\((.*?)\)\s*', re.IGNORECASE)
-        self.m_fkeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*FOREIGN\s*KEY\s*(\(?[^\)]*\))?(?:\s*REFERENCES\s*(\w*\(?[^\)]*\)))?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT|CASCADE)\s*)?', re.IGNORECASE)
+        self.m_fkeys = re.compile(r""",\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*FOREIGN\s*KEY\s*(\(?[^\)]*\))?(?:\s*REFERENCES\s*(\w*\(?[^\)]*\)))?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?""", re.IGNORECASE)
         self.m_check=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*CHECK\s*\(([^()]*\(?[^()]*\)?[^()]*)\)\s*', re.IGNORECASE)
         self.m_inline_pkeys=re.compile(r'(.*?)\bPRIMARY\b\s*\bKEY\b', re.IGNORECASE)
         self.m_inline2_pkeys=re.compile(r'.*,\s*([^,]*?)\bPRIMARY\b\s*\bKEY\b', re.IGNORECASE)
