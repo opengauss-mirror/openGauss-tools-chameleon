@@ -8,6 +8,8 @@ import threading
 import queue
 import pymysql
 from datetime import datetime
+
+from pg_chameleon import sql_token
 from pymysql.util import byte2int
 from pymysqlreplication import event
 from pymysqlreplication import BinLogStreamReader, constants
@@ -252,6 +254,7 @@ class Transaction:
         self.events = events
         self.finished = False
         self.sql_list = []
+        self.is_dml = True
 
     def isvalid(self) -> bool:
         """
@@ -273,6 +276,7 @@ class Transaction:
         print("log_pos is %s" % self.log_pos)
         print("events is %s" % self.events)
         print("sql list is %s" % self.sql_list)
+        print("is dml is %s" % self.is_dml)
 
     def interleaved(self, last_committed, sequence_number) -> bool:
         """
@@ -299,9 +303,6 @@ class Transaction:
                                      for row in event.rows]
                 elif isinstance(event, WriteRowsEvent):
                     sql_list += [sql_insert(table, row['values']) for row in event.rows]
-            if isinstance(event, QueryEvent):
-                if event.query.lower() != "begin":
-                    sql_list += event.query
         return sql_list
 
     def get_gtid(self):
@@ -381,17 +382,18 @@ class ConvertToEvent:
         The class ConvertToEvent
     """
     @staticmethod
-    def feed_event(trx, event) -> bool:
+    def feed_event(trx, event, mysql_source, pg_engine) -> bool:
         """
             The method is used to extract transaction information according to each event.
         """
         if isinstance(event, RowsEvent):
+            event.schema = mysql_source.schema_mappings[event.schema]
             trx.events.append(event)
             return False
         elif isinstance(event, QueryEvent):
-            trx.events.append(event)
-            sql = event.query
-            if is_ddl(sql):
+            if is_ddl(event.query):
+                trx.sql_list.append(get_destination_ddl(event, mysql_source, pg_engine))
+                trx.is_dml = False
                 return True
             else:
                 return False
@@ -408,6 +410,25 @@ def is_ddl(sql: str) -> bool:
     no_comment = re.sub('/\*.*?\*/', '', sql, flags=re.S)
     formatted = ' '.join(no_comment.lower().split())
     return any(formatted.startswith(x) for x in ddl_pattern)
+
+
+def get_destination_ddl(event, mysql_source, pg_engine):
+    destination_ddl = ""
+    try:
+        origin_schema = event.schema.decode()
+    except:
+        origin_schema = event.schema
+    if event.query.strip().upper() not in mysql_source.statement_skip \
+            and origin_schema in mysql_source.schema_mappings:
+        destination_schema = mysql_source.schema_mappings[origin_schema]
+        sql_tokeniser = sql_token()
+        sql_tokeniser.parse_sql(event.query)
+        for token in sql_tokeniser.tokenised:
+            table_name = token["name"]
+            store_query = mysql_source.store_binlog_event(table_name, origin_schema)
+            if store_query:
+                destination_ddl = pg_engine.generate_ddl(token, destination_schema)
+    return destination_ddl
 
 
 def modified_my_gtid_event():
@@ -437,7 +458,6 @@ class BinlogTrxReader:
         """
             Class constructor.
         """
-        print("enter into binlogtrx reader init funcation")
         self.packet_queue = packet_queue
         self.event_list = []
         self.log_file = log_file
@@ -580,7 +600,7 @@ class TransactionDispatcher:
                     result_list = self.can_parallel_and_find_free_thread(trx, arr)
                     if result_list[0] == "True":
                         free_thread_index = result_list[1]
-                        arr[free_thread_index].txn_sql = bytes(trx.sql_list[0], encoding='utf-8')
+                        arr[free_thread_index].txn_sql = bytes(";".join(trx.sql_list), encoding='utf-8')
                         arr[free_thread_index].last_committed = trx.last_committed
                         arr[free_thread_index].sequence_number = trx.sequence_number
                         arr[free_thread_index].flag = 0

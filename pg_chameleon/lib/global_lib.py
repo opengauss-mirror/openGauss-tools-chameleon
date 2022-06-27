@@ -753,13 +753,14 @@ class replica_engine(object):
                         trx.sequence_number = event.sequence_number
                         trx.binlog_file = binlog_file
                 else:
-                    finished = ConvertToEvent.feed_event(trx, event)
+                    finished = ConvertToEvent.feed_event(trx, event, self.mysql_source, self.pg_engine)
                     if finished:
                         trx.finished = finished
-                        trx.sql_list = trx.fetch_sql()
+                        if trx.is_dml:
+                            trx.sql_list = trx.fetch_sql()
+                            kk += 1
                         trx.events = []
                         trx.log_pos = packet_str
-                        kk += 1
                         trx_dump = pickle.dumps(trx)
                         trx_list.append(trx_dump)
                         master_data = trx.get_gtid()
@@ -947,9 +948,8 @@ class replica_engine(object):
                     keep_fds = [self.logger_fds]
                     app_name = "%s_replica" % self.args.source
 
-                    new_replay_daemon = mp.Process(target=self.__run_replica, name='__run_replica', daemon=False)
-                    new_replay_daemon.start()
-                    print("enter into run replica based on mp.Process")
+                    replica_daemon = mp.Process(target=self.__run_replica, name='__run_replica', daemon=False)
+                    replica_daemon.start()
 
 
     def __stop_replica(self):
