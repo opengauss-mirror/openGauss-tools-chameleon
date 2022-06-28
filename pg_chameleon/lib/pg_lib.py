@@ -1354,8 +1354,30 @@ class pg_engine(object):
                         index_type = index_option
                     index_name = token["name"] + "_" + token["index_name"]
                     table_name = token["name"]
-                    query = """%s %s ON %s.%s %s (%s);""" % (
-                        command, index_name, destination_schema, table_name, index_type, key_part)
+                    if self.have_table_partitions(destination_schema, token["name"]):
+                        local = " local "
+                    else:
+                        local = ""
+                    test = self.get_table_columns(destination_schema, token["name"])
+                    if key_part.find('(')!=-1:
+                        part1 = key_part[:key_part.find('(')].strip()
+                        part2 = key_part.replace(part1, "").replace("(", "").replace(")", "").strip()
+                        if part1 in test:
+                            key_part = part1
+                        elif part2 in test:
+                            key_part = part2
+                        else:
+                            function_index = "function_index"
+                            index_name = self.get_table_indexes(destination_schema, token["name"])
+                            i = 1
+                            tmp = function_index
+                            while tmp in index_name:
+                                tmp = function_index + "_" + str(i)
+                                i += 1
+                            function_index = token["name"] + "_" + tmp
+                            index_name = function_index
+                    query = """%s %s ON %s.%s %s (%s) %s;""" % (
+                        command, index_name, destination_schema, table_name, index_type, key_part, local)
                 elif token["command"] == "DROP INDEX FULL":
                     command = "DROP INDEX"
                     index_name = token["name"] + "_" + token["index_name"]
@@ -1592,6 +1614,7 @@ class pg_engine(object):
             elif command == "COALESCE":
                 num = int(alt_item["part"][0])
                 dims = self.get_table_partitions(schema, alt_item["tbl_name"])
+                print("List partition and hash partition do not support composite partition in openGauss, online migration cannot migrate this type")
                 querys += "ALTER TABLE %s.%s MERGE PARTITIONS " % (schema, alt_item["tbl_name"])
                 for dim in dims[-num:]:
                     querys += "%s," % dim
@@ -1706,21 +1729,32 @@ class pg_engine(object):
                 if key.find("(")==-1:
                     alter_dic["index_name"] = token["name"] + "_" + key
                 else:
-                    #function_index
-                    function_index = "function_index"
-                    index_name = get_table_indexes(schema, token["name"])
-                    i = 1
-                    tmp = function_index
-                    while tmp in index_name:
-                        tmp = function_index + "_" + str(i)
-                        i += 1
-                    function_index = token["name"] + "_" + tmp
-                    alter_dic["index_name"] = function_index
+                    test = self.get_table_columns(schema, token["name"])
+                    part1 = key[:key.find('(')].strip()
+                    part2 = key.replace(part1, "").replace("(", "").replace(")", "").strip()
+                    if part1 in test:
+                        alter_dic["index_name"] = part1
+                    elif part2 in test:
+                        alter_dic["index_name"] = part2
+                    else:
+                        function_index = "function_index"
+                        index_name = self.get_table_indexes(schema, token["name"])
+                        i = 1
+                        tmp = function_index
+                        while tmp in index_name:
+                            tmp = function_index + "_" + str(i)
+                            i += 1
+                        function_index = token["name"] + "_" + tmp
+                        alter_dic["index_name"] = function_index
             else:
                 alter_dic["index_name"] = token["name"] + "_" + alter_dic["index_name"]
             if index_option[2]:
                 alter_dic["index_type"] = index_option[2]
-            query = "CREATE INDEX %s.%s ON %s.%s %s %s;" % (schema, alter_dic["index_name"], schema, token["name"], alter_dic["index_type"], alter_dic["key_part"])
+            if self.have_table_partitions(schema, token["name"]):
+                local = " local "
+            else:
+                local = ""
+            query = "CREATE INDEX %s.%s ON %s.%s %s %s %s;" % (schema, alter_dic["index_name"], schema, token["name"], alter_dic["index_type"], alter_dic["key_part"], local)
         return query
 
     def build_t_alter_3(self, schema, token):
@@ -1938,6 +1972,40 @@ class pg_engine(object):
                 indexes.append(part[0])
         return indexes
 
+    def get_table_columns(self, schema, tbl_name):
+        sql_metadata = """
+            SELECT
+                col.attname as column_name
+            FROM
+                pg_catalog.pg_attribute col
+                INNER JOIN pg_catalog.pg_type typ
+                    ON  col.atttypid=typ.oid
+                INNER JOIN pg_catalog.pg_namespace sch
+                    ON typ.typnamespace=sch.oid
+            WHERE
+                    col.attrelid = '%s'::regclass
+                AND NOT col.attisdropped
+                AND col.attnum>0
+            ORDER BY
+                col.attnum
+            ;
+            ;
+                """
+        tab_regclass = "%s.%s" % (schema, tbl_name)
+        stmt = self.pgsql_conn.prepare(sql_metadata % tab_regclass)
+        column_name = stmt()
+        columns = []
+        for part in column_name:
+            if part[0] != tbl_name:
+                columns.append(part[0])
+        return columns
+
+    def have_table_partitions(self, schema, tbl_name):
+        partition = self.get_table_partitions(schema, tbl_name)
+        if partition:
+            return True
+        else:
+            return False
 
     def get_table_partitions(self, schema, tbl_name):
         """
@@ -3025,6 +3093,8 @@ class pg_engine(object):
         part_key = sub_partition_metadata[0]["partition_expression"].replace('`', '')
         part_key_split = part_key.split(',')
         sub_part_key = sub_partition_metadata[0]["subpartition_expression"].replace('`', '')
+        if part_key == sub_part_key:
+            print("openGauss not support the partition and subpartition have the same partition key, online migration cannot migrate this type")
 
         if len(part_key_split) > self.max_range_column or \
                 (sub_partition_metadata[0]["partition_method"] != "RANGE COLUMNS" and len(part_key_split) > 1):
@@ -3122,7 +3192,7 @@ class pg_engine(object):
                 elif type == 'INDEX':
                     index_name = "%s_%s" %(table,index["index_name"])
                     idx_def='CREATE INDEX "%s" ON "%s"."%s" (%s);' % ( index_name, schema, table, ','.join(index_columns) )
-                    idx_ddl[S] = idx_def
+                    idx_ddl[index_name] = idx_def
                 elif type == 'FOREIGN':
                     index_name = self.get_table_indexes(schema, table)
                     i = 1
