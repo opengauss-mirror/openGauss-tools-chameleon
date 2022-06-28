@@ -1352,30 +1352,16 @@ class pg_engine(object):
                     index_option = token["index_option"]
                     if index_option.upper().find("USING") != -1:
                         index_type = index_option
-                    index_name = token["name"] + "_" + token["index_name"]
+                    index_name = token["index_name"]
                     table_name = token["name"]
                     if self.have_table_partitions(destination_schema, token["name"]):
                         local = " local "
                     else:
                         local = ""
-                    test = self.get_table_columns(destination_schema, token["name"])
-                    if key_part.find('(')!=-1:
-                        part1 = key_part[:key_part.find('(')].strip()
-                        part2 = key_part.replace(part1, "").replace("(", "").replace(")", "").strip()
-                        if part1 in test:
-                            key_part = part1
-                        elif part2 in test:
-                            key_part = part2
-                        else:
-                            function_index = "function_index"
-                            index_name = self.get_table_indexes(destination_schema, token["name"])
-                            i = 1
-                            tmp = function_index
-                            while tmp in index_name:
-                                tmp = function_index + "_" + str(i)
-                                i += 1
-                            function_index = token["name"] + "_" + tmp
-                            index_name = function_index
+                    if key_part.find("(")==-1:
+                        index_name = "%s_%s" % (table_name, index_name)
+                    else:
+                        [index_name, key_part] = self.find_key_from_express(destination_schema, table_name, index_name, key_part)
                     query = """%s %s ON %s.%s %s (%s) %s;""" % (
                         command, index_name, destination_schema, table_name, index_type, key_part, local)
                 elif token["command"] == "DROP INDEX FULL":
@@ -1723,38 +1709,20 @@ class pg_engine(object):
             index_option = {}
             for i in range(1, 6):
                 index_option[i] = alter_dic["index_option_"+str(i)]
-            if not alter_dic["index_name"]:
-                key = alter_dic["key_part"].strip('\)').strip('\(').strip(' ')
-                #deal with expr
-                if key.find("(")==-1:
-                    alter_dic["index_name"] = token["name"] + "_" + key
-                else:
-                    test = self.get_table_columns(schema, token["name"])
-                    part1 = key[:key.find('(')].strip()
-                    part2 = key.replace(part1, "").replace("(", "").replace(")", "").strip()
-                    if part1 in test:
-                        alter_dic["index_name"] = part1
-                    elif part2 in test:
-                        alter_dic["index_name"] = part2
-                    else:
-                        function_index = "function_index"
-                        index_name = self.get_table_indexes(schema, token["name"])
-                        i = 1
-                        tmp = function_index
-                        while tmp in index_name:
-                            tmp = function_index + "_" + str(i)
-                            i += 1
-                        function_index = token["name"] + "_" + tmp
-                        alter_dic["index_name"] = function_index
+            table_name = token["name"]
+            index_name = alter_dic["index_name"]
+            key_part = alter_dic["key_part"]
+            if key_part.find("(") == -1:
+                index_name = "%s_%s" % (table_name, index_name)
             else:
-                alter_dic["index_name"] = token["name"] + "_" + alter_dic["index_name"]
+                [index_name, key_part] = self.find_key_from_express(schema, table_name, index_name, key_part)
             if index_option[2]:
                 alter_dic["index_type"] = index_option[2]
             if self.have_table_partitions(schema, token["name"]):
                 local = " local "
             else:
                 local = ""
-            query = "CREATE INDEX %s.%s ON %s.%s %s %s %s;" % (schema, alter_dic["index_name"], schema, token["name"], alter_dic["index_type"], alter_dic["key_part"], local)
+            query = "CREATE INDEX %s.%s ON %s.%s %s %s %s;" % (schema, index_name, schema, table_name, alter_dic["index_type"], key_part, local)
         return query
 
     def build_t_alter_3(self, schema, token):
@@ -1933,7 +1901,7 @@ class pg_engine(object):
         """
         query = ""
         for alter_dic in token["alter_cmd"]:
-            query = "ALTER TABLE %s.%s DROP CONSTRAINT %s;" % (schema, token["name"], alter_dic["col_name"])
+            query = "ALTER TABLE %s.%s DROP CONSTRAINT %s_%s;" % (schema, token["name"], token["name"], alter_dic["col_name"])
         return query
 
     def build_t_alter_22(self, schema, token):
@@ -1971,6 +1939,29 @@ class pg_engine(object):
             if part[0]!=tbl_name:
                 indexes.append(part[0])
         return indexes
+
+    def find_key_from_express(self, schema, tbl_name, index_name, key_part):
+        test = self.get_table_columns(schema, tbl_name)
+        part1 = key_part[:key_part.find('(')].strip()
+        part2 = key_part.replace(part1, "").replace("(", "").replace(")", "").strip()
+        if part1 in test:
+            if index_name=="":
+                index_name = part1
+            return [tbl_name + "_" + index_name, part1]
+        elif part2 in test:
+            if index_name=="":
+                index_name = part2
+            return [tbl_name + "_" + index_name, part2]
+        else:
+            function_index = "function_index"
+            index_name = self.get_table_indexes(schema, tbl_name)
+            i = 1
+            tmp = function_index + "_" + str(i)
+            while tmp in index_name:
+                i += 1
+                tmp = function_index + "_" + str(i)
+            function_index = tbl_name + "_" + tmp
+            return [function_index, key_part]
 
     def get_table_columns(self, schema, tbl_name):
         sql_metadata = """
@@ -2476,7 +2467,7 @@ class pg_engine(object):
             :param query_data: query's metadata (schema,binlog, etc.)
             :param destination_schema: the postgresql destination schema determined using the schema mappings.
         """
-        pg_ddl = self.__generate_ddl(token, destination_schema)
+        pg_ddl = self.generate_ddl(token, destination_schema)
         self.logger.debug("Translated query: %s " % (pg_ddl,))
         log_table = query_data["log_table"]
         insert_vals = (
@@ -3194,31 +3185,36 @@ class pg_engine(object):
                     idx_def='CREATE INDEX "%s" ON "%s"."%s" (%s);' % ( index_name, schema, table, ','.join(index_columns) )
                     idx_ddl[index_name] = idx_def
                 elif type == 'FOREIGN':
-                    index_name = self.get_table_indexes(schema, table)
-                    i = 1
-                    function_index = index["index_name"]
-                    tmp = function_index + "_" + str(i)
-                    while tmp in index_name:
+                    fkey_name = index["index_name"]
+                    indexs = self.get_table_indexes(schema, table)
+                    i= 1
+                    tmp = fkey_name + "_" + str(i)
+                    while tmp in indexs:
                         i += 1
-                        tmp = function_index + "_" + str(i)
-                    fkey_name = table + "_" + tmp
+                        tmp = fkey_name + "_" + str(i)
+                    fkey_name = tmp
+                    key_part = index["index_columns"]
+                    if index["constraint_name"]:
+                        fkey_name = index["constraint_name"]
+                    if key_part.find("(")==-1:
+                        fkey_name = "%s_%s" %(table, fkey_name)
+                    else:
+                        [fkey_name, key_part] = self.find_key_from_express(schema, table, fkey_name, index["index_columns"])
                     fkey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s.%s;""" % (
-                    schema, table, fkey_name, index["index_columns"], schema, index["fkey_on1"])
+                    schema, table, fkey_name, key_part, schema, index["fkey_on1"])
                     idx_ddl[fkey_name] = fkey_def
                 elif type == 'CHECK':
+                    ckey_name = index["index_name"]
+                    key_part = index["index_columns"]
+                    if index["constraint_name"]:
+                        ckey_name = index["constraint_name"]
+                    if key_part.find("(") == -1:
+                        ckey_name = "%s_%s" % (table, ckey_name)
+                    else:
+                        [ckey_name, key_part] = self.find_key_from_express(schema, table, ckey_name, key_part)
                     if index["constraint_name"]:
                         ckey_name = table + "_" + index["constraint_name"]
-                    else:
-                        index_name = self.get_table_indexes(schema, table)
-                        i = 1
-                        function_index = index["index_name"]
-                        tmp = function_index + "_" + str(i)
-                        while tmp in index_name:
-                            i += 1
-                            tmp = function_index + "_" + str(i)
-                        ckey_name = table + "_" + tmp
-                    ckey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s CHECK (%s);""" % (
-                        schema, table, ckey_name, index["index_columns"])
+                    ckey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s CHECK (%s);""" % (schema, table, ckey_name, key_part)
                     idx_ddl[ckey_name] = ckey_def
                 self.idx_sequence+=1
         return [table_primary, idx_ddl]
