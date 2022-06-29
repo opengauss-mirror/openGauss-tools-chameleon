@@ -154,6 +154,7 @@ class sql_token(object):
         #re for column definitions
         self.m_columns=re.compile(r'\((.*)\)', re.IGNORECASE)
         self.m_inner=re.compile(r'\((.*)\)', re.IGNORECASE)
+        self.m_comment=re.compile(r"""comment\s*"?'?([^"']*)'?"?""", re.IGNORECASE)
 
         #re for keys and indices
         self.m_idx = re.compile(r',\s*(?:KEY|INDEX)\s*`?(\w*)?`?\s*\((.*?)\)\s*', re.IGNORECASE)
@@ -455,9 +456,11 @@ class sql_token(object):
                 idx_list.append(dict(list(key_dic.items())))
                 key_dic = {}
                 idx_counter += 1
-        column_key =self.m_fields.findall(column_list)
+        column_key =self.m_fields.findall(column_list+',')
+        comments = []
         for col_def in column_key:
             col_def=col_def.strip()
+            com = self.m_comment.findall(col_def)
             ukey = col_def.upper().find("UNIQUE")
             ckey = col_def.upper().find("CHECK")
             if ukey!=-1:
@@ -484,7 +487,14 @@ class sql_token(object):
                 idx_list.append(dict(list(key_dic.items())))
                 key_dic = {}
                 idx_counter += 1
-        return idx_list
+            if com:
+                col_match = self.m_field.search(col_def)
+                com_dic = {}
+                com_dic["type"] = "column"
+                com_dic["name"] = col_match.group(1).strip()
+                com_dic["comment"] = com[0]
+                comments.append(com_dic)
+        return [comments, idx_list]
 
     def build_column_dic(self, inner_stat):
         """
@@ -716,12 +726,20 @@ class sql_token(object):
         column_list = self.m_idx_2.sub( '', column_list)
         column_list = self.m_fkeys.sub('', column_list)
         column_list = self.m_check.sub('', column_list)
-        table_dic["indices"] = self.build_key_dic(inner_stat, table_name, column_list)
+        [table_dic["comment"], table_dic["indices"]] = self.build_key_dic(inner_stat, table_name, column_list)
         mpars  =self.m_pars.findall(column_list)
         for match in mpars:
             new_group=str(match[0]).replace(',', '|')
             column_list=column_list.replace(match[0], new_group)
         column_list=column_list+","
+        other = sql_create[sql_create.find(m_inner.group(0)):].replace(m_inner.group(0), "").strip()
+        com = self.m_comment.findall(other)
+        if com!=[]:
+            com_dic = {}
+            com_dic["type"] = "table"
+            com_dic["name"] = table_name
+            com_dic["comment"] = com[0]
+            table_dic["comment"].append(com_dic)
         table_dic["columns"]=self.build_column_dic(column_list)
         return table_dic
 
@@ -1541,6 +1559,7 @@ class sql_token(object):
                 create_parsed=self.parse_create_table(stat_cleanup, stat_dic["name"])
                 stat_dic["columns"] = create_parsed["columns"]
                 stat_dic["indices"] = create_parsed["indices"]
+                stat_dic["comment"] = create_parsed["comment"]
                 partition = self.parse_partition(parti)
                 stat_dic["partition"] = partition
             elif mdrop_table:
