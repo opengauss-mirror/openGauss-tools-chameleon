@@ -331,7 +331,7 @@ class sql_token(object):
         return quoted_cols
 
 
-    def build_key_dic(self, inner_stat, table_name):
+    def build_key_dic(self, inner_stat, table_name, column_list):
         """
             The method matches and tokenise the primary key and index/key definitions in the create table's inner statement.
 
@@ -451,6 +451,35 @@ class sql_token(object):
                 key_dic["index_name"] = table_name+"_chk"
                 key_dic["index_n"] = 'CHECK'
                 key_dic["index_columns"] = cols[1]
+                key_dic["non_unique"] = 1
+                idx_list.append(dict(list(key_dic.items())))
+                key_dic = {}
+                idx_counter += 1
+        column_key =self.m_fields.findall(column_list)
+        for col_def in column_key:
+            col_def=col_def.strip()
+            ukey = col_def.upper().find("UNIQUE")
+            ckey = col_def.upper().find("CHECK")
+            if ukey!=-1:
+                col_match = self.m_field.search(col_def)
+                key_dic["index_name"] = col_match.group(1).strip()
+                key_dic["index_n"] = 'UNIQUE'
+                index_columns = [col_match.group(1).strip()]
+                idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if
+                            column.strip() != '']
+                key_dic["index_columns"] = idx_cols
+                key_dic["non_unique"] = 0
+                idx_list.append(dict(list(key_dic.items())))
+                key_dic = {}
+                idx_counter += 1
+                self.ukey_cols = self.ukey_cols+[column for column in idx_cols if column not in self.ukey_cols]
+            if ckey!=-1:
+                check = col_def.replace("check", ",check").replace("CHECK", ",CHECK")
+                ckey = self.m_check.findall(check)
+                key_dic["constraint_name"] = ""
+                key_dic["index_name"] = table_name + "_chk"
+                key_dic["index_n"] = 'CHECK'
+                key_dic["index_columns"] = ckey[0][1].strip()
                 key_dic["non_unique"] = 1
                 idx_list.append(dict(list(key_dic.items())))
                 key_dic = {}
@@ -687,7 +716,7 @@ class sql_token(object):
         column_list = self.m_idx_2.sub( '', column_list)
         column_list = self.m_fkeys.sub('', column_list)
         column_list = self.m_check.sub('', column_list)
-        table_dic["indices"] = self.build_key_dic(inner_stat, table_name)
+        table_dic["indices"] = self.build_key_dic(inner_stat, table_name, column_list)
         mpars  =self.m_pars.findall(column_list)
         for match in mpars:
             new_group=str(match[0]).replace(',', '|')
