@@ -3205,15 +3205,17 @@ class pg_engine(object):
                     idx_ddl[fkey_name] = fkey_def
                 elif type == 'CHECK':
                     ckey_name = index["index_name"]
+                    indexs = self.get_table_indexes(schema, table)
+                    i = 1
+                    tmp = ckey_name + "_" + str(i)
+                    while tmp in indexs:
+                        i += 1
+                        tmp = ckey_name + "_" + str(i)
+                    ckey_name = tmp
                     key_part = index["index_columns"]
                     if index["constraint_name"]:
                         ckey_name = index["constraint_name"]
-                    if key_part.find("(") == -1:
-                        ckey_name = "%s_%s" % (table, ckey_name)
-                    else:
-                        [ckey_name, key_part] = self.find_key_from_express(schema, table, ckey_name, key_part)
-                    if index["constraint_name"]:
-                        ckey_name = table + "_" + index["constraint_name"]
+                    ckey_name = "%s_%s" % (table, ckey_name)
                     ckey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s CHECK (%s);""" % (schema, table, ckey_name, key_part)
                     idx_ddl[ckey_name] = ckey_def
                 self.idx_sequence+=1
