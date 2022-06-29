@@ -1320,7 +1320,8 @@ class pg_engine(object):
             table_pkey = index_ddl[0]
             table_indices = ''.join([val for key ,val in index_ddl[1].items()])
             self.store_table(destination_schema, table_name, table_pkey, None)
-            query = "%s %s %s" % (table_enum, table_statement,  table_indices)
+            table_comment = self.build_table_comment(destination_schema, table_name, token["comment"])
+            query = "%s %s %s %s" % (table_enum, table_statement,  table_indices, table_comment)
         else:
             if count_table == 1:
                 if token["command"] == "RENAME TABLE":
@@ -3151,6 +3152,18 @@ class pg_engine(object):
             part_pcolumn.append(part_p + " (" + def_part_c + " )")
         def_part = str(',').join(part_pcolumn)
         return partition_method + def_part
+
+    def build_table_comment(self, schema, table, comments):
+        querys = ""
+        for comment in comments:
+            if comment["type"].upper() == "TABLE":
+                query = """\n COMMENT ON TABLE %s.%s is '%s' ;""" % (schema, comment["name"], comment["comment"] )
+            elif comment["type"].upper() == "COLUMN":
+                query = """\n COMMENT ON COLUMN %s.%s.%s is '%s' ;""" % (schema, table, comment["name"], comment["comment"])
+            else:
+                query = """ """
+            querys += query
+        return querys
 
     def build_create_index(self, schema, table, index_data):
         """
