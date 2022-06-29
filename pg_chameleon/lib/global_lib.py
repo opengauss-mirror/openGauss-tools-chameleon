@@ -29,6 +29,7 @@ from pg_chameleon.lib.parallel_replication import ConvertToEvent
 from pg_chameleon.lib.parallel_replication import MyGtidEvent, modified_my_gtid_event
 from pg_chameleon.lib.parallel_replication import Transaction
 from pg_chameleon.lib.parallel_replication import Packet, ReplicaPosition
+from pg_chameleon.lib.parallel_replication import write_pid
 
 ROTATE_EVENT = 0x04
 TABLE_MAP_EVENT = 0x13
@@ -114,6 +115,9 @@ class replica_engine(object):
         local_logs = "%s/logs/" % cham_dir
         local_pid = "%s/pid/" % cham_dir
 
+        pid_file_name = local_pid + "replica.pid"
+        self.pid_file = pid_file_name
+
         self.conf_dirs = [
             cham_dir,
             local_conf,
@@ -140,6 +144,7 @@ class replica_engine(object):
 
         # pg_engine instance initialisation
         self.pg_engine = pg_engine()
+        self.pg_engine.pid_file = pid_file_name
         self.pg_engine.dest_conn = self.config["pg_conn"]
         self.pg_engine.logger = self.logger
         self.pg_engine.source = self.args.source
@@ -342,6 +347,9 @@ class replica_engine(object):
             The method checks the source type and calls the corresponding initialisation's method.
 
         """
+        if os.path.exists(self.pid_file):
+            os.remove(self.pid_file)
+
         if self.args.source == "*":
             print("You must specify a source name with the argument --source")
         elif self.args.tables != "*":
@@ -515,6 +523,8 @@ class replica_engine(object):
             The method reads the replica stream for the given source and stores the row images
             in the target postgresql database.
         """
+        write_pid(self.pid_file, "read_replica_process")
+
         if "keep_existing_schema" in self.config["sources"][self.args.source]:
             keep_existing_schema = self.config["sources"][self.args.source]["keep_existing_schema"]
         else:
@@ -578,6 +588,7 @@ class replica_engine(object):
         self.pg_engine.connect_db()
         self.pg_engine.set_source_id()
         self.logger.debug("start replay process")
+        write_pid(self.pid_file, "replay_replica_process")
         transaction_dispatcher = TransactionDispatcher(6, self.pg_engine)
         transaction_dispatcher.dispatcher(trx_queue)
 
@@ -585,6 +596,7 @@ class replica_engine(object):
         """
             The method merges the transaction queue according to each packet to transaction process.
         """
+        write_pid(self.pid_file, "merge_trx_process")
         local_transaction_queue = queue.Queue()
         threading.Thread(target=self.dispatcher_trx_queue_read, args=(local_transaction_queue, trx_queue)).start()
         while True:
@@ -623,6 +635,7 @@ class replica_engine(object):
         """
             The method receives packet from the pip and convert packet to transaction in each process.
         """
+        write_pid(self.pid_file, "packet_to_trx_process")
         packet_queue = queue.Queue()
         a_packet_queue = packet_queue_list[i][1]
         threading.Thread(target=self.packet_to_trx,
@@ -780,6 +793,7 @@ class replica_engine(object):
         """
             The method receives packet from the pipe and dispatches packet to each packet to transaction process.
         """
+        write_pid(self.pid_file, "dispatcher_packet_process")
         q_out = queue.Queue()
         threading.Thread(target=self.dispatcher_packet_to_every_queue, args=(q_out, packet_queue_list)).start()
         while True:
@@ -841,6 +855,8 @@ class replica_engine(object):
             It can be daemonised or run in foreground according with the --debug configuration or the log
             destination.
         """
+        write_pid(self.pid_file, "run_replica_process")
+
         if "auto_maintenance" not in self.config["sources"][self.args.source]:
             auto_maintenance = "disabled"
         else:
@@ -915,8 +931,10 @@ class replica_engine(object):
             The method starts a new replica process.
             Is compulsory to specify a source name when running this method.
         """
+        if os.path.exists(self.pid_file):
+            os.remove(self.pid_file)
 
-        replica_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"], self.args.source))
+        write_pid(self.pid_file, "start_replica_process")
 
         if self.args.source == "*":
             print("You must specify a source name using the argument --source")
@@ -951,28 +969,23 @@ class replica_engine(object):
                     replica_daemon = mp.Process(target=self.__run_replica, name='__run_replica', daemon=False)
                     replica_daemon.start()
 
-
     def __stop_replica(self):
         """
             The method reads the pid of the replica process for the given self.source and sends a SIGINT which
             tells the replica process to manage a graceful exit.
         """
-        replica_pid = os.path.expanduser('%s/%s.pid' % (self.config["pid_dir"], self.source))
+        replica_pid = os.path.expanduser(self.config["pid_dir"] + "replica.pid")
         if os.path.isfile(replica_pid):
-            try:
-                file_pid = open(replica_pid, 'r')
-                pid = file_pid.read()
-                file_pid.close()
-                os.kill(int(pid), 2)
-                print("Requesting the replica for source %s to stop" % (self.source))
-                while True:
-                    try:
-                        os.kill(int(pid), 0)
-                    except:
-                        break
-                print("The replica process is stopped")
-            except:
-                print("An error occurred when trying to signal the replica process")
+            file_pid = open(replica_pid, 'r')
+            process_id = file_pid.readlines()
+            file_pid.close()
+            for i in range(len(process_id)):
+                process_number = process_id[i].strip().split(":")[1]
+                try:
+                    os.kill(int(process_number), 9)
+                except:
+                    print("no such process for process %s" % process_number)
+            print("The replica process is stopped")
 
     def __set_conf_permissions(self, cham_dir):
         """

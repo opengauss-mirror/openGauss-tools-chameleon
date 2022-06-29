@@ -4,6 +4,7 @@ import copy
 import py_opengauss
 import struct
 import re
+import os
 import threading
 import queue
 import pymysql
@@ -503,6 +504,7 @@ def process_work(pg_engine, arr, i):
     """
     conn = create_connection(pg_engine)
     id = i
+    write_pid(pg_engine.pid_file, "execute_sql_process")
     while True:
         if arr[id].flag == -1:
             time.sleep(0.000006)
@@ -669,3 +671,10 @@ class ReplicaPosition:
         """
         replica_position_object = ReplicaPosition(self.master_data, self.close_batch)
         return replica_position_object
+
+
+def write_pid(pid_file, pid_name):
+    file_name = os.path.expanduser(pid_file)
+    file = open(file_name, "a")
+    file.write("%s:%s%s" % (pid_name, os.getpid(), os.linesep))
+    file.close()
