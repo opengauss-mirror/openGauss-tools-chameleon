@@ -1611,7 +1611,10 @@ class pg_engine(object):
                 if len(alt_item["part1"]) == 1:
                     querys += "ALTER TABLE %s.%s SPLIT PARTITION %s INTO (" % (schema, alt_item["tbl_name"], alt_item["part1"][0])
                     for dim in alt_item["part2"]:
-                        querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
+                        if dim[1]:
+                            querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
+                        elif dim[2]:
+                            querys += " PARTITION %s VALUES (%s)," %(dim[0], dim[2])
                     querys = querys.rstrip(",")
                     querys += ");"
                 elif len(alt_item["part2"]) == 1:
@@ -1629,7 +1632,10 @@ class pg_engine(object):
                     querys += "ALTER TABLE %s.%s SPLIT PARTITION p0_tmp INTO (" % (
                     schema, alt_item["tbl_name"])
                     for dim in alt_item["part2"]:
-                        querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
+                        if dim[1]:
+                            querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
+                        elif dim[2]:
+                            querys += " PARTITION %s VALUES (%s)," % (dim[0], dim[2])
                     querys = querys.rstrip(",")
                     querys += ");"
             elif command == "EXCHANGE":
@@ -1723,7 +1729,7 @@ class pg_engine(object):
                 local = " local "
             else:
                 local = ""
-            query = "CREATE INDEX %s.%s ON %s.%s %s %s %s;" % (schema, index_name, schema, table_name, alter_dic["index_type"], key_part, local)
+            query = "CREATE INDEX %s.%s ON %s.%s %s (%s) %s;" % (schema, index_name, schema, table_name, alter_dic["index_type"], key_part, local)
         return query
 
     def build_t_alter_3(self, schema, token):
@@ -1809,7 +1815,7 @@ class pg_engine(object):
                 key_p = key_p[comm + 1:].strip()
             old_name += "_%s_key" % key_p
             if index_name:
-                new_name = index_name
+                new_name = tbl_name + '_' + index_name
             if not index_constraint:
                 query += "ALTER TABLE %s.%s RENAME CONSTRAINT %s TO %s;" % (schema, tbl_name, old_name, new_name)
         return query
@@ -1855,7 +1861,7 @@ class pg_engine(object):
                 key_p = key_part.replace("(","").replace(")","").strip()
                 i = 1
                 old_name = "%s_%s_fkey" % (tbl_name, key_p)
-                new_name = "%s_ibfk_%s" % (tbl_name, i)
+                new_name = "%s_%s_ibfk_%s" % (tbl_name, tbl_name, i)
                 query += "ALTER TABLE %s.%s RENAME CONSTRAINT %s TO %s;" % (schema, tbl_name, old_name, new_name)
         return query
 
@@ -1915,6 +1921,26 @@ class pg_engine(object):
         query = ""
         for alter_dic in token["alter_cmd"]:
             query = "ALTER TABLE %s.%s DROP COLUMN %s;" % (schema, token["name"], alter_dic["col_name"])
+        return query
+
+    def build_t_alter_30(self, schema, token):
+        """
+        In the ALTER TABLE statement, build the alter_option
+        alter_option：
+            RENAME [TO | AS] new_tbl_name
+        """
+        query = ""
+        for alter_dic in token["alter_cmd"]:
+            tbl_name = token["name"]
+            new_name = alter_dic["new_name"]
+            query = """ALTER TABLE "%s"."%s" RENAME TO "%s" ;""" % (schema, tbl_name, new_name)
+            indexs = self.get_table_indexes(schema, tbl_name)
+            for tmp in indexs:
+                new_index = tmp[tmp.find(tbl_name)+len(tbl_name):].strip()
+                new_index = new_name + new_index
+                querys = """ALTER TABLE "%s"."%s" RENAME CONSTRAINT %s TO %s ;"""%(schema, new_name, tmp, new_index)
+                query += querys
+
         return query
 
     def get_table_indexes(self, schema, tbl_name):
@@ -3213,8 +3239,8 @@ class pg_engine(object):
                         fkey_name = "%s_%s" %(table, fkey_name)
                     else:
                         [fkey_name, key_part] = self.find_key_from_express(schema, table, fkey_name, index["index_columns"])
-                    fkey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s.%s;""" % (
-                    schema, table, fkey_name, key_part, schema, index["fkey_on1"])
+                    fkey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s.%s %s;""" % (
+                    schema, table, fkey_name, key_part, schema, index["references_match"], index["references_on"])
                     idx_ddl[fkey_name] = fkey_def
                 elif type == 'CHECK':
                     ckey_name = index["index_name"]

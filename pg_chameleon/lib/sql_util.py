@@ -300,7 +300,7 @@ class sql_token(object):
                 col_dic["is_nullable"]="NO"
             elif nullcons:
                 #pkey_list=[cln.strip() for cln in pkey_list]
-                if nullcons.group(0)=="NOT NULL":
+                if nullcons.group(0).upper()=="NOT NULL":
                     col_dic["is_nullable"]="NO"
 
             if autoinc:
@@ -441,8 +441,8 @@ class sql_token(object):
                 key_dic["index_name"] = table_name+'_ibfk'
                 key_dic["index_n"] = 'FOREIGN'
                 key_dic["index_columns"] = cols[1].replace("(","").replace(")","").strip()
-                key_dic["fkey_on1"] = cols[2]
-                key_dic["fkey_on2"] = cols[3]
+                key_dic["references_match"] = cols[2]
+                key_dic["references_on"] = (cols[3].upper()+" "+cols[4].upper()).strip()
                 idx_list.append(dict(list(key_dic.items())))
                 key_dic={}
                 idx_counter+=1
@@ -670,7 +670,7 @@ class sql_token(object):
             par_dic["command"] = command
             if command == "ADD":
                 par_dic["part"] = par_item[3].replace("MAXVALUE", "(MAXVALUE)").replace("maxvalue", "(MAXVALUE)").replace("PARTITION", " ADD PARTITION ").replace(
-                    "partition", " ADD PARTITION").replace("IN", "").strip()
+                    "partition", " ADD PARTITION").replace("IN", "").replace("in", "").strip()
             elif command == "DROP":
                 par_dic["part"] = par_item[2].replace(" ", "").split(',')
             elif command == "TRUNCATE":
@@ -1423,7 +1423,14 @@ class sql_token(object):
             RENAME [TO | AS] new_tbl_name
         """
         alter_cmd = []
-        pass
+        alter_stat = talter_table.group(0)
+        alter_list = self.t_alter_table_[30].findall(alter_stat)
+        for alter_item in alter_list:
+            alter_dic = {}
+            alter_dic["command"] = "RENAME"
+            alter_dic["new_name"] = alter_item[2]
+            alter_dic["col_name"] = ""
+            alter_cmd.append(alter_dic)
         return alter_cmd
 
     def parse_t_alter_31(self, talter_table):
