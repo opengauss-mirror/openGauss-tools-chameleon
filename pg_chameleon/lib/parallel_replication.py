@@ -296,7 +296,7 @@ class Transaction:
         for i in range(len(self.events)):
             event = self.events[i]
             if isinstance(event, RowsEvent):
-                table = "%s.%s" % (event.schema, event.table)
+                table = "%s.%s" % (dqstr(event.schema), dqstr(event.table))
                 if isinstance(event, DeleteRowsEvent):
                     sql_list += [sql_delete(table, row['values']) for row in event.rows]
                 elif isinstance(event, UpdateRowsEvent):
@@ -327,12 +327,22 @@ def qstr(obj) -> str:
     return "'{}'".format(str(obj))
 
 
+def dqstr(obj) -> str:
+    """
+        The method formats the string with the double quote.
+    """
+    if str(obj).islower():
+        return str(obj)
+    else:
+        return "\"{}\"".format(str(obj))
+
+
 def sql_delete(table, row) -> str:
     """
         The method gets the sql delete statement.
     """
     sql = "delete from {} where ".format(table)
-    sql += ' and '.join([str(k) + '=' + qstr(v) for k, v in row.items()])
+    sql += ' and '.join([dqstr(k) + '=' + qstr(v) for k, v in row.items()])
     return sql
 
 
@@ -346,13 +356,13 @@ def sql_update(table, before_row, after_row) -> str:
     for k, v in after_row.items():
         ct += 1
         if v is None:
-            sql += (str(k) + '=' + 'NULL')
+            sql += (dqstr(k) + '=' + 'NULL')
         else:
-            sql += (str(k) + '=' + qstr(v))
+            sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
             sql += ','
     sql += ' where '
-    sql += ' and '.join([str(k) + '=' + qstr(v) for k, v in before_row.items()])
+    sql += ' and '.join([dqstr(k) + '=' + qstr(v) for k, v in before_row.items()])
     return sql
 
 
@@ -362,7 +372,7 @@ def sql_insert(table, row) -> str:
     """
     sql = 'insert into {}('.format(table)
     keys = row.keys()
-    sql += ','.join([str(k) for k in keys])
+    sql += ','.join([dqstr(k) for k in keys])
     sql += ') values('
     ct = 0
     l = len(keys)
