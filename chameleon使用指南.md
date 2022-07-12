@@ -894,7 +894,70 @@ binlog_row_image=FULL
 
 ![img](./images/wps1.jpg) 
 
-## **6.5.** 开启在线复制
+## **6.5.** 复制数据库对象
+
+chameleon支持将视图、触发器、自定义函数、存储过程从MySQL迁移到openGauss。以下四个命令无先后之分。若不想日志输出到控制台，可去掉--debug参数。
+
+复制视图：
+
+**chameleon start_view_replica --config default --source mysql --debug**
+
+复制触发器：
+
+**chameleon start_trigger_replica --config default --source mysql --debug**
+
+复制自定义函数：
+
+**chameleon start_func_replica --config default --source mysql --debug**
+
+复制存储过程：
+
+**chameleon start_proc_replica --config default --source mysql --debug**
+
+可以在对象迁移信息表sch_chameleon.t_replica_object中查看迁移对象的记录。下表展示了t_replica_object表的字段说明。
+
+| 字段             | 类型                     | 描述                                                                             |
+| ---------------- | ------------------------ | -------------------------------------------------------------------------------- |
+| i_id_object      | bigserial                | id                                                                               |
+| i_id_source      | bigint                   | 与sch_schema.t_sources的id相对应                                                 |
+| en_object_type   | 枚举类型                 | 迁移对象所属类型（VIEW/TRIGGER/FUNC/PROC)                                        |
+| ts_created       | timestamp with time zone | 迁移时间                                                                         |
+| b_status         | boolean                  | 迁移状态。true表示迁移成功，false表示迁移失败                                    |
+| t_src_object_sql | text                     | 原始sql语句                                                                      |
+| t_dst_object_sql | text                     | 翻译后的语句。若无法翻译或者翻译出现error的情况为空；openGauss不支持的字段被注释 |
+
+另外，chameleon支持复制数据库对象是基于[openGauss-tools-sql-translator](https://gitee.com/opengauss/openGauss-tools-sql-translator)仓库进行数据库对象的翻译，可前往该仓库了解数据库对象的翻译情况。也可通过chameleon的日志了解数据库对象的翻译情况，chameleon的日志包括翻译过程产生的日志和迁移过程产生的日志。
+
+一个迁移自定义函数的例子如下。
+
+MySQL侧创建两个自定义函数：
+
+**create function mysql_func1(s char(20))
+returns char(50) deterministic
+return concat('mysql_func1, ',s,'!')**
+
+**create function mysql_func2(x smallint unsigned, y smallint unsigned) returns smallint deterministic
+BEGIN
+DECLARE a, b SMALLINT UNSIGNED DEFAULT 10;
+SET  a = x, b = y;
+RETURN a+b;
+END;**
+
+迁移自定义函数：
+
+**chameleon start_func_replica --config default --source mysql --debug**
+
+在openGauss侧查询并调用:
+
+![img](./images/wps4.png)
+
+可以看到在MySQL侧的自定义函数已成功被迁移过来了。
+
+查询sch_chameleon.t_replica_object表（注意en_object_type的值是为大写）即可获取自定义函数的迁移信息：
+
+**select * from sch_chameleon.t_replica_object where en_object_type='FUNC';**
+
+## **6.6.** 开启在线复制
 
 接下来可以开启在线实时复制。
 
@@ -910,7 +973,7 @@ binlog_row_image=FULL
 
 可以看到新插入的数据在openGauss侧成功被复制过来了。
 
-## **6.6.** 结束复制过程及清理资源
+## **6.7.** 结束复制过程及清理资源
 
 **chameleon stop_replica --config default --source mysql**
 
