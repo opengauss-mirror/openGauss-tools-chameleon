@@ -140,17 +140,17 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 
 ### 1.3.1. 一般性限制
 
-- l根据mysql-replication的要求，Python 3仅支持3.5~3.7。
+- 根据mysql-replication的要求，Python 3仅支持3.5~3.7。
 - MySQL列的AUTO_INCREMENT属性，在openGauss侧将通过序列(serial)实现。
 - detach复制副本进程将重置openGauss中的序列(serial)，以使数据库独立工作。外键约束也会在detach过程中被创建和验证。
-- 视图、自定义函数、存储过程、trigger、自定义type等不会被迁移。
-- 列的comment不会被迁移。
+- 自定义type等不会被迁移。
 - 对于分区表，openGauss无法支持的分区表类型将被迁移成普通表。分区表迁移规则见[分区表迁移规则](#_分区表迁移规则)。
 - 配置文件中，schema mappings中指定的openGauss侧的目的schema名称不能是sch_chameleon。sch_chameleon是工具将自行创建用于辅助复制的schema名称。
 - 列默认值问题。由于列的默认值可以是表达式，部分MySQL的表达式若openGauss不支持的话，离线迁移过程中会报错，导致迁移失败。可通过关闭迁移默认值的方式临时规避该问题。
 - MySQL的unsigned数据类型迁移时，会自动去掉unsigned属性，如MySQL的unsigned int迁移到openGauss时将变成 int，若MySQL中存储的数据超过了int的取值范围，迁移过程中会出错。
 - 工具支持的MySQL版本为 5.5+，openGauss的版本为 2.1.0+。
 - 对于float、double等浮点数，迁移过程中可能由于精度误差，造成MySQL和openGauss中的值不完全一样。
+- 若想迁移到openGauss的表名和视图名的大小写与MySQL一致，MySQL的系统变量lower_case_table_names的值应设置为0。存在大小写的触发器名、自定义函数名、存储过程名迁移前后一致。
 
 ### 1.3.2. 在线迁移限制
 
@@ -918,7 +918,7 @@ chameleon支持将视图、触发器、自定义函数、存储过程从MySQL迁
 
 | 字段             | 类型                     | 描述                                                                             |
 | ---------------- | ------------------------ | -------------------------------------------------------------------------------- |
-| i_id_object      | bigserial                | id                                                                               |
+| i_id_object      | bigint                | id                                                                               |
 | i_id_source      | bigint                   | 与sch_schema.t_sources的id相对应                                                 |
 | en_object_type   | 枚举类型                 | 迁移对象所属类型（VIEW/TRIGGER/FUNC/PROC)                                        |
 | ts_created       | timestamp with time zone | 迁移时间                                                                         |
