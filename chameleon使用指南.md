@@ -152,7 +152,13 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - 对于float、double等浮点数，迁移过程中可能由于精度误差，造成MySQL和openGauss中的值不完全一样。
 - 若想迁移到openGauss的表名和视图名的大小写与MySQL一致，MySQL的系统变量lower_case_table_names的值应设置为0。存在大小写的触发器名、自定义函数名、存储过程名迁移前后一致。
 
-### 1.3.2. 在线迁移限制
+### 1.3.2. 对象迁移限制
+
+- chameleon支持复制数据库对象是基于[openGauss-tools-sql-translator](https://gitee.com/opengauss/openGauss-tools-sql-translator)仓库进行数据库对象的翻译，可前往该仓库了解数据库对象的翻译情况。
+- 目前，要迁移的数据库对象体内若存在commit或rollback无法解析翻译，将迁移失败。
+- 目前MySQL存储过程中的NO SQL、READS SQL DATA、MODIFIES SQL字段和自定义函数中的CONTAINS SQL、NO SQL、READS SQL DATA、MODIFIES SQL DATA、SECURITY字段无法解析，无法将这些openGauss不支持的参数屏蔽且warning提示信息。而是直接报错，迁移失败。
+
+### 1.3.3. 在线迁移限制
 
 在线DDL仅支持部分语句，主要包括 CREATE/DROP/RENAME/TRUNCATE TABLE, ALTER TABLE DROP/ADD/CHANGE/MODIFY, DROP PRIMARY KEY。在线CREATE TABLE仅支持创建普通表且列的默认值不会被迁移。
 
@@ -926,7 +932,7 @@ chameleon支持将视图、触发器、自定义函数、存储过程从MySQL迁
 | t_src_object_sql | text                     | 原始sql语句                                                                      |
 | t_dst_object_sql | text                     | 翻译后的语句。若无法翻译或者翻译出现error的情况为空；openGauss不支持的字段被注释 |
 
-另外，chameleon支持复制数据库对象是基于[openGauss-tools-sql-translator](https://gitee.com/opengauss/openGauss-tools-sql-translator)仓库进行数据库对象的翻译，可前往该仓库了解数据库对象的翻译情况。也可通过chameleon的日志了解数据库对象的翻译情况，chameleon的日志包括翻译过程产生的日志和迁移过程产生的日志。
+另外，除了前往[openGauss-tools-sql-translator](https://gitee.com/opengauss/openGauss-tools-sql-translator)仓库了解数据库对象的翻译情况。也可通过chameleon的日志了解数据库对象的翻译情况，chameleon的日志包括翻译过程产生的日志和迁移过程产生的日志。
 
 一个迁移自定义函数的例子如下。
 
