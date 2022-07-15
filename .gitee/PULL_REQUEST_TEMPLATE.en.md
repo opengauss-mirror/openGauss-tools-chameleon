@@ -17,6 +17,6 @@
 1. Please attach the self-test result (content or screenshot).
 2. Can you add the test case? If yes, please add the test case.
 3. Whether data modification is involved? If yes, supplement the data in the Docs repository.  
-5. Determine whether to consider abnormal scenarios, concurrent scenarios, forward compatibility scenarios, and performance scenarios. 
-6. Check whether other modules are affected.
+4. Determine whether to consider abnormal scenarios, concurrent scenarios, forward compatibility scenarios, and performance scenarios. 
+5. Check whether other modules are affected.
 
