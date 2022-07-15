@@ -417,7 +417,7 @@ def is_ddl(sql: str) -> bool:
         The method is used to judge whether the sql is ddl statement.
     """
     ddl_pattern = ['create table', 'drop table', 'create index', 'drop index',
-     'truncate table', 'alter table', 'alter index', 'create database', 'drop database', 'create user', 'drop user']
+     'truncate table', 'alter table', 'alter index', 'create database', 'drop database', 'create user', 'drop user', 'create unique index']
     no_comment = re.sub('/\*.*?\*/', '', sql, flags=re.S)
     formatted = ' '.join(no_comment.lower().split())
     return any(formatted.startswith(x) for x in ddl_pattern)
