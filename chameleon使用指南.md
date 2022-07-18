@@ -1,130 +1,6 @@
 目录
 
-[1.	概述	](#_Toc82533832)
-
-[1.1.	目的	](#_Toc82533833)
-
-[1.2.	chameleon介绍	](#_Toc82533834)
-
-[1.3.	注意事项	](#_Toc82533835)
-
-[1.3.1.	一般性限制	](#_Toc82533836)
-
-[1.3.2.	在线迁移限制	](#_Toc82533837)
-
-[2.	chameleon安装方法	](#_Toc82533838)
-
-[2.1.	whl安装	](#_Toc82533839)
-
-[2.2.	源码安装	](#_Toc82533840)
-
-[3.	chameleon配置文件说明	](#_Toc82533841)
-
-[3.1.	全局设置	](#_Toc82533842)
-
-[3.1.1.	pid_dir	](#_Toc82533843)
-
-[3.1.2.	log_dir	](#_Toc82533844)
-
-[3.1.3.	log_dest	](#_Toc82533845)
-
-[3.1.4.	log_level	](#_Toc82533846)
-
-[3.1.5.	log_days_keep	](#_Toc82533847)
-
-[3.1.6.	rollbar_key	](#_Toc82533848)
-
-[3.1.7.	rollbar_env	](#_Toc82533849)
-
-[3.2.	类型重载规则	](#_Toc82533850)
-
-[3.2.1.	override_to	](#_Toc82533851)
-
-[3.2.2.	override_tables	](#_Toc82533852)
-
-[3.3.	openGauss连接配置	](#_Toc82533853)
-
-[3.3.1.	host	](#_Toc82533854)
-
-[3.3.2.	port	](#_Toc82533855)
-
-[3.3.3.	user	](#_Toc82533856)
-
-[3.3.4.	password	](#_Toc82533857)
-
-[3.3.5.	database	](#_Toc82533858)
-
-[3.3.6.	charset	](#_Toc82533859)
-
-[3.4.	MySQL配置	](#_Toc82533860)
-
-[3.4.1.	db_conn	](#_Toc82533861)
-
-[3.4.2.	connect_timeout	](#_Toc82533862)
-
-[3.4.3.	schema_mappings	](#_Toc82533863)
-
-[3.4.4.	limit_tables	](#_Toc82533864)
-
-[3.4.5.	skip_tables	](#_Toc82533865)
-
-[3.4.6.	grant_select_to	](#_Toc82533866)
-
-[3.4.7.	lock_timeout	](#_Toc82533867)
-
-[3.4.8.	my_server_id	](#_Toc82533868)
-
-[3.4.9.	replica_batch_size	](#_Toc82533869)
-
-[3.4.10.	batch_retention	](#_Toc82533870)
-
-[3.4.11.	copy_max_memory	](#_Toc82533871)
-
-[3.4.12.	copy_mode	](#_Toc82533872)
-
-[3.4.13.	out_dir	](#_Toc82533873)
-
-[3.4.14.	sleep_loop	](#_Toc82533874)
-
-[3.4.15.	on_error_replay	](#_Toc82533875)
-
-[3.4.16.	on_error_read	](#_Toc82533876)
-
-[3.4.17.	auto_maintenance	](#_Toc82533877)
-
-[3.4.18.	gtid_enable	](#_Toc82533878)
-
-[3.4.19.	type	](#_Toc82533879)
-
-[3.4.20.	skip_events	](#_Toc82533880)
-
-[3.4.21.	keep_existing_schema	](#_Toc82533881)
-
-[3.4.22.	readers	](#_Toc82533882)
-
-[3.4.23.	writers	](#_Toc82533883)
-
-[3.4.24.	migrate_default_value	](#_Toc82533884)
-
-[4.	分区表迁移规则	](#_Toc82533885)
-
-[5.	默认的类型转换规则	](#_Toc82533886)
-
-[6.	实例	](#_Toc82533887)
-
-[6.1.	创建配置文件目录	](#_Toc82533888)
-
-[6.2.	创建用户及修改database配置	](#_Toc82533889)
-
-[6.3.	初始化迁移过程	](#_Toc82533890)
-
-[6.4.	复制基础数据	](#_Toc82533891)
-
-[6.5.	开启在线复制	](#_Toc82533892)
-
-[6.6.	结束复制过程及清理资源	](#_Toc82533893)
-
- 
+[Toc]
 
 # **1.** 概述
 
@@ -143,7 +19,8 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - 根据mysql-replication的要求，Python 3仅支持3.5~3.7。
 - MySQL列的AUTO_INCREMENT属性，在openGauss侧将通过序列(serial)实现。
 - detach复制副本进程将重置openGauss中的序列(serial)，以使数据库独立工作。外键约束也会在detach过程中被创建和验证。
-- 自定义type等不会被迁移。
+- 视图、自定义函数、存储过程、触发器支持离线迁移，不支持在线迁移。
+- 自定义type不支持离线和在线迁移。
 - 对于分区表，openGauss无法支持的分区表类型将被迁移成普通表。分区表迁移规则见[分区表迁移规则](#_分区表迁移规则)。
 - 配置文件中，schema mappings中指定的openGauss侧的目的schema名称不能是sch_chameleon。sch_chameleon是工具将自行创建用于辅助复制的schema名称。
 - 列默认值问题。由于列的默认值可以是表达式，部分MySQL的表达式若openGauss不支持的话，离线迁移过程中会报错，导致迁移失败。可通过关闭迁移默认值的方式临时规避该问题。
@@ -160,33 +37,33 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 
 ### 1.3.3. 在线迁移限制
 
-在线DDL仅支持部分语句，主要包括 CREATE/DROP/RENAME/TRUNCATE TABLE, ALTER TABLE DROP/ADD/CHANGE/MODIFY, DROP PRIMARY KEY。在线CREATE TABLE仅支持创建普通表且列的默认值不会被迁移。
+在线DDL仅支持部分语句，主要包括 CREATE/DROP/RENAME/TRUNCATE TABLE, ALTER TABLE DROP/ADD/CHANGE/MODIFY, DROP PRIMARY KEY。
 
-#### **1.3.2.1.** 添加/删除字段
+#### **1.3.3.1.** 添加/删除字段
 
 ALTER TABLE {table_name} ADD/DROP
 
-#### **1.3.2.2.** 修改字段数据类型、名称
+#### **1.3.3.2.** 修改字段数据类型、名称
 
 ALTER TABLE {table_name} CHANGE/MODIFY
 
-#### **1.3.2.3.** 删除主键约束
+#### **1.3.3.3.** 删除主键约束
 
 ALTER TABLE {table_name} DROP PRIMARY KEY
 
-#### **1.3.2.4.** 删除表
+#### **1.3.3.4.** 删除表
 
 DROP TABLE
 
-#### **1.3.2.5.** 重命名表
+#### **1.3.3.5.** 重命名表
 
 RENAME TABLE
 
-#### **1.3.2.6.** 截断表
+#### **1.3.3.6.** 截断表
 
 TRUNCATE TABLE
 
-#### **1.3.2.7.** 创建表
+#### **1.3.3.7.** 创建表
 
 CREATE TABLE
 
@@ -380,7 +257,7 @@ mysql:
 
 ### 3.1.1. pid_dir
 
-进程pid存储的路径。init_replica和start_replica阶段，如果工具在后台运行，进程的pid将保存在改文件夹下。
+进程pid存储的路径。init_replica和start_replica阶段，如果工具在后台运行，进程的pid将保存在该文件夹下。
 
 ### 3.1.2. log_dir
 
@@ -408,7 +285,7 @@ log文件保留时间，单位为天。
 
 ## **3.2.** 类型重载规则
 
-type_override，允许用户覆盖默认类型转换为不同的类型转换。每个类型键的命名应与要覆盖的MySQL类型完全相同，包括大小规模。每个类型键需要两个子键override_to和override_tables。
+type_override，允许用户覆盖默认类型转换为自定义的类型转换。每个类型键的命名应与要覆盖的MySQL类型完全相同，包括大小规模。配置后，与所配置数据类型相关的任何操作，重载的类型映射都会生效，包括离线、在线创建表中的列包含对应数据类型、在线执行alter table add/change/modify列包含对应数据类型时均会生效。 每个类型键需要两个子键override_to和override_tables。
 
 示例：
 
