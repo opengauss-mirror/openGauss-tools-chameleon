@@ -109,7 +109,7 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-1.
 
 **geomet>=0.3.0**
 
-**mysqlclient>=1.4.6**
+**mysqlclient>=2.1.1**
 
 注意：mysqlclient的安装需要先使用yum安装mysql-devel，直接使用yum install mysql-devel即可。
 

@@ -59,7 +59,7 @@ setup(
         'daemonize>=2.4.7',
         'rollbar>=0.13.17',
         'geomet>=0.3.0',
-        'mysqlclient>=1.4.6'
+        'mysqlclient>=2.1.1'
     ],
     include_package_data = True,
     package_data=package_data,
