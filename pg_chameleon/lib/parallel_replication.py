@@ -324,17 +324,14 @@ def qstr(obj) -> str:
     """
         The method formats the string with the single quote.
     """
-    return "'{}'".format(str(obj))
+    return "'{}'".format(str(obj).replace("'", "''"))
 
 
 def dqstr(obj) -> str:
     """
         The method formats the string with the double quote.
     """
-    if str(obj).islower():
-        return str(obj)
-    else:
-        return "\"{}\"".format(str(obj))
+    return "\"{}\"".format(str(obj))
 
 
 def sql_delete(table, row) -> str:
@@ -526,6 +523,7 @@ def process_work(pg_engine, arr, i):
                 arr[id].flag = -1
             except Exception as exception:
                 print(exception)
+                arr[id].flag = -1
 
 
 def create_connection(pg_engine):
