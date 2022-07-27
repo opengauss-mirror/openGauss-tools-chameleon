@@ -1365,6 +1365,15 @@ class pg_engine(object):
                         [index_name, key_part] = self.find_key_from_express(destination_schema, table_name, index_name, key_part)
                     query = """%s %s ON %s.%s %s (%s) %s;""" % (
                         command, index_name, destination_schema, table_name, index_type, key_part, local)
+                    if index_option.upper().find("COMMENT") != -1:
+                        comments = []
+                        comment = {}
+                        comment["name"] = index_name
+                        comment["type"] = "INDEX"
+                        comment["comment"] = index_option[index_option.upper().find("COMMENT")+7:].strip().strip("'").strip('"')
+                        comments.append(comment)
+                        column_comment = self.build_table_comment(destination_schema, table_name, comments)
+                        query += "%s" % (column_comment)
                 elif token["command"] == "DROP INDEX FULL":
                     command = "DROP INDEX"
                     index_name = token["name"] + "_" + token["index_name"]
@@ -1614,7 +1623,12 @@ class pg_engine(object):
                         if dim[1]:
                             querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
                         elif dim[2]:
-                            querys += " PARTITION %s VALUES (%s)," %(dim[0], dim[2])
+                            if self.list_or_hash(schema, alt_item["tbl_name"]):
+                                print("REORGANIZE or SPLIT LIST/HASH PARTITION is not support yet")
+                                return ""
+                            else:
+                                #Inface Only LIST PARTITION can use VALUES IN partition definition
+                                querys += " PARTITION %s VALUES (%s)," % (dim[0], dim[2])
                     querys = querys.rstrip(",")
                     querys += ");"
                 elif len(alt_item["part2"]) == 1:
@@ -1635,7 +1649,11 @@ class pg_engine(object):
                         if dim[1]:
                             querys += " PARTITION %s VALUES LESS THAN (%s)," % (dim[0], dim[1])
                         elif dim[2]:
-                            querys += " PARTITION %s VALUES (%s)," % (dim[0], dim[2])
+                            if self.list_or_hash(schema, alt_item["tbl_name"]):
+                                print("REORGANIZE or SPLIT LIST/HASH PARTITION is not support yet")
+                                return ""
+                            else:
+                                querys += " PARTITION %s VALUES (%s)," %(dim[0], dim[2])
                     querys = querys.rstrip(",")
                     querys += ");"
             elif command == "EXCHANGE":
@@ -1645,11 +1663,40 @@ class pg_engine(object):
             query += querys
         return query
 
+    def list_or_hash(self, schema, tbl_name):
+        """
+        Judge whether the partition table is list, hash or other types
+        """
+        self.logger.info("get partition type from the table %s.%s" % (schema, tbl_name))
+        sql_lh = """
+            SELECT partstrategy
+            FROM
+                pg_partition
+            WHERE
+                parentid in(
+            SELECT relfilenode
+            FROM
+            pg_class tab
+            INNER JOIN pg_namespace sch
+            ON
+            sch.oid=tab.relnamespace
+            WHERE
+            tab.relname='%s'
+            AND sch.nspname='%s'
+            )
+            ;
+        """
+        stmt = self.pgsql_conn.prepare(sql_lh % (tbl_name, schema))
+        lh = stmt()
+        if lh[0][0] == b'l' or lh[0][0] == b'h':
+            return True
+        return False
+
     def build_t_alter_0(self, schema, token):
         """
         Please have a look to build_talter_table.
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_0 corresponds to sql.util.py parse_t_alter_0,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             | ADD [COLUMN] col_name column_definition
                 [FIRST | AFTER col_name]
             | ADD [COLUMN] (col_name column_definition,...)
@@ -1659,8 +1706,8 @@ class pg_engine(object):
 
     def build_t_alter_1(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_1 build sql token from sql.util.py parse_t_alter_1,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             | ADD [COLUMN] col_name column_definition
                 [FIRST | AFTER col_name]
             | ADD [COLUMN] (col_name column_definition,...)
@@ -1705,8 +1752,8 @@ class pg_engine(object):
 
     def build_t_alter_2(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_2 build sql token from sql.util.py parse_t_alter_2,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             ADD {INDEX | KEY} [index_name]
                 [index_type] (key_part,...) [index_option] ...
         """
@@ -1734,8 +1781,8 @@ class pg_engine(object):
 
     def build_t_alter_3(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_3 build sql token from sql.util.py parse_t_alter_3,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             ADD {FULLTEXT | SPATIAL} [INDEX | KEY] [index_name]
                 (key_part,...) [index_option] ...
         """
@@ -1744,8 +1791,8 @@ class pg_engine(object):
 
     def build_t_alter_4(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_4 build sql token from sql.util.py parse_t_alter_4,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             ADD [CONSTRAINT [symbol]] PRIMARY KEY
                 [index_type] (key_part,...) [index_option] ...
         """
@@ -1769,8 +1816,8 @@ class pg_engine(object):
 
     def build_t_alter_5(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_5 build sql token from sql.util.py parse_t_alter_5,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             ADD [CONSTRAINT [symbol]] UNIQUE [INDEX | KEY]
                 [index_name] [index_type] (key_part,...)
                 [index_option] ...
@@ -1822,8 +1869,8 @@ class pg_engine(object):
 
     def build_t_alter_6(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_6 build sql token from sql.util.py parse_t_alter_6,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             ADD [CONSTRAINT [symbol]] FOREIGN KEY
                 [index_name] (col_name,...)
                 reference_definition
@@ -1835,7 +1882,7 @@ class pg_engine(object):
             index_constraint = ""
             constraint_name = alter_dic["symbol"]
             if constraint_name:
-                index_constraint = "CONSTRAINT %s " % (constraint_name)
+                index_constraint = "CONSTRAINT %s_%s " % (tbl_name, constraint_name)
             index_name = alter_dic["index_name"]
             index_type = alter_dic["index_type"]
             key_part = alter_dic["key_part"]
@@ -1867,8 +1914,8 @@ class pg_engine(object):
 
     def build_t_alter_8(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_8 build sql token from sql.util.py parse_t_alter_8,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             DROP {CHECK | CONSTRAINT} symbol
         """
         query = ""
@@ -1878,11 +1925,32 @@ class pg_engine(object):
             query = "ALTER TABLE %s.%s DROP CONSTRAINT %s;" % (schema, tbl_name, symbol)
         return query
 
+    def build_t_alter_13(self, schema, token):
+        """
+        build_t_alter_13 build sql token from sql.util.py parse_t_alter_13,In the ALTER TABLE statement, match the alter_option
+        alter_option:
+            CHANGE [COLUMN] old_col_name new_col_name column_definition
+            [FIRST | AFTER col_name]
+            THE FIRST KIND column definition
+        """
+        query = self.build_alter_table(schema, token["alter_cmd"])
+        return query
+
+    def build_t_alter_14(self, schema, token):
+        """
+        build_t_alter_14 build sql token from sql.util.py parse_t_alter_14,In the ALTER TABLE statement, match the alter_option
+        alter_option:
+            CHANGE [COLUMN] old_col_name new_col_name column_definition
+            [FIRST | AFTER col_name]
+            THE second kind column definition
+        """
+        query = self.build_alter_table(schema, token["alter_cmd"])
+        return query
 
     def build_t_alter_19(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_19 build sql token from sql.util.py parse_t_alter_19,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             DROP {INDEX | KEY} index_name
         """
         query = ""
@@ -1892,8 +1960,8 @@ class pg_engine(object):
 
     def build_t_alter_20(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_20 build sql token from sql.util.py parse_t_alter_20,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             DROP PRIMARY KEY
         """
         query = ""
@@ -1902,8 +1970,8 @@ class pg_engine(object):
 
     def build_t_alter_21(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_21 build sql token from sql.util.py parse_t_alter_21,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             DROP FOREIGN KEY fk_symbol
         """
         query = ""
@@ -1913,8 +1981,8 @@ class pg_engine(object):
 
     def build_t_alter_22(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_22 build sql token from sql.util.py parse_t_alter_22,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             DROP [COLUMN] col_name
         If you want to drop constraints with, please use DROP CONSTRAINT symbol
         """
@@ -1923,10 +1991,33 @@ class pg_engine(object):
             query = "ALTER TABLE %s.%s DROP COLUMN %s;" % (schema, token["name"], alter_dic["col_name"])
         return query
 
+    def build_t_alter_25(self, schema, token):
+        """
+        build_t_alter_25 build sql token from sql.util.py parse_t_alter_25,In the ALTER TABLE statement, match the alter_option
+        alter_option:
+            MODIFY [COLUMN] col_name column_definition
+            [FIRST | AFTER col_name
+            the second kind of column_definition
+        """
+        query = self.build_alter_table(schema, token["alter_cmd"])
+        return query
+
+    def build_t_alter_26(self, schema, token):
+        """
+        build_t_alter_26 build sql token from sql.util.py parse_t_alter_26,In the ALTER TABLE statement, match the alter_option
+        alter_option:
+            MODIFY [COLUMN] col_name column_definition
+            [FIRST | AFTER col_name
+            the first kind of column_definition
+        """
+        query = self.build_alter_table(schema, token["alter_cmd"])
+        return query
+
+
     def build_t_alter_30(self, schema, token):
         """
-        In the ALTER TABLE statement, build the alter_option
-        alter_option：
+        build_t_alter_30 build sql token from sql.util.py parse_t_alter_30,In the ALTER TABLE statement, build the alter_option
+        alter_option:
             RENAME [TO | AS] new_tbl_name
         """
         query = ""
@@ -1938,8 +2029,16 @@ class pg_engine(object):
             for tmp in indexs:
                 new_index = tmp[tmp.find(tbl_name)+len(tbl_name):].strip()
                 new_index = new_name + new_index
-                querys = """ALTER TABLE "%s"."%s" RENAME CONSTRAINT %s TO %s ;"""%(schema, new_name, tmp, new_index)
+                querys = """ALTER INDEX "%s"."%s" RENAME TO %s ;""" % (schema, tmp, new_index)
                 query += querys
+            constraints = self.get_table_constraints(schema, tbl_name)
+            tbl = tbl_name + '_'
+            for tmp in constraints:
+                if tmp.find(tbl) != -1:
+                    new_index = tmp[tmp.find(tbl)+len(tbl):].strip()
+                    new_index = new_name + "_" + new_index
+                    querys = """ALTER TABLE "%s"."%s" RENAME CONSTRAINT %s TO %s ;""" % (schema, new_name, tmp, new_index)
+                    query += querys
 
         return query
 
@@ -1963,30 +2062,71 @@ class pg_engine(object):
             return []
         indexes = []
         for part in indexes_names:
-            if part[0]!=tbl_name:
+            if part[0] != tbl_name:
                 indexes.append(part[0])
         return indexes
 
+    def get_table_constraints(self, schema, tbl_name):
+        """
+        This function is used to extract all constraints names in the table
+        """
+        self.logger.info("get constraints from the table %s.%s" % (schema, tbl_name))
+        sql_constraints = """
+                    SELECT conname 
+                    FROM pg_constraint con
+                        INNER JOIN pg_class tab 
+                        ON con.conrelid=tab.oid
+                    WHERE tab.relname='%s';
+                    ;
+                """
+        stmt = self.pgsql_conn.prepare(sql_constraints % (tbl_name))
+        cons_names = stmt()
+        if cons_names is None:
+            return []
+        cons = []
+        for part in cons_names:
+            if part[0] != tbl_name:
+                cons.append(part[0])
+        return cons
+
+    def find_same_index_or_constraint(self, schema, tbl_name, str_name):
+        index_name = self.get_table_indexes(schema, tbl_name)
+        i = 1
+        tmp = str_name + "_" + str(i)
+        while tmp in index_name:
+            i += 1
+            tmp = str_name + "_" + str(i)
+        constraint_name = self.get_table_constraints(schema, tbl_name)
+        j = 1
+        tmp1 = str_name + "_" + str(j)
+        while tmp1 in constraint_name:
+            j += 1
+            tmp1 = str_name + "_" + str(j)
+        if j > i:
+            tmp = tmp1
+        return tmp
+
     def find_key_from_express(self, schema, tbl_name, index_name, key_part):
         test = self.get_table_columns(schema, tbl_name)
+        if key_part[0] == '(':
+            key_p = key_part[1:-1].strip()
+            if key_p.find('(') != -1:
+                key_part = key_p
         part1 = key_part[:key_part.find('(')].strip()
         part2 = key_part.replace(part1, "").replace("(", "").replace(")", "").strip()
         if part1 in test:
-            if index_name=="":
+            if index_name == "":
                 index_name = part1
             return [tbl_name + "_" + index_name, part1]
         elif part2 in test:
-            if index_name=="":
+            if index_name == "":
                 index_name = part2
+            return [tbl_name + "_" + index_name, part2]
+        elif part1=='':
             return [tbl_name + "_" + index_name, part2]
         else:
             function_index = "function_index"
-            index_name = self.get_table_indexes(schema, tbl_name)
-            i = 1
-            tmp = function_index + "_" + str(i)
-            while tmp in index_name:
-                i += 1
-                tmp = function_index + "_" + str(i)
+            tmp = self.find_same_index_or_constraint(schema, tbl_name, function_index)
             function_index = tbl_name + "_" + tmp
             return [function_index, key_part]
 
@@ -3186,6 +3326,10 @@ class pg_engine(object):
                 query = """\n COMMENT ON TABLE %s.%s is '%s' ;""" % (schema, comment["name"], comment["comment"] )
             elif comment["type"].upper() == "COLUMN":
                 query = """\n COMMENT ON COLUMN %s.%s.%s is '%s' ;""" % (schema, table, comment["name"], comment["comment"])
+            elif comment["type"].upper() == "INDEX":
+                query = """\n COMMENT ON INDEX "%s"."%s" is '%s' ;""" % (schema, comment["name"], comment["comment"])
+            elif comment["type"].upper() == "CONSTRAINT":
+                query = """\n COMMENT ON CONSTRAINT %s ON %s is '%s' ; """ % (comment["name"], table, comment["comment"])
             else:
                 query = """ """
             querys += query
@@ -3217,26 +3361,21 @@ class pg_engine(object):
                     table_primary = index["index_columns"]
                 elif type =='UNIQUE':
                     index_name = "%s_%s" %(table,index["index_name"])
-                    idx_def = 'CREATE UNIQUE INDEX "%s" ON "%s"."%s" (%s);' % ( index_name, schema, table, ','.join(index_columns))
+                    idx_def = 'CREATE UNIQUE INDEX "%s" ON "%s"."%s" (%s);' % (index_name, schema, table, ','.join(index_columns))
                     idx_ddl[index_name] = idx_def
                 elif type == 'INDEX':
                     index_name = "%s_%s" %(table,index["index_name"])
-                    idx_def='CREATE INDEX "%s" ON "%s"."%s" (%s);' % ( index_name, schema, table, ','.join(index_columns) )
+                    idx_def='CREATE INDEX "%s" ON "%s"."%s" (%s);' % (index_name, schema, table, ','.join(index_columns))
                     idx_ddl[index_name] = idx_def
                 elif type == 'FOREIGN':
                     fkey_name = index["index_name"]
-                    indexs = self.get_table_indexes(schema, table)
-                    i= 1
-                    tmp = fkey_name + "_" + str(i)
-                    while tmp in indexs:
-                        i += 1
-                        tmp = fkey_name + "_" + str(i)
+                    tmp = self.find_same_index_or_constraint(schema, table, fkey_name)
                     fkey_name = tmp
                     key_part = index["index_columns"]
                     if index["constraint_name"]:
-                        fkey_name = index["constraint_name"]
-                    if key_part.find("(")==-1:
-                        fkey_name = "%s_%s" %(table, fkey_name)
+                        fkey_name = "%s_%s" % (table, index["constraint_name"])
+                    if key_part.find("(") == -1:
+                        fkey_name = "%s_%s" % (table, fkey_name)
                     else:
                         [fkey_name, key_part] = self.find_key_from_express(schema, table, fkey_name, index["index_columns"])
                     fkey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s.%s %s;""" % (
@@ -3244,12 +3383,7 @@ class pg_engine(object):
                     idx_ddl[fkey_name] = fkey_def
                 elif type == 'CHECK':
                     ckey_name = index["index_name"]
-                    indexs = self.get_table_indexes(schema, table)
-                    i = 1
-                    tmp = ckey_name + "_" + str(i)
-                    while tmp in indexs:
-                        i += 1
-                        tmp = ckey_name + "_" + str(i)
+                    tmp = self.find_same_index_or_constraint(schema, table, ckey_name)
                     ckey_name = tmp
                     key_part = index["index_columns"]
                     if index["constraint_name"]:
@@ -3257,7 +3391,7 @@ class pg_engine(object):
                     ckey_name = "%s_%s" % (table, ckey_name)
                     ckey_def = """ALTER TABLE "%s"."%s" ADD CONSTRAINT %s CHECK (%s);""" % (schema, table, ckey_name, key_part)
                     idx_ddl[ckey_name] = ckey_def
-                self.idx_sequence+=1
+                self.idx_sequence += 1
         return [table_primary, idx_ddl]
 
     def get_log_data(self, log_id):

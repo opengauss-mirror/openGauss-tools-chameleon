@@ -200,41 +200,46 @@ class sql_token(object):
         self.t_alter_table = re.compile(r"""(ALTER\s*TABLE)\s*(\w*)\s*([^\;]*)""", re.IGNORECASE)
         self.t_ignore_keywords = re.compile(r'(CONSTRAINT)|(FULLTEXT)|(SPATIAL)|(PRIMARY)|(INDEX)|(KEY)|(UNIQUE)|(FOREIGN)', re.IGNORECASE)
         self.t_alter_table_ = []
+        # match parse_t_alter_[0]-[4]
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(?:COLUMN)?\s*\(?\s*(\w*)\s*(\w*(?:\s*\(\s*\w*\s*\))?)\s*(COLLATE\s*\w*)?\s*(GENERATED\s*ALWAYS)?AS\s*(\([^\)]*\))\s*(VIRTUAL|STORED)?\s*(NOT NULL|NULL)?\s*(VISIBLE|INVISIBLE)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(?:FIRST)?(?:AFTER\s*\w*)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(?:COLUMN)?\s*\(?\s*(\w*)\s*(\w*(?:\s*\(\s*\w*\s*\))?)\s*(NOT NULL|NULL)?\s*(DEFAULT \s*(?:\w*|(?:\([^\)]*\)))?)?\s*(VISIBLE|INVISIBLE)?\s*(AUTO_INCREMENT)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(COLLATE\s*\w*)?\s*(COLUMN_FORMAT\s*(?:FIXED|DYNAMIC|DEFAULT))?\s*((?:ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*\=\s*\'\w*\')?\s*(STORAGE\s*(?:DISK|MEMORY))?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(FIRST)?(AFTER\s*\w*)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(INDEX|KEY)\s*(\w*)?\s*(USING\s*(?:BTREE|HASH))?\s*((?:\(\s*\w*\s*\(\s*.*?\s*\)\s*\w*\s*\))|(?:\(\s*.*?\s*\)))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(FULLTEXT|SPATIAL)\s*(INDEX|KEY)?\s*(\w*)?\s*(\(.*?\))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(PRIMARY\s*KEY)\s*(USING\s*(?:BTREE|HASH)\s*)?\s*(\(.*?\))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
+        # match parse_t_alter_[5]-[9]
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(UNIQUE\s*(INDEX|KEY)?)\s*\`?(\w*)?\`?\s*(USING\s*(?:BTREE|HASH)\s*)?\s*(\(.*?\))\s*((KEY_BLOCK_SIZE(?:\=)?\s*\w*\s*)|(USING\s*(?:BTREE|HASH)\s*)|(WITH\s*PARSER\s*\w*\s*)|(COMMENT\s*\'\w*\'\s*)|(VISIBLE\s*|INVISIBLE\s*)){0,5}""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(FOREIGN\s*KEY)\s*(\w*)?\s*(\(.*?\))\s*(REFERENCES\s*\w*\s*(?:\(.*?\)))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ADD)\s*(CONSTRAINT\s*(\w*)?)?\s*(CHECK)\s*(\(.*?\))\s*((?:NOT\s*)?ENFORCED)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(DROP)\s*(CHECK|CONSTRAINT)\s*(\w*)""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ALTER)\s*(CHECK|CONSTRAINT)\s*(\w*)\s*(NOT)?\s*ENFORCED""", re.IGNORECASE))
+        # match parse_t_alter_[10]-[14]
         self.t_alter_table_.append(re.compile(r"""(ALGORITHM)\s*(\=)?\s*(DEFAULT|INSTANT|INPLACE|COPY)""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ALTER)\s*(COLUMN)?\s*(\w*)\s*((?:SET\s*DEFAULT\s*\(.*?\))|(?:SET\s*DEFAULT\s*(?:\w*))|SET\s*(?:VISIBLE|INVISIBLE)|DROP\s*DEFAULT)""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ALTER)\s*(INDEX)\s*(\w*)\s*(VISIBLE|INVISIBLE)""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(CHANGE)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(\w*)\s*(COLLATE\s*\w*)?\s*(GENERATED\s*ALWAYS)?AS\s*(\([^\)]*\))\s*(VIRTUAL|STORED)?\s*(NOT NULL|NULL)?\s*(VISIBLE|INVISIBLE)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(?:FIRST)?(?:AFTER\s*\w*)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(CHANGE)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(\w*)\s*(NOT NULL|NULL)?\s*(DEFAULT \s*(?:\w*|(?:\([^\)]*\)))?)?\s*(VISIBLE|INVISIBLE)?\s*(AUTO_INCREMENT)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(COLLATE\s*\w*)?\s*(COLUMN_FORMAT\s*(?:FIXED|DYNAMIC|DEFAULT))?\s*((?:ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*\=\s*\'\w*\')?\s*(STORAGE\s*(?:DISK|MEMORY))?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(FIRST)?(AFTER\s*\w*)?""", re.IGNORECASE))
+        # match parse_t_alter_[15]-[19]
         self.t_alter_table_.append(re.compile(r"""(DEFAULT)?\s*(CHARACTER)\s*(SET)\s*(\=)?\s*(\w*)\s*(COLLATE\s*(?:\=)?\s*\w*)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(CONVERT\s*TO\s*CHARACTER\s*SET)\s*(\w*)\s*(COLLATE\s*\w*)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(DISABLE|ENABLE)\s*KEYS""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(DISCARD|IMPORT)\s*TABLESPACE""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(DROP)\s*(INDEX|KEY)\s*(\w*)""", re.IGNORECASE))
+        # match parse_t_alter_[20]-[24]
         self.t_alter_table_.append(re.compile(r"""(DROP)\s*PRIMARY\s*KEY""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(DROP)\s*FOREIGN\s*KEY\s*(\w*)""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(DROP)\s*(COLUMN)?\s*(\w*)""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""FORCE\s*""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(LOCK)\s*(\=)?\s*(DEFAULT|NONE|SHARED|EXCLUSIVE)\s*""", re.IGNORECASE))
+        # match parse_t_alter_[25]-[29]
         self.t_alter_table_.append(re.compile(r"""(MODIFY)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(COLLATE\s*\w*)?\s*(GENERATED\s*ALWAYS)?AS\s*(\([^\)]*\))\s*(VIRTUAL|STORED)?\s*(NOT NULL|NULL)?\s*(VISIBLE|INVISIBLE)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(?:FIRST)?(?:AFTER\s*\w*)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(MODIFY)\s*(COLUMN)?\s*(\w*)\s*(\w*)\s*(NOT NULL|NULL)?\s*(DEFAULT \s*(?:\w*|(?:\([^\)]*\)))?)?\s*(VISIBLE|INVISIBLE)?\s*(AUTO_INCREMENT)?\s*(UNIQUE\s*(?:KEY)?)?\s*((?:PRIMARY)?\s*KEY)?\s*(COMMENT\s*\'\w*\')?\s*(COLLATE\s*\w*)?\s*(COLUMN_FORMAT\s*(?:FIXED|DYNAMIC|DEFAULT))?\s*((?:ENGINE_ATTRIBUTE|SECONDARY_ENGINE_ATTRIBUTE)\s*\=\s*\'\w*\')?\s*(STORAGE\s*(?:DISK|MEMORY))?\s*(REFERENCES\s*\w*\s*\([^\)]*\))?\s*(MATCH\s*FULL|MATCH\s*PARTIAL|MATCH\s*SIMPLE)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*((CONSTRAINT\s*\w*)?\s*CHECK\s*\([^\)]*\)\s*((?:NOT)?\s*ENFORCED)?)?\s*(FIRST)?(AFTER\s*\w*)?""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(ORDER)\s*(BY)\s*([^\;]*)""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(RENAME)\s*(COLUMN)\s*(\w*)\s*(TO)\s*(\w*)\s*""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(RENAME)\s*(INDEX|KEY)\s*(\w*)\s*(TO)\s*(\w*)\s*""", re.IGNORECASE))
+        # match parse_t_alter_[30]-[31]
         self.t_alter_table_.append(re.compile(r"""(RENAME)\s*(TO|AS)?\s*(\w*)\s*""", re.IGNORECASE))
         self.t_alter_table_.append(re.compile(r"""(WITHOUT|WITH)\s*VALIDATION\s*""", re.IGNORECASE))
-        self.t_alter_table_.append(re.compile(r"""pass""", re.IGNORECASE))
-        self.t_alter_table_.append(re.compile(r"""pass""", re.IGNORECASE))
-        self.t_alter_table_.append(re.compile(r"""pass""", re.IGNORECASE))
+
         #adding partition table
         self.t_par_table = re.compile(r"""PARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([\s\w]*\(?[\s\w]*\)?\s*\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*)|(?:RANGE\s*(?:COLUMNS)?\s*\([^\)]*\)\s*)|(?:LIST\s*(?:COLUMNS)?\s*\([^\)]*\)\s*))\s*(?:PARTITIONS\s*(\w*))?\s*\(?([^\;]*)\)?""", re.IGNORECASE)
         self.t_par_sub = re.compile(r"""SUBPARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([^\)]*(?:[\s\)]*)?\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*))\s*(?:SUBPARTITIONS\s*(\w*))?\s*\(([^\;]*)\)""", re.IGNORECASE)
@@ -878,13 +883,18 @@ class sql_token(object):
         stat_dic["name"] = talter_table.group(2).strip().strip('`')
         stat_dic["alter_cmd"] = []
         stat_dic["alter_id"] = 999
+        # indexlist is the change and modify in parse_alter_table()
+        indexlist = [13, 14, 25, 26]
         for index, tmatch in enumerate(self.t_alter_table_):
             matchlist.append(tmatch.match(talter_table.group(3)))
             if matchlist[index]:
                 stat_dic["alter_id"] = index
                 method_name = "parse_t_alter_"+str(index)
                 method = getattr(self, method_name)
-                alter_cmd = method(matchlist[index])
+                if index in indexlist:
+                    alter_cmd = method(talter_table.group(0))
+                else:
+                    alter_cmd = method(matchlist[index])
                 if alter_cmd:
                     stat_dic["alter_cmd"] = alter_cmd
                     col_name = 'col_name'
@@ -899,9 +909,8 @@ class sql_token(object):
 
     def parse_t_alter_0(self, talter_table):
         """
-        Please have a look to parse_t_alter_table.
-        In the ALTER TABLE statement, match the first two MySQL alter_options, but there are two forms of column_definition
-        alter_option：
+        parse_t_alter_0 parse MySQL DDL through regular expression list t_alter_table_[0],In the ALTER TABLE statement, match the first two MySQL alter_options, but there are two forms of column_definition
+        alter_option:
             | ADD [COLUMN] col_name column_definition
                 [FIRST | AFTER col_name]
             | ADD [COLUMN] (col_name column_definition,...)
@@ -946,8 +955,8 @@ class sql_token(object):
 
     def parse_t_alter_1(self, talter_table):
         """
-        In the ALTER TABLE statement, match the first two MySQL alter_options, but there are two forms of column_definition
-        alter_option：
+        parse_t_alter_1 parse MySQL DDL through regular expression list t_alter_table_[1],In the ALTER TABLE statement, match the first two MySQL alter_options, but there are two forms of column_definition
+        alter_option:
             | ADD [COLUMN] col_name column_definition
                 [FIRST | AFTER col_name]
             | ADD [COLUMN] (col_name column_definition,...)
@@ -1000,8 +1009,8 @@ class sql_token(object):
 
     def parse_t_alter_2(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_2 parse MySQL DDL through regular expression list t_alter_table_[2],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ADD {INDEX | KEY} [index_name]
                 [index_type] (key_part,...) [index_option] ...
         """
@@ -1026,8 +1035,8 @@ class sql_token(object):
 
     def parse_t_alter_3(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_3 parse MySQL DDL through regular expression list t_alter_table_[3],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ADD {FULLTEXT | SPATIAL} [INDEX | KEY] [index_name]
                 (key_part,...) [index_option] ...
         """
@@ -1054,8 +1063,8 @@ class sql_token(object):
 
     def parse_t_alter_4(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_4 parse MySQL DDL through regular expression list t_alter_table_[4],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ADD [CONSTRAINT [symbol]] PRIMARY KEY
                 [index_type] (key_part,...) [index_option] ...
         """
@@ -1081,8 +1090,8 @@ class sql_token(object):
 
     def parse_t_alter_5(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_5 parse MySQL DDL through regular expression list t_alter_table_[5],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ADD [CONSTRAINT [symbol]] UNIQUE [INDEX | KEY]
                 [index_name] [index_type] (key_part,...)
                 [index_option] ...
@@ -1111,8 +1120,8 @@ class sql_token(object):
 
     def parse_t_alter_6(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_6 parse MySQL DDL through regular expression list t_alter_table_[6],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ADD [CONSTRAINT [symbol]] FOREIGN KEY
                 [index_name] (col_name,...)
                 reference_definition
@@ -1139,8 +1148,8 @@ class sql_token(object):
 
     def parse_t_alter_7(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_7 parse MySQL DDL through regular expression list t_alter_table_[7],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ADD [CONSTRAINT [symbol]] CHECK (expr) [[NOT] ENFORCED]
         """
         alter_cmd = []
@@ -1149,8 +1158,8 @@ class sql_token(object):
 
     def parse_t_alter_8(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_8 parse MySQL DDL through regular expression list t_alter_table_[8],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             DROP {CHECK | CONSTRAINT} symbol
         """
         alter_cmd = []
@@ -1168,8 +1177,8 @@ class sql_token(object):
 
     def parse_t_alter_9(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_9 parse MySQL DDL through regular expression list t_alter_table_[9],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ALTER {CHECK | CONSTRAINT} symbol [NOT] ENFORCED
         """
         alter_cmd = []
@@ -1178,8 +1187,8 @@ class sql_token(object):
 
     def parse_t_alter_10(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_10 parse MySQL DDL through regular expression list t_alter_table_[10],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ALGORITHM [=] {DEFAULT | INSTANT | INPLACE | COPY}
         """
         alter_cmd = []
@@ -1188,8 +1197,8 @@ class sql_token(object):
 
     def parse_t_alter_11(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_11 parse MySQL DDL through regular expression list t_alter_table_[11],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ALTER [COLUMN] col_name {
             SET DEFAULT {literal | (expr)}
             | SET {VISIBLE | INVISIBLE}
@@ -1202,8 +1211,8 @@ class sql_token(object):
 
     def parse_t_alter_12(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_12 parse MySQL DDL through regular expression list t_alter_table_[12],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ALTER INDEX index_name {VISIBLE | INVISIBLE}
         """
         alter_cmd = []
@@ -1212,32 +1221,32 @@ class sql_token(object):
 
     def parse_t_alter_13(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_13 parse MySQL DDL through regular expression list t_alter_table_[13],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             CHANGE [COLUMN] old_col_name new_col_name column_definition
             [FIRST | AFTER col_name]
             THE FIRST KIND column definition
         """
-        alter_cmd = []
-        pass
+        malter_table = self.m_alter_table.match(talter_table)
+        alter_cmd = self.parse_alter_table(malter_table)
         return alter_cmd
 
     def parse_t_alter_14(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_14 parse MySQL DDL through regular expression list t_alter_table_[14],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             CHANGE [COLUMN] old_col_name new_col_name column_definition
             [FIRST | AFTER col_name]
             THE second kind column definition
         """
-        alter_cmd = []
-        pass
+        malter_table = self.m_alter_table.match(talter_table)
+        alter_cmd = self.parse_alter_table(malter_table)
         return alter_cmd
 
     def parse_t_alter_15(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_15 parse MySQL DDL through regular expression list t_alter_table_[15],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             [DEFAULT] CHARACTER SET [=] charset_name [COLLATE [=] collation_name]
         """
         alter_cmd = []
@@ -1246,8 +1255,8 @@ class sql_token(object):
 
     def parse_t_alter_16(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_16 parse MySQL DDL through regular expression list t_alter_table_[16],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             CONVERT TO CHARACTER SET charset_name [COLLATE collation_name]
         """
         alter_cmd = []
@@ -1256,8 +1265,8 @@ class sql_token(object):
 
     def parse_t_alter_17(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_17 parse MySQL DDL through regular expression list t_alter_table_[17],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             {DISABLE | ENABLE} KEYS
         """
         alter_cmd = []
@@ -1266,8 +1275,8 @@ class sql_token(object):
 
     def parse_t_alter_18(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_18 parse MySQL DDL through regular expression list t_alter_table_[18],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             {DISCARD | IMPORT} TABLESPACE
         """
         alter_cmd = []
@@ -1276,8 +1285,8 @@ class sql_token(object):
 
     def parse_t_alter_19(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_19 parse MySQL DDL through regular expression list t_alter_table_[19],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             DROP {INDEX | KEY} index_name
         """
         alter_cmd = []
@@ -1293,8 +1302,8 @@ class sql_token(object):
 
     def parse_t_alter_20(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_20 parse MySQL DDL through regular expression list t_alter_table_[20],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             DROP PRIMARY KEY
         """
         alter_cmd = []
@@ -1310,8 +1319,8 @@ class sql_token(object):
 
     def parse_t_alter_21(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_21 parse MySQL DDL through regular expression list t_alter_table_[21],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             DROP FOREIGN KEY fk_symbol
         """
         alter_cmd = []
@@ -1327,8 +1336,8 @@ class sql_token(object):
 
     def parse_t_alter_22(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_22 parse MySQL DDL through regular expression list t_alter_table_[22],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             DROP [COLUMN] col_name
         """
         alter_cmd = []
@@ -1344,8 +1353,8 @@ class sql_token(object):
 
     def parse_t_alter_23(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_23 parse MySQL DDL through regular expression list t_alter_table_[23],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             FORCE
         """
         alter_cmd = []
@@ -1354,8 +1363,8 @@ class sql_token(object):
 
     def parse_t_alter_24(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_24 parse MySQL DDL through regular expression list t_alter_table_[24],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             LOCK [=] {DEFAULT | NONE | SHARED | EXCLUSIVE}
         """
         alter_cmd = []
@@ -1364,32 +1373,32 @@ class sql_token(object):
 
     def parse_t_alter_25(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_25 parse MySQL DDL through regular expression list t_alter_table_[25],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             MODIFY [COLUMN] col_name column_definition
             [FIRST | AFTER col_name
             the second kind of column_definition
         """
-        alter_cmd = []
-        pass
+        malter_table = self.m_alter_table.match(talter_table)
+        alter_cmd = self.parse_alter_table(malter_table)
         return alter_cmd
 
     def parse_t_alter_26(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_26 parse MySQL DDL through regular expression list t_alter_table_[26],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             MODIFY [COLUMN] col_name column_definition
             [FIRST | AFTER col_name
             the first kind of column_definition
         """
-        alter_cmd = []
-        pass
+        malter_table = self.m_alter_table.match(talter_table)
+        alter_cmd = self.parse_alter_table(malter_table)
         return alter_cmd
 
     def parse_t_alter_27(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_27 parse MySQL DDL through regular expression list t_alter_table_[27],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             ORDER BY col_name [, col_name] ...
         """
         alter_cmd = []
@@ -1398,8 +1407,8 @@ class sql_token(object):
 
     def parse_t_alter_28(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_28 parse MySQL DDL through regular expression list t_alter_table_[28],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             RENAME COLUMN old_col_name TO new_col_name
         """
         alter_cmd = []
@@ -1408,8 +1417,8 @@ class sql_token(object):
 
     def parse_t_alter_29(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_29 parse MySQL DDL through regular expression list t_alter_table_[29],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             RENAME {INDEX | KEY} old_index_name TO new_index_name
         """
         alter_cmd = []
@@ -1418,8 +1427,8 @@ class sql_token(object):
 
     def parse_t_alter_30(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_30 parse MySQL DDL through regular expression list t_alter_table_[30],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             RENAME [TO | AS] new_tbl_name
         """
         alter_cmd = []
@@ -1435,8 +1444,8 @@ class sql_token(object):
 
     def parse_t_alter_31(self, talter_table):
         """
-        In the ALTER TABLE statement, match the alter_option
-        alter_option：
+        parse_t_alter_31 parse MySQL DDL through regular expression list t_alter_table_[31],In the ALTER TABLE statement, match the alter_option
+        alter_option:
             {WITHOUT | WITH} VALIDATION
         """
         alter_cmd = []
@@ -1539,6 +1548,8 @@ class sql_token(object):
                 command = "CREATE INDEX FULL"
                 stat_dic["command"] = command
                 stat_dic["UFS"] = mcreate_full_index.group(2)
+                if stat_dic["UFS"]:
+                    stat_dic["UFS"]= stat_dic["UFS"].upper()
                 stat_dic["index_name"] = mcreate_full_index.group(4)
                 stat_dic["index_type"] = mcreate_full_index.group(5)
                 stat_dic["name"] = mcreate_full_index.group(6)
