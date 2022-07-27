@@ -4783,6 +4783,13 @@ class pg_engine(object):
         sql_head='INSERT INTO "%s"."%s"(%s) VALUES (%s);' % (schema, table, column_list, column_marker)
         for data_row in insert_data:
             try:
+                data_row = list(data_row)
+                for key in range(len(data_row)):
+                    if(data_row[key]!=None):
+                        data_row[key] = "'" + data_row[key].replace("'","''") + "'"
+                    else:
+                        data_row[key] = 'null'
+                data_row = tuple(data_row)
                 self.pgsql_conn.execute(sql_head % data_row)
             except Exception as e:
                     self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
