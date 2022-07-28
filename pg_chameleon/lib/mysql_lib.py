@@ -957,7 +957,8 @@ class mysql_source(object):
         slice = task.slice
         try:
             writer_engine.copy_data(csv_file, loading_schema, table, column_list)
-        except:
+        except Exception as e:
+            self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
             self.logger.info(
                 "Table %s.%s error in PostgreSQL copy, saving slice number for the fallback to insert statements" % (
                 loading_schema, table))
