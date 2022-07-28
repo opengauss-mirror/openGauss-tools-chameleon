@@ -3164,7 +3164,10 @@ class pg_engine(object):
             if column_type == ColumnType.O_NUM.value and ('numeric_scale' in column.keys()) and str(column["numeric_scale"]) != "None":
                 column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
             if column["extra"] == "auto_increment":
-                column_type = ColumnType.O_BIGSERIAL.value
+                if (column_type == ColumnType.O_INTEGER.value):
+                    column_type = ColumnType.O_SERIAL.value
+                else:
+                    column_type = ColumnType.O_BIGSERIAL.value
 
             ddl_columns.append(  ' "%s" %s %s %s   ' %  (column["column_name"], column_type, default_value, col_is_null ))
 
@@ -4785,7 +4788,7 @@ class pg_engine(object):
             try:
                 data_row = list(data_row)
                 for key in range(len(data_row)):
-                    if(data_row[key]!=None):
+                    if(data_row[key] != None):
                         data_row[key] = "'" + data_row[key].replace("'","''") + "'"
                     else:
                         data_row[key] = 'null'

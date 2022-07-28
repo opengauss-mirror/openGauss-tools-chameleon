@@ -77,6 +77,7 @@ class ColumnType(Enum):
     O_NUM = 'numeric'
     O_FLOAT = 'float'
     O_BIGSERIAL = 'bigserial'
+    O_SERIAL = 'serial'
     O_DOUBLE_P = 'double precision'
     O_DEC = 'decimal'
     O_ENUM = 'enum'
