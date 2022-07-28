@@ -1695,7 +1695,7 @@ class pg_engine(object):
     def build_t_alter_0(self, schema, token):
         """
         Please have a look to build_talter_table.
-        build_t_alter_0 corresponds to sql.util.py parse_t_alter_0,In the ALTER TABLE statement, build the alter_option
+        build_t_alter_0 build sql token from sql.util.py parse_t_alter_0,In the ALTER TABLE statement, build the alter_option
         alter_option:
             | ADD [COLUMN] col_name column_definition
                 [FIRST | AFTER col_name]
@@ -1840,31 +1840,18 @@ class pg_engine(object):
                 index_option[i] = alter_dic["index_option_" + str(i)]
             if index_option[2]:
                 index_type = index_option[2]
-            # ADD table_constraint_using_index
-            if alter_dic["unique"] == 'INDEX':
-                query = """ALTER TABLE "%s"."%s" ADD %s UNIQUE USING INDEX %s;""" % (schema, tbl_name, index_constraint, index_name)
-            # ADD table_constraint
+            table_name = token["name"]
+            if key_part.find("(") == -1:
+                index_name = "%s_%s" % (table_name, index_name)
             else:
-                query = """ALTER TABLE "%s"."%s" ADD %s UNIQUE %s;""" % (schema, tbl_name, index_constraint, key_part)
-            key_p = key_part.replace("(", "").replace(")", "").strip()
-            comm = key_p.find(',')
-            if comm == -1:
-                new_name = key_p.strip()
+                [index_name, key_part] = self.find_key_from_express(schema, table_name, index_name, key_part)
+            if index_option[2]:
+                alter_dic["index_type"] = index_option[2]
+            if self.have_table_partitions(schema, token["name"]):
+                local = " local "
             else:
-                new_name = key_p[0:comm].strip()
-            old_name = tbl_name
-            while True:
-                comm = key_p.find(',')
-                if comm == -1:
-                    break
-                namek = key_p[0:comm].strip()
-                old_name += "_%s" % namek
-                key_p = key_p[comm + 1:].strip()
-            old_name += "_%s_key" % key_p
-            if index_name:
-                new_name = tbl_name + '_' + index_name
-            if not index_constraint:
-                query += "ALTER TABLE %s.%s RENAME CONSTRAINT %s TO %s;" % (schema, tbl_name, old_name, new_name)
+                local = ""
+            query += """CREATE UNIQUE INDEX %s.%s ON %s.%s %s (%s) %s;""" % (schema, index_name, schema, table_name, alter_dic["index_type"], key_part, local)
         return query
 
     def build_t_alter_6(self, schema, token):
@@ -3148,6 +3135,8 @@ class pg_engine(object):
                     col_is_null="NOT NULL"
             else:
                 col_is_null="NULL"
+            if column["default"] != "":
+                col_is_null += " default %s " % (column["default"])
             column_type = self.get_data_type(column, schema, table_name)
             default_value = self.__trans_default_value(column.get("column_default"), column_type)
 

@@ -400,7 +400,10 @@ class ConvertToEvent:
             return False
         elif isinstance(event, QueryEvent):
             if is_ddl(event.query):
-                trx.sql_list.append(get_destination_ddl(event, mysql_source, pg_engine))
+                # trx.sql_list.append(get_destination_ddl(event, mysql_source, pg_engine))
+                schema = mysql_source.schema_mappings[event.schema.decode('utf-8')]
+                trx_sql_and_schema = event.query +" SCHEMA: "+ schema
+                trx.sql_list.append(trx_sql_and_schema)
                 trx.is_dml = False
                 return True
             else:
@@ -518,8 +521,18 @@ def process_work(pg_engine, arr, i):
             continue
         else:
             try:
-                sql = str(arr[id].txn_sql, encoding = "utf-8")
-                conn.execute(sql)
+                sql = str(arr[id].txn_sql, encoding="utf-8")
+                if is_ddl(sql):
+                    destination_ddl = ""
+                    schema = sql[sql.find(" SCHEMA: ")+len(" SCHEMA: "):]
+                    sql = sql[:sql.find(" SCHEMA: ")]
+                    sql_tokeniser = sql_token()
+                    sql_tokeniser.parse_sql(sql)
+                    for token in sql_tokeniser.tokenised:
+                        destination_ddl = pg_engine.generate_ddl(token, schema)
+                    conn.execute(destination_ddl)
+                else:
+                    conn.execute(sql)
                 arr[id].flag = -1
             except Exception as exception:
                 print(exception)

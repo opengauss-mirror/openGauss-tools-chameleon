@@ -159,7 +159,7 @@ class sql_token(object):
 
         #re for keys and indices
         self.m_idx = re.compile(r',\s*(?:KEY|INDEX)\s*`?(\w*)?`?\s*\((.*?)\)\s*', re.IGNORECASE)
-        self.m_idx_2 = re.compile(r',\s*(FULLTEXT|SPATIAL)\s*(INDEX|KEY)\s*`?(\w*)`?\s*\((.*?)\)\s*', re.IGNORECASE)
+        self.m_idx_2 = re.compile(r',\s*(?:FULLTEXT|SPATIAL)\s*(?:INDEX|KEY)\s*`?(\w*)`?\s*\((.*?)\)\s*', re.IGNORECASE)
         self.m_pkeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*PRIMARY\s*KEY\s*\((.*?)\)\s?', re.IGNORECASE)
         self.m_ukeys=re.compile(r',\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*UNIQUE\s*(?:KEY|INDEX)?\s*`?(\w*)?`?\s*\((.*?)\)\s*', re.IGNORECASE)
         self.m_fkeys = re.compile(r""",\s*(?:CONSTRAINT\s*`?(\w*)?`?)?\s*FOREIGN\s*KEY\s*(\(?[^\)]*\))?(?:\s*REFERENCES\s*(\w*\(?[^\)]*\)))?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?\s*(ON\s*(?:DELETE|UPDATE)\s*(?:RESTRICT\s*|CASCADE\s*|SET\s*NULL\s*|NO\s*ACTION\s*|SET\s*DEFAULT\s*)?)?""", re.IGNORECASE)
@@ -175,8 +175,9 @@ class sql_token(object):
         self.m_fields=re.compile(r'(.*?),', re.IGNORECASE)
 
         #re for column constraint and auto incremental
-        self.m_nulls=re.compile(r'(NOT)?\s*(NULL)', re.IGNORECASE)
-        self.m_autoinc=re.compile(r'(AUTO_INCREMENT)', re.IGNORECASE)
+        self.m_nulls = re.compile(r'(NOT)?\s*(NULL)', re.IGNORECASE)
+        self.m_autoinc = re.compile(r'(AUTO_INCREMENT)', re.IGNORECASE)
+        self.m_default_con = re.compile(r'\sDEFAULT\s+([^\s]*)\s*', re.IGNORECASE)
         #re for query type
         self.m_rename_table = re.compile(r'(RENAME\s*TABLE)\s*(.*)', re.IGNORECASE)
         self.m_alter_rename_table = re.compile(r'(?:(ALTER\s+?TABLE)\s+(`?\b.*?\b`?))\s+(?:RENAME)\s+(?:TO)?\s+(.*)', re.IGNORECASE)
@@ -297,9 +298,10 @@ class sql_token(object):
                 col_dic["numeric_precision"] = DEFAULT_NUMERIC_PRECISION
                 col_dic["numeric_scale"] = DEFAULT_NUMERIC_SCALE
                 dimensions = "%s,%s" % (DEFAULT_NUMERIC_PRECISION, DEFAULT_NUMERIC_SCALE)
-            nullcons=self.m_nulls.search(col_def)
-            autoinc=self.m_autoinc.search(col_def)
-            pkey_list=self.pkey_cols
+            nullcons = self.m_nulls.search(col_def)
+            autoinc = self.m_autoinc.search(col_def)
+            defaultcon = self.m_default_con.search(col_def)
+            pkey_list = self.pkey_cols
 
             col_dic["is_nullable"]="YES"
             if col_dic["column_name"] in pkey_list or col_dic["column_name"] in self.ukey_cols:
@@ -310,9 +312,13 @@ class sql_token(object):
                     col_dic["is_nullable"]="NO"
 
             if autoinc:
-                col_dic["extra"]="auto_increment"
-            else :
-                col_dic["extra"]=""
+                col_dic["extra"] = "auto_increment"
+            else:
+                col_dic["extra"] = ""
+            if defaultcon:
+                col_dic["default"] = defaultcon.group(1)
+            else:
+                col_dic["default"] = ""
             if dimensions:
                 col_dic["column_type"] = "%s(%s)" % (col_dic["data_type"], dimensions)
             else:
@@ -419,10 +425,12 @@ class sql_token(object):
                 self.ukey_cols = self.ukey_cols+[column for column in idx_cols if column not in self.ukey_cols]
         if idx:
             for cols in idx:
-                key_dic["index_name"]='idx_'+table_name[0:20]+'_'+str(idx_counter)
+                if cols[1]:
+                    key_dic["index_name"] = cols[0].replace('`', '').strip()
+                else:
+                    key_dic["index_name"] = 'idx_' + table_name[0:20] + '_' + str(idx_counter)
                 key_dic["index_n"] = 'INDEX'
-                cols = cols.replace('`', '')
-                index_columns = cols.strip().split(',')
+                index_columns = cols[1].strip().split(',')
                 idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
                 key_dic["index_columns"] = idx_cols
                 key_dic["non_unique"]=1
@@ -431,10 +439,12 @@ class sql_token(object):
                 idx_counter+=1
         if idx2:
             for cols in idx:
-                key_dic["index_name"]='idx_'+table_name[0:20]+'_'+str(idx_counter)
+                if cols[1]:
+                    key_dic["index_name"] = cols[0].replace('`', '').strip()
+                else:
+                    key_dic["index_name"] = 'idx_' + table_name[0:20] + '_' + str(idx_counter)
                 key_dic["index_n"] = 'INDEX'
-                cols = cols.replace('`', '')
-                index_columns = cols.strip().split(',')
+                index_columns = cols[1].strip().split(',')
                 idx_cols = [(column.strip().split()[0]).replace('`', '') for column in index_columns if column.strip() != '']
                 key_dic["index_columns"] = idx_cols
                 key_dic["non_unique"]=1
