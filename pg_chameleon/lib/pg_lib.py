@@ -3131,14 +3131,15 @@ class pg_engine(object):
         ddl_enum=[]
         table_ddl = {}
         for column in table_metadata:
-            if column["is_nullable"]=="NO":
-                    col_is_null="NOT NULL"
+            if column["is_nullable"] == "NO":
+                    col_is_null = "NOT NULL"
             else:
-                col_is_null="NULL"
-            if column["default"] != "":
-                col_is_null += " default %s " % (column["default"])
+                col_is_null = "NULL"
             column_type = self.get_data_type(column, schema, table_name)
             default_value = self.__trans_default_value(column.get("column_default"), column_type)
+            if 'default' in column.keys():
+                if default_value == "" and column["default"] is not None and column["default"] != "":
+                    default_value = " default %s " % (column["default"])
 
             if column_type == "enum":
                 enum_type = '"%s"."enum_%s_%s"' % (destination_schema, table_name[0:20], column["column_name"][0:20])
