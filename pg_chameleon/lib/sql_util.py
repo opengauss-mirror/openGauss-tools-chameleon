@@ -177,7 +177,6 @@ class sql_token(object):
         #re for column constraint and auto incremental
         self.m_nulls = re.compile(r'(NOT)?\s*(NULL)', re.IGNORECASE)
         self.m_autoinc = re.compile(r'(AUTO_INCREMENT)', re.IGNORECASE)
-        self.m_default_con = re.compile(r'\sDEFAULT\s+([^\s]*)\s*', re.IGNORECASE)
         #re for query type
         self.m_rename_table = re.compile(r'(RENAME\s*TABLE)\s*(.*)', re.IGNORECASE)
         self.m_alter_rename_table = re.compile(r'(?:(ALTER\s+?TABLE)\s+(`?\b.*?\b`?))\s+(?:RENAME)\s+(?:TO)?\s+(.*)', re.IGNORECASE)
@@ -300,7 +299,7 @@ class sql_token(object):
                 dimensions = "%s,%s" % (DEFAULT_NUMERIC_PRECISION, DEFAULT_NUMERIC_SCALE)
             nullcons = self.m_nulls.search(col_def)
             autoinc = self.m_autoinc.search(col_def)
-            defaultcon = self.m_default_con.search(col_def)
+            default_value = self.m_default_value.search(col_def)
             pkey_list = self.pkey_cols
 
             col_dic["is_nullable"]="YES"
@@ -315,10 +314,10 @@ class sql_token(object):
                 col_dic["extra"] = "auto_increment"
             else:
                 col_dic["extra"] = ""
-            if defaultcon:
-                col_dic["default"] = defaultcon.group(1)
+            if default_value:
+                col_dic["default"] = default_value.group(2)
             else:
-                col_dic["default"] = ""
+                col_dic["default"] = None
             if dimensions:
                 col_dic["column_type"] = "%s(%s)" % (col_dic["data_type"], dimensions)
             else:
