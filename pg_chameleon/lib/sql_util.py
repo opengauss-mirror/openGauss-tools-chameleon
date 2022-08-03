@@ -939,7 +939,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[0].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "ADD"
@@ -987,7 +986,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[1].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             t_ig = self.t_ignore_keywords.search(alter_item[1])
             if t_ig:
@@ -1027,7 +1025,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[2].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "ADD"
@@ -1053,7 +1050,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[3].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "ADD"
@@ -1139,7 +1135,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[6].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "ADD"
@@ -1175,7 +1170,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[8].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "DROP"
@@ -1302,7 +1296,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[19].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "DROP"
@@ -1319,7 +1312,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[20].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "DROP"
@@ -1336,7 +1328,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[21].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "DROP"
@@ -1353,7 +1344,6 @@ class sql_token(object):
         alter_cmd = []
         alter_stat = talter_table.group(0) + ','
         alter_list = self.t_alter_table_[22].findall(alter_stat)
-        print(alter_list)
         for alter_item in alter_list:
             alter_dic = {}
             alter_dic["command"] = "DROP"
