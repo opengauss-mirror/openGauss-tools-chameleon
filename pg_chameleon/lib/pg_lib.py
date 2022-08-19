@@ -1314,6 +1314,8 @@ class pg_engine(object):
             # add create partition
             partition_metadata = token["partition"]
             table_ddl = self.__build_create_table_mysql(table_metadata, partition_metadata, table_name, destination_schema, temporary_schema=False)
+            if table_ddl == "":
+                return ""
             table_enum = ''.join(table_ddl["enum"])
             table_statement = table_ddl["table"]
             index_ddl = self.build_create_index( destination_schema, table_name, index_data)
@@ -3188,6 +3190,8 @@ class pg_engine(object):
         #now we get the subpartition part
             else:
                 subpartition_method = self.build_sub_partition(schema, table_name, table_metadata, partition_metadata)
+                if subpartition_method == "":
+                    return ""
                 table_ddl["table"] = (ddl_head + def_columns + subpartition_method + ddl_tail)
                 return table_ddl
 
@@ -3252,7 +3256,8 @@ class pg_engine(object):
         part_key_split = part_key.split(',')
         sub_part_key = sub_partition_metadata[0]["subpartition_expression"].replace('`', '')
         if part_key == sub_part_key:
-            print("openGauss not support the partition and subpartition have the same partition key, online migration cannot migrate this type")
+            print("OpenGauss databases don't support that the partition and subpartition have the same partition key for the level-two partition tables, online migration won't migrate this scenario.")
+            return ""
 
         if len(part_key_split) > self.max_range_column or \
                 (sub_partition_metadata[0]["partition_method"] != "RANGE COLUMNS" and len(part_key_split) > 1):
