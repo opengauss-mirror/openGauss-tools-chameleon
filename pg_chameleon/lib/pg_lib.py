@@ -1363,8 +1363,8 @@ class pg_engine(object):
                         index_name = "%s_%s" % (table_name, index_name)
                     else:
                         [index_name, key_part] = self.find_key_from_express(destination_schema, table_name, index_name, key_part)
-                    query = """%s %s ON %s.%s %s (%s) %s;""" % (
-                        command, index_name, destination_schema, table_name, index_type, key_part, local)
+                    query = """%s %s.%s ON %s.%s %s (%s) %s;""" % (
+                        command, destination_schema, index_name, destination_schema, table_name, index_type, key_part, local)
                     if index_option.upper().find("COMMENT") != -1:
                         comments = []
                         comment = {}
@@ -1610,7 +1610,9 @@ class pg_engine(object):
             elif command == "COALESCE":
                 num = int(alt_item["part"][0])
                 dims = self.get_table_partitions(schema, alt_item["tbl_name"])
-                print("List partition and hash partition do not support composite partition in openGauss, online migration cannot migrate this type")
+                if self.list_or_hash(schema, alt_item["tbl_name"]):
+                    print("List partition and hash partition do not support composite partition in openGauss, online migration cannot migrate this type")
+                    return ""
                 querys += "ALTER TABLE %s.%s MERGE PARTITIONS " % (schema, alt_item["tbl_name"])
                 for dim in dims[-num:]:
                     querys += "%s," % dim
@@ -1908,8 +1910,13 @@ class pg_engine(object):
         query = ""
         tbl_name = token["name"]
         for alter_dic in token["alter_cmd"]:
-            symbol = alter_dic["symbol"]
-            query = "ALTER TABLE %s.%s DROP CONSTRAINT %s;" % (schema, tbl_name, symbol)
+            cons = self.get_table_constraints(schema, token['name'])
+            indx = self.get_table_indexes(schema, token['name'])
+            symbol = "%s_%s" % (tbl_name, alter_dic["symbol"])
+            if symbol in cons:
+                query = "ALTER TABLE %s.%s DROP CONSTRAINT %s;" % (schema, tbl_name, symbol)
+            elif symbol in indx:
+                query = "DROP INDEX %s.%s;" % (schema, symbol)
         return query
 
     def build_t_alter_13(self, schema, token):
@@ -1942,7 +1949,7 @@ class pg_engine(object):
         """
         query = ""
         for alter_dic in token["alter_cmd"]:
-            query = "DROP INDEX %s.%s_%s;" % (schema, token["name"],alter_dic["col_name"])
+            query = "DROP INDEX %s.%s_%s;" % (schema, token["name"], alter_dic["col_name"])
         return query
 
     def build_t_alter_20(self, schema, token):
@@ -3661,7 +3668,7 @@ class pg_engine(object):
         query_add_default = ""
         if default_value:
             query_drop_default = (" ALTER TABLE \"{}\".\"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;").format((schema), (table), (column))
-            query_add_default = (" ALTER TABLE  \"{}\".\"{}\" ALTER COLUMN \"{}\" SET DEFAULT %s;" % (default_value)).format((schema), (table), (column))
+            query_add_default = (" ALTER TABLE  \"{}\".\"{}\" ALTER COLUMN \"{}\" SET DEFAULT %s;" % (default_value)).format((schema), (table), (create_column))
 
         return {'drop':query_drop_default, 'create':query_add_default}
 

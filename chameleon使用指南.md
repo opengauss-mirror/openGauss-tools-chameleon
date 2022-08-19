@@ -28,6 +28,11 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - 工具支持的MySQL版本为 5.5+，openGauss的版本为 2.1.0+。
 - 对于float、double等浮点数，迁移过程中可能由于精度误差，造成MySQL和openGauss中的值不完全一样。
 - 若想迁移到openGauss的表名和视图名的大小写与MySQL一致，MySQL的系统变量lower_case_table_names的值应设置为0。存在大小写的触发器名、自定义函数名、存储过程名迁移前后一致。
+- 对于索引或约束中的表达式，如索引前缀表达式id(5)的写法目前暂会迁移为col_name。
+- 迁移后的索引或者约束如index_name会改写为tbl_name_index_name的带有表名前缀的格式。
+- 由于openGauss内核中哈希分区表不支持切割分区，不支持合成分区，不支持添加和删除分区。列表分区表不支持切割分区，不支持合成分区，故该工具在HASH/LIST分区暂不支持COALESCE和REORGANIZE，在HASH分区不支持ADD/DROP PARTITION。
+- 由于目前openGauss内核的限制，二级分区的分区表可以正常执行 ALTER PARTITION中的ADD/DROP/TRUNCATE功能，COALESCE/REORGANIZE/EXCHANGE暂不支持。
+- 对于HASH分区及KEY分区表在线迁移，由于MySQL和openGauss中hash分区内核实现不同，迁移后openGauss数据存放分区与MySQL中数据存放的分区存在差异。
 
 ### 1.3.2. 对象迁移限制
 
@@ -68,6 +73,66 @@ TRUNCATE TABLE
 CREATE TABLE
 
 注意仅支持创建普通表且列的默认值不会被迁移。
+
+#### **1.3.3.8.** 在线创建索引
+
+1.CREATE [UNIQUE] INDEX index_name [index_type] ON tbl_name (key_part,...) [index_option]
+
+2.ALTER TABLE  ADD {INDEX | KEY} [index_name] [index_type] (key_part,...) [index_option] 
+
+index_type: USING {BTREE | HASH}
+key_part: {col_name [(length)] | (expr)} [ASC | DESC]
+index_option: {index_type | COMMENT 'string'}
+
+#### **1.3.3.9.** 在线删除索引
+
+1.DROP INDEX index_name ON tbl_name
+
+2.ALTER TABLE tbl_name DROP {INDEX | KEY} index_name
+
+#### **1.3.3.10.** 在线创建外键
+
+ALTER TABLE tbl_name ADD [CONSTRAINT [symbol]] FOREIGN KEY [index_name] (col_name,...) reference_definition
+
+#### **1.3.3.11.** 在线删除外键
+
+ALTER TABLE tbl_name DROP FOREIGN KEY fk_symbol
+
+#### **1.3.3.12.** 在线创建唯一约束
+
+ALTER TABLE tbl_name ADD [CONSTRAINT [symbol]] UNIQUE [INDEX | KEY] [index_name] [index_type] (key_part,...) [index_option] ...
+
+#### **1.3.3.13.** 在线删除唯一约束
+
+ALTER TABLE tbl_name DROP {CHECK | CONSTRAINT} symbol
+
+#### **1.3.3.14.** 在线创建分区表
+
+CREATE TABLE tbl_name [(create_definition,...)] [table_options] [partition_options]
+
+#### **1.3.3.15.** 在线 alter 分区表 ADD PARTITION
+
+ALTER TABLE tbl_name ADD PARTITION (partition_definition)
+
+#### **1.3.3.16.** 在线 alter 分区表 DROP PARTITION
+
+ALTER TABLE tbl_name DROP PARTITION partition_names
+
+#### **1.3.3.17.** 在线 alter 分区表 TRUNCATE PARTITION
+
+ALTER TABLE tbl_name TRUNCATE PARTITION {partition_names | ALL}
+
+#### **1.3.3.18.** 在线 alter 分区表 COALESCE PARTITION
+
+ALTER TABLE tbl_name COALESCE PARTITION number
+
+#### **1.3.3.19.** 在线 alter 分区表 EXCHANGE PARTITION
+
+ALTER TABLE tbl_name EXCHANGE PARTITION partition_name WITH TABLE tbl_name [{WITH | WITHOUT} VALIDATION]
+
+#### **1.3.3.20.** 在线 alter 分区表 REORGANIZE PARTITION
+
+ALTER TABLE tbl_name REORGANIZE PARTITION partition_names INTO (partition_definitions)
 
 # **2.** chameleon安装方法
 
