@@ -1000,6 +1000,11 @@ class replica_engine(object):
         """
             The method calls the private method __stop_replica to stop the replica process.
         """
+        try:
+            self.pg_engine.connect_db()
+            self.pg_engine.set_source_status("stopped")
+        except:
+            self.logger.error("Setting source status to stopped failed.")
         self.__stop_replica()
 
     def stop_all_replicas(self):
