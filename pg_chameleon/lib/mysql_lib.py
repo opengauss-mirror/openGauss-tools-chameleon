@@ -1455,14 +1455,16 @@ class mysql_source(object):
                 return False
 
         if schema in self.limit_tables:
-            if table in self.limit_tables[schema]:
+            if len(self.limit_tables[schema]) == 0:
+                return True
+            elif table in self.limit_tables[schema]:
                 return True
             else:
                 return False
 
         return True
 
-    def __skip_event(self, table, schema, binlogevent):
+    def skip_event(self, table, schema, binlogevent):
         """
             The method returns true or false if whether the event should be skipped or not.
             The dictionary self.skip_events is used for the check.
