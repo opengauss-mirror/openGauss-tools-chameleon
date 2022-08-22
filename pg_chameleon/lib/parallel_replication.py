@@ -395,8 +395,11 @@ class ConvertToEvent:
             The method is used to extract transaction information according to each event.
         """
         if isinstance(event, RowsEvent):
-            event.schema = mysql_source.schema_mappings[event.schema]
-            trx.events.append(event)
+            store_table = mysql_source.store_binlog_event(event.table, event.schema)
+            skip_event = mysql_source.skip_event(event.table, event.schema, event)
+            if store_table and not skip_event[0]:
+                event.schema = mysql_source.schema_mappings[event.schema]
+                trx.events.append(event)
             return False
         elif isinstance(event, QueryEvent):
             if is_ddl(event.query):
