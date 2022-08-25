@@ -684,8 +684,8 @@ class sql_token(object):
             command = par_item[1].upper()
             par_dic["command"] = command
             if command == "ADD":
-                par_dic["part"] = par_item[3].replace("MAXVALUE", "(MAXVALUE)").replace("maxvalue", "(MAXVALUE)").replace("PARTITION", " ADD PARTITION ").replace(
-                    "partition", " ADD PARTITION").replace("IN", "").replace("in", "").strip()
+                par_dic["part"] = par_item[3].replace("MAXVALUE", "(MAXVALUE)").replace("maxvalue", "(MAXVALUE)").replace(" PARTITION ", " ADD PARTITION ").replace(
+                    " partition ", " ADD PARTITION ").replace("IN", "").replace("in", "").strip()
             elif command == "DROP":
                 par_dic["part"] = par_item[2].replace(" ", "").split(',')
             elif command == "TRUNCATE":
