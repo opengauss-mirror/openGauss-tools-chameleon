@@ -21,7 +21,7 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - detach复制副本进程将重置openGauss中的序列(serial)，以使数据库独立工作。外键约束也会在detach过程中被创建和验证。
 - 视图、自定义函数、存储过程、触发器支持离线迁移，不支持在线迁移。
 - 自定义type不支持离线和在线迁移。
-- 对于分区表，openGauss无法支持的分区表类型将被迁移成普通表。分区表迁移规则见[分区表迁移规则](#_分区表迁移规则)。
+- 对于分区表，openGauss无法支持的分区表类型暂不会被迁移。分区表迁移规则见[分区表迁移规则](#_分区表迁移规则)。
 - 配置文件中，schema mappings中指定的openGauss侧的目的schema名称不能是sch_chameleon。sch_chameleon是工具将自行创建用于辅助复制的schema名称。
 - 列默认值问题。由于列的默认值可以是表达式，部分MySQL的表达式若openGauss不支持的话，离线迁移过程中会报错，导致迁移失败。可通过关闭迁移默认值的方式临时规避该问题。
 - MySQL的unsigned数据类型迁移时，会自动去掉unsigned属性，如MySQL的unsigned int迁移到openGauss时将变成 int，若MySQL中存储的数据超过了int的取值范围，迁移过程中会出错。
@@ -43,7 +43,7 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 
 ### 1.3.3. 在线迁移限制
 
-在线DDL仅支持部分语句，主要包括 CREATE/DROP/RENAME/TRUNCATE TABLE, ALTER TABLE DROP/ADD/CHANGE/MODIFY, DROP PRIMARY KEY。
+在线DDL仅支持部分语句，主要包括 CREATE/DROP/RENAME/TRUNCATE TABLE, ALTER TABLE DROP/ADD/CHANGE/MODIFY, DROP PRIMARY KEY, CREATE/DROP INDEX, ALTER TABLE ADD FOREIGN KEY/UNIQUE INDEX/INDEX, ALTER TABLE DROP FOREIGN KEY/INDEX/CONSTRAINT, ALTER TABLE ADD/DROP/TRUNCATE/COALESCE/EXCHANGE/REORGANIZE PARTITION。
 
 #### **1.3.3.1.** 添加/删除字段
 
@@ -72,8 +72,6 @@ TRUNCATE TABLE
 #### **1.3.3.7.** 创建表
 
 CREATE TABLE
-
-注意仅支持创建普通表且列的默认值不会被迁移。
 
 #### **1.3.3.8.** 在线创建索引
 
@@ -557,7 +555,7 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 # **4.** 分区表迁移规则
 
-分区表迁移的基本思想是对于openGauss支持的分区类型，迁移成对应的分区表即可。对于openGauss不支持的分区表类型，如二级分区、多列list columns分区等，将迁移成普通表。
+分区表迁移的基本思想是对于openGauss支持的分区类型，迁移成对应的分区表即可。对于openGauss支持的分区表类型详见以下表格，其中不支持的分区表将暂不迁移。
 
 | 类别        | 说明                                                         | MySQL                                                        | openGauss                                                    | 迁移规则                                                     |
 | ----------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
@@ -566,7 +564,27 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 | hash分区    | 基于给定的分区个数，把数据分配到不同的分区                   | 1. range分区要求分区键必须是int型。或者通过表达式返回 int 类型。 2. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 3. 支持linear关键字，常规 hash 使用的是取模算法，线性 hash 使用的是一个线性的 2 的幂的运算法则 | 1. 支持1列分区键。 2. 支持整数、字符串、时间做分区键。       | openGauss不支持linear关键字，仅支持普通hash表。不过可以忽略，linear影响的主要是hash分布，以及对hash分区增减时减少数据重分布的影响。所以对于linear hash分区表，将迁移成普通的hash表。 |
 | key分区     | 类似于 hash 分区                                             | 1. blob 或 text 列类型除外可做分区键 2. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 3. 支持linear关键字，常规 hash 使用的是取模算法，线性 hash 使用的是一个线性的 2 的幂的运算法则 4. 不能使用表达式作为分区键 5. 可使用多个列做分区键 | 无对应类型，不过基本可以使用hash分区表替代。                 | 1. 当只用一列做分区键且分区键类型是整数、字符串、时间时，可用hash分区替代。多列分区键不支持，其他数据类型不支持。对于不支持的分区表，将迁移成普通表。 2.不支持linear关键字，没有类似的处理。不过可以忽略，linear影响的主要是hash分布，以及对hash分区增减时减少数据重分布的影响。所以对于linear key分区表，将迁移成普通的hash表。 |
 | columns分区 | 是range分区和list分区的扩展，分为range columns 分区和 list columns 分区 | 1. 支持支持整数，日期时间数据类型做分区键。 2. 可使用多个列做分区键 3. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 | 无对应类型，部分可用range或list分区替代。                    | 1.range columns分区，支持不超过4列。2.list columns分区，不支持多列分区键。 |
-| 二级分区    | 分区表中对每个分区再次分割                                   |                                                              | N/A                                                          | 不支持                                                       |
+| 二级分区    | 在 MySQL 5.7 中，可以对被RANGE或LIST分区的 table 进行子分区。子分区可以使用HASH或KEY分区。                                   | 在SUBPARTITION子句全部使用显式定义子分区，以指定各个子分区的选项，每个分区必须具有相同数量的子分区，每个SUBPARTITION子句必须(至少)包括该子分区的名称。   | 转化成RANGE/LIST分区，HASH子分区进行替代       | RANGE/LIST/HASH规则同上述对应分区规则 |
+
+|  | Range分区 | List分区 | Hash/Key分区 | 二级分区 |
+| ---------- | ----- | ----- | ----- | ----- |
+| ADD PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss √ |
+| DROP PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss √ |
+| TRUNCATE PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss √ |
+| COALESCE PARTITION | MySQL ×，openGauss × | MySQL ×，openGauss × | MySQL √，openGauss × | MySQL ×，openGauss × |
+| EXCHANGE PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss × |
+| REORGANIZE PARTITION | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss × | MySQL √，openGauss × |
+
+备注：
+ADD/DROP PARTITION 中，openGauss内核中hash分区不支持添加和删除分区，故hash分区不支持。
+
+TRUNCATE PARTITION 中，openGauss内核中hash分区数据与MySQL存放分区数据不一致，故hash分区不支持。
+
+COALESCE PARTITION 中，MySQL中COALESCE PARTITION can only be used on HASH/KEY partitions，RANGE/LIST分区不支持该操作，openGauss无对应操作，故仅hash分区能使用COALESCE操作。由于openGauss内核中list和hash分区不支持切割和合成分区，故hash分区不支持。
+
+EXCHANGE PARTITION 中，openGauss内核中hash分区数据与MySQL存放分区数据不一致，故hash分区不支持。openGauss内核中二级分区暂不支持EXCHANGE操作，故二级分区不支持
+
+REORGANIZE PARTITION 中，openGauss侧采用MERGE和SPLIT实现分区的MySQL中的REORGANIZE。openGauss内核中list和hash分区不支持切割和合成分区，故list分区和hash分区不支持。openGauss内核二级分区不支持split操作，故二级分区也不支持。
 
 # **5.** 默认的类型转换规则
 
