@@ -563,26 +563,26 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 | list分区    | 类似 range 分区，区别在 list 分区是基于枚举出的值列表分区，range 是基于给定的连续区间范围分区 | 1. range分区要求分区键必须是int型。或者通过表达式返回 int 类型。 2. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 | 1. 支持1列分区键。 2. 支持整数、字符串、时间做分区键。       | openGauss可完全兼容MySQL。所有MySQL的list分区表均可迁移到openGauss的list分区表。 |
 | hash分区    | 基于给定的分区个数，把数据分配到不同的分区                   | 1. range分区要求分区键必须是int型。或者通过表达式返回 int 类型。 2. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 3. 支持linear关键字，常规 hash 使用的是取模算法，线性 hash 使用的是一个线性的 2 的幂的运算法则 | 1. 支持1列分区键。 2. 支持整数、字符串、时间做分区键。       | openGauss不支持linear关键字，仅支持普通hash表。不过可以忽略，linear影响的主要是hash分布，以及对hash分区增减时减少数据重分布的影响。所以对于linear hash分区表，将迁移成普通的hash表。 |
 | key分区     | 类似于 hash 分区                                             | 1. blob 或 text 列类型除外可做分区键 2. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 3. 支持linear关键字，常规 hash 使用的是取模算法，线性 hash 使用的是一个线性的 2 的幂的运算法则 4. 不能使用表达式作为分区键 5. 可使用多个列做分区键 | 无对应类型，不过基本可以使用hash分区表替代。                 | 1. 当只用一列做分区键且分区键类型是整数、字符串、时间时，可用hash分区替代。多列分区键不支持，其他数据类型不支持。对于不支持的分区表，将迁移成普通表。 2.不支持linear关键字，没有类似的处理。不过可以忽略，linear影响的主要是hash分布，以及对hash分区增减时减少数据重分布的影响。所以对于linear key分区表，将迁移成普通的hash表。 |
-| columns分区 | 是range分区和list分区的扩展，分为range columns 分区和 list columns 分区 | 1. 支持支持整数，日期时间数据类型做分区键。 2. 可使用多个列做分区键 3. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 | 无对应类型，部分可用range或list分区替代。                    | 1.range columns分区，支持不超过4列。2.list columns分区，不支持多列分区键。 |
+| columns分区 | 是range分区和list分区的扩展，分为range columns 分区和 list columns 分区 | 1. 支持整数，日期时间数据类型做分区键。 2. 可使用多个列做分区键 3. 若分区表中有主键/唯一建，则主键/唯一建必须包含分区键。 | 无对应类型，部分可用range或list分区替代。                    | 1.range columns分区，支持不超过4列。2.list columns分区，不支持多列分区键。 |
 | 二级分区    | 在 MySQL 5.7 中，可以对被RANGE或LIST分区的 table 进行子分区。子分区可以使用HASH或KEY分区。                                   | 在SUBPARTITION子句全部使用显式定义子分区，以指定各个子分区的选项，每个分区必须具有相同数量的子分区，每个SUBPARTITION子句必须(至少)包括该子分区的名称。   | 转化成RANGE/LIST分区，HASH子分区进行替代       | RANGE/LIST/HASH规则同上述对应分区规则 |
 
 |  | Range分区 | List分区 | Hash/Key分区 | 二级分区 |
 | ---------- | ----- | ----- | ----- | ----- |
-| ADD PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss √ |
-| DROP PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss √ |
-| TRUNCATE PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss √ |
-| COALESCE PARTITION | MySQL ×，openGauss × | MySQL ×，openGauss × | MySQL √，openGauss × | MySQL ×，openGauss × |
-| EXCHANGE PARTITION | MySQL √，openGauss √ | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss × |
-| REORGANIZE PARTITION | MySQL √，openGauss √ | MySQL √，openGauss × | MySQL √，openGauss × | MySQL √，openGauss × |
+| ADD PARTITION | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss × | MySQL ✓，openGauss ✓ |
+| DROP PARTITION | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss × | MySQL ✓，openGauss ✓ |
+| TRUNCATE PARTITION | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss ✓ |
+| COALESCE PARTITION | MySQL ×，openGauss × | MySQL ×，openGauss × | MySQL ✓，openGauss × | MySQL ×，openGauss × |
+| EXCHANGE PARTITION | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss × |
+| REORGANIZE PARTITION | MySQL ✓，openGauss ✓ | MySQL ✓，openGauss × | MySQL ✓，openGauss × | MySQL ✓，openGauss × |
 
 备注：
 ADD/DROP PARTITION 中，openGauss内核中hash分区不支持添加和删除分区，故hash分区不支持。
 
-TRUNCATE PARTITION 中，openGauss内核中hash分区数据与MySQL存放分区数据不一致，故hash分区不支持。
+TRUNCATE PARTITION 中，openGauss内核中hash分区数据与MySQL存放分区数据不一致，故hash分区支持但数据不一致。
 
 COALESCE PARTITION 中，MySQL中COALESCE PARTITION can only be used on HASH/KEY partitions，RANGE/LIST分区不支持该操作，openGauss无对应操作，故仅hash分区能使用COALESCE操作。由于openGauss内核中list和hash分区不支持切割和合成分区，故hash分区不支持。
 
-EXCHANGE PARTITION 中，openGauss内核中hash分区数据与MySQL存放分区数据不一致，故hash分区不支持。openGauss内核中二级分区暂不支持EXCHANGE操作，故二级分区不支持
+EXCHANGE PARTITION 中，openGauss内核中hash分区数据与MySQL存放分区数据不一致，故hash分区支持但数据不一致。openGauss内核中二级分区暂不支持EXCHANGE操作，故二级分区不支持
 
 REORGANIZE PARTITION 中，openGauss侧采用MERGE和SPLIT实现分区的MySQL中的REORGANIZE。openGauss内核中list和hash分区不支持切割和合成分区，故list分区和hash分区不支持。openGauss内核二级分区不支持split操作，故二级分区也不支持。
 
