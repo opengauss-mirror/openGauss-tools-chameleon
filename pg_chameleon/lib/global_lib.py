@@ -678,6 +678,8 @@ class replica_engine(object):
             trx = Transaction()
             trx.events = []
             trx_event_index = 0
+            self.mysql_source.connect_db_buffered()
+            table_type_map = self.mysql_source.get_table_type_map()
             while True:
                 packet = packet_queue.get()
                 trx_event_index += 1
@@ -766,11 +768,13 @@ class replica_engine(object):
                         trx.sequence_number = event.sequence_number
                         trx.binlog_file = binlog_file
                 else:
+                    if isinstance(event, RowsEvent):
+                        column_map = table_type_map[event.schema][event.table]
                     finished = ConvertToEvent.feed_event(trx, event, self.mysql_source, self.pg_engine)
                     if finished:
                         trx.finished = finished
                         if trx.is_dml:
-                            trx.sql_list = trx.fetch_sql()
+                            trx.sql_list = trx.fetch_sql(self.mysql_source, column_map)
                             kk += 1
                         trx.events = []
                         trx.log_pos = packet_str

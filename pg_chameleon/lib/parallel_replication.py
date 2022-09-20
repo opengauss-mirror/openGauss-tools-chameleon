@@ -189,7 +189,7 @@ class MyBinLogPacketWrapper(BinLogPacketWrapper):
             code normally read the datas.
         """
         self.read_bytes -= len(data)
-        self.data_buffer += data
+        self.data_buffer = data + self.data_buffer
 
     def advance(self, size):
         """
@@ -288,7 +288,7 @@ class Transaction:
         assert last_committed < sequence_number
         return sequence_number > self.last_committed
 
-    def fetch_sql(self) -> list:
+    def fetch_sql(self, mysql_source, column_map) -> list:
         """
             The method id used to fetch sql from the RowsEvent.
         """
@@ -298,13 +298,21 @@ class Transaction:
             if isinstance(event, RowsEvent):
                 table = "%s.%s" % (dqstr(event.schema), dqstr(event.table))
                 if isinstance(event, DeleteRowsEvent):
-                    sql_list += [sql_delete(table, row['values']) for row in event.rows]
+                    for row in event.rows:
+                        sql_list.append(sql_delete(table, self.decode_value(mysql_source, table, column_map, row['values'])))
                 elif isinstance(event, UpdateRowsEvent):
-                    sql_list += [sql_update(table, row["before_values"], row["after_values"]) \
-                                     for row in event.rows]
+                    for row in event.rows:
+                        sql_list.append(sql_update(table, self.decode_value(mysql_source, table, column_map, row["before_values"]),
+                                               self.decode_value(mysql_source, table, column_map, row["after_values"])))
                 elif isinstance(event, WriteRowsEvent):
-                    sql_list += [sql_insert(table, row['values']) for row in event.rows]
+                    for row in event.rows:
+                        sql_list.append(sql_insert(table, self.decode_value(mysql_source, table, column_map, row['values'])))
         return sql_list
+
+    def decode_value(self, mysql_source, table_name, column_map, row_value):
+        for column_name in row_value:
+            row_value[column_name] = mysql_source.decode_event_value(table_name, column_map, column_name, row_value[column_name])
+        return row_value
 
     def get_gtid(self):
         """
