@@ -97,7 +97,7 @@ class mysql_source(object):
 
     @classmethod
     def __decode_json_value(cls, origin_value, numeric_scale):
-        return cls.__decode_dic_keys(origin_value)
+        return str(cls.__decode_dic_keys(origin_value)).replace("'", "\"")
 
     @classmethod
     def __decode_postgis_spatial_value(cls, origin_value, numeric_scale):
@@ -137,6 +137,11 @@ class mysql_source(object):
         return int(origin_value, BINARY_BASE)
 
     @classmethod
+    def __decode_set_value(cls, origin_value, numeric_scale):
+        value = str(origin_value)
+        return value[1:len(value) - 1].replace("'", "").replace(", ", ",")
+
+    @classmethod
     def __decode_default_value(cls, origin_value, numeric_scale):
         return origin_value
 
@@ -152,6 +157,7 @@ class mysql_source(object):
             ColumnType.M_FLOAT.value: self.__decode_float_value(ColumnType.M_FLOAT.value),
             ColumnType.M_DOUBLE.value: self.__decode_float_value(ColumnType.M_DOUBLE.value),
             ColumnType.M_DOUBLE_P.value: self.__decode_float_value(ColumnType.M_DOUBLE.value),
+            ColumnType.M_SET.value: self.__decode_set_value,
             ColumnType.M_BIT.value: self.__decode_bit_value
         }
         for v in self.hexify_always:
@@ -1542,7 +1548,7 @@ class mysql_source(object):
                     dic_decoded[key] = cls.__decode_dic_keys(value)
         return dic_decoded
 
-    def __decode_event_value(self, table_name, column_map, column_name, origin_value):
+    def decode_event_value(self, table_name, column_map, column_name, origin_value):
         """
             Decode event value based on column type
         """
@@ -1560,6 +1566,7 @@ class mysql_source(object):
 
         if "inf" in str(origin_value) and column_type in ["decimal", "double", "float"]:
             return 0
+
         return self.decode_map.get(column_type, self.__decode_default_value)(origin_value, column_map["numeric_scale"][column_name])
 
     def __read_replica_stream(self, batch_data, dispatcher_packet_queue, signal_queue):
@@ -1593,7 +1600,6 @@ class mysql_source(object):
         """
         size_insert=0
         sql_tokeniser = sql_token()
-        table_type_map = self.get_table_type_map()
         inc_tables = self.pg_engine.get_inconsistent_tables()
         self.tables_disabled = self.pg_engine.get_tables_disabled(format='list')
         close_batch = False
