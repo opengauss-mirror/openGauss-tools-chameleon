@@ -901,7 +901,7 @@ MySQL侧创建两个自定义函数：
 
 **create function mysql_func1(s char(20))
 returns char(50) deterministic
-return concat('mysql_func1, ',s,'!')**
+return concat('mysql_func1, ',s,'!');**
 
 **create function mysql_func2(x smallint unsigned, y smallint unsigned) returns smallint deterministic
 BEGIN
