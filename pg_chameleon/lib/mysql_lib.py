@@ -139,7 +139,13 @@ class mysql_source(object):
     @classmethod
     def __decode_set_value(cls, origin_value, numeric_scale):
         value = str(origin_value)
-        return value[1:len(value) - 1].replace("'", "").replace(", ", ",")
+        binlog_list = value[1:len(value) - 1].replace("'", "").split(", ")
+        type_list = numeric_scale[4:len(numeric_scale) - 1].replace("'", "").split(",")
+        result_list = []
+        for element in type_list:
+            if element in binlog_list:
+                result_list.append(element)
+        return ",".join(result_list)
 
     @classmethod
     def __decode_default_value(cls, origin_value, numeric_scale):
@@ -1416,7 +1422,8 @@ class mysql_source(object):
                     SELECT
                         column_name as column_name,
                         data_type as data_type,
-                        numeric_scale as numeric_scale
+                        numeric_scale as numeric_scale,
+                        column_type as column_type
                     FROM
                         information_schema.COLUMNS
                     WHERE
@@ -1431,7 +1438,10 @@ class mysql_source(object):
                 column_data = self.cursor_buffered.fetchall()
                 for column in column_data:
                     column_type[column["column_name"]] = column["data_type"]
-                    numeric_scale[column["column_name"]] = column["numeric_scale"]
+                    if column["data_type"] == "set":
+                        numeric_scale[column["column_name"]] = column["column_type"]
+                    else:
+                        numeric_scale[column["column_name"]] = column["numeric_scale"]
                 table_dict = {}
                 table_dict["table_charset"] = table_charset
                 table_dict["column_type"] = column_type

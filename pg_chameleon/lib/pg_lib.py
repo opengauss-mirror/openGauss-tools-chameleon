@@ -569,7 +569,7 @@ class pg_engine(object):
             ColumnType.M_BIT.value:ColumnType.O_INTEGER.value,
             ColumnType.M_YEAR.value:ColumnType.O_INTEGER.value,
             ColumnType.M_ENUM.value:ColumnType.O_ENUM.value,
-            ColumnType.M_SET.value:ColumnType.O_C_TEXT.value,
+            ColumnType.M_SET.value:ColumnType.O_SET.value,
             ColumnType.M_JSON.value:ColumnType.O_JSON.value,
             ColumnType.M_BOOL.value:ColumnType.O_BOOLEAN.value,
             ColumnType.M_BOOLEAN.value:ColumnType.O_BOOLEAN.value,
@@ -3157,6 +3157,8 @@ class pg_engine(object):
                 ddl_enum.append(sql_drop_enum)
                 ddl_enum.append(sql_create_enum)
                 column_type=enum_type
+            if column_type == "set":
+                column_type = column["column_type"]
             if (column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value) and\
                 int(column["character_maximum_length"]) > 0:
                 column_type="%s (%s)" % (column_type, str(column["character_maximum_length"]))
