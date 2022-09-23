@@ -5088,7 +5088,7 @@ class pg_engine(object):
         self.logger.info("Insert an entry of %s replication into the object replication status table." % (object_name,))
         self.connect_db()
 
-        sql_to_get_replica_source_id = """SELECT I_ID_SOURCE FROM SCH_CHAMELEON.T_SOURCES WHERE T_SOURCE = '%s';"""
+        sql_to_get_replica_source_id = """SELECT I_ID_SOURCE FROM sch_chameleon.t_sources WHERE T_SOURCE = '%s';"""
         i_id_source = self.pgsql_conn.prepare(sql_to_get_replica_source_id % (self.source,)).first()
         self.logger.debug("The replication source id is %s." % (i_id_source,))
 
