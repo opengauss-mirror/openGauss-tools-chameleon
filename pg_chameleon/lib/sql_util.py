@@ -97,6 +97,7 @@ class ColumnType(Enum):
     O_C_CHARACTER = 'character'
     O_C_CHAR_VAR = 'character varying'
     O_C_TEXT = 'text'
+    O_SET = 'set'
 
     def __name_start_with(s):
         results = set()

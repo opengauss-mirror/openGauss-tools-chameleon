@@ -310,8 +310,18 @@ class Transaction:
         return sql_list
 
     def decode_value(self, mysql_source, table_name, column_map, row_value):
+        """
+            The method is used to convert mysql values from binlog to openGauss values
+        """
+        json_type_list = []
         for column_name in row_value:
             row_value[column_name] = mysql_source.decode_event_value(table_name, column_map, column_name, row_value[column_name])
+            if column_map['column_type'][column_name] == "json":
+                json_type_list.append(column_name)
+        for i in range(len(json_type_list)):
+            new_column_name = column_name + "::jsonb"
+            row_value[new_column_name] = row_value[column_name]
+            del row_value[column_name]
         return row_value
 
     def get_gtid(self):
@@ -347,7 +357,20 @@ def sql_delete(table, row) -> str:
         The method gets the sql delete statement.
     """
     sql = "delete from {} where ".format(table)
-    sql += ' and '.join([dqstr(k) + '=' + qstr(v) for k, v in row.items()])
+    ct = 0
+    l = len(row.items())
+    for k, v in row.items():
+        ct += 1
+        if v is None:
+            sql += (dqstr(k) + " is NULL")
+        else:
+            if k.endswith("::jsonb"):
+                column_name = k[0:len(k) - 7]
+                sql += (dqstr(column_name) + "::jsonb" + '=' + qstr(v))
+            else:
+                sql += (dqstr(k) + '=' + qstr(v))
+        if ct != l:
+            sql += ' and '
     return sql
 
 
@@ -363,11 +386,25 @@ def sql_update(table, before_row, after_row) -> str:
         if v is None:
             sql += (dqstr(k) + '=' + 'NULL')
         else:
+            if k.endswith("::jsonb"):
+                k = k[0:len(k) - 7]
             sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
             sql += ','
     sql += ' where '
-    sql += ' and '.join([dqstr(k) + '=' + qstr(v) for k, v in before_row.items()])
+    ct = 0
+    for k, v in before_row.items():
+        ct += 1
+        if v is None:
+            sql += (dqstr(k) + " is NULL")
+        else:
+            if k.endswith("::jsonb"):
+                column_name = k[0:len(k) - 7]
+                sql += (dqstr(column_name) + "::jsonb" + '=' + qstr(v))
+            else:
+                sql += (dqstr(k) + '=' + qstr(v))
+        if ct != l:
+            sql += ' and '
     return sql
 
 
@@ -377,7 +414,13 @@ def sql_insert(table, row) -> str:
     """
     sql = 'insert into {}('.format(table)
     keys = row.keys()
-    sql += ','.join([dqstr(k) for k in keys])
+    column_name = []
+    for k in keys:
+        if k.endswith("::jsonb"):
+            column_name.append(k[0:len(k) - 7])
+        else:
+            column_name.append(k)
+    sql += ','.join(column_name)
     sql += ') values('
     ct = 0
     l = len(keys)

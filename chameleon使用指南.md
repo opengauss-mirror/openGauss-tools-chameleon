@@ -626,7 +626,7 @@ char(1)类型能够正常插入汉字跟数据库的编码有关。当数据库�
 | bit                | integer                     |                                                              |
 | year               | integer                     |                                                              |
 | enum               | enum                        | openGauss不直接支持enum类型。对于MySQL的enum类型，openGauss将通过自定义类型创建枚举类型，例如CREATE TYPE enumtype AS ENUM('a','b')创建ENUM类型，然后使用enumtype去定义列类型。 |
-| set                | text                        |                                                              |
+| set                | set                         |                                                              |
 | json               | json                        |                                                              |
 | bool               | boolean                     |                                                              |
 | boolean            | boolean                     |                                                              |
