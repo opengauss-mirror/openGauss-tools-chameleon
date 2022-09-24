@@ -141,7 +141,9 @@ ALTER TABLE tbl_name REORGANIZE PARTITION partition_names INTO (partition_defini
 
 安装包下载地址：
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-1.0.0-py3-none-any.whl
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-3.1.0-py3-none-any.whl
+
+其中3.1.0表示当前版本号，其可以通过chameleon --version命令查询。
 
 下载完成后，通过python virtual env环境进行安装，首先创建python虚拟环境并激活：
 
@@ -151,7 +153,7 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-1.
 
 然后通过pip安装即可：
 
-**pip3 install ./chameleon-1.0.0-py3-none-any.whl**
+**pip3 install ./chameleon-3.1.0-py3-none-any.whl**
 
 注意：安装过程中，将自动安装该工具依赖的其他库，请确保本机的pip能正常下载安装相关依赖。相关依赖库及版本要求为：
 
