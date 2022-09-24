@@ -453,7 +453,9 @@ class ConvertToEvent:
                 trx.events.append(event)
             return False
         elif isinstance(event, QueryEvent):
-            if is_ddl(event.query):
+            if "COMMIT" == event.query:
+                return True
+            elif is_ddl(event.query):
                 # trx.sql_list.append(get_destination_ddl(event, mysql_source, pg_engine))
                 schema = mysql_source.schema_mappings[event.schema.decode('utf-8')]
                 trx_sql_and_schema = event.query +" SCHEMA: "+ schema
