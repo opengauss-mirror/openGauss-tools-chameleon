@@ -434,11 +434,11 @@ def sql_insert(table, row) -> str:
     column_name = []
     for k in keys:
         if k.endswith("::jsonb"):
-            column_name.append(k[0:len(k) - 7])
+            column_name.append(dqstr(k[0:len(k) - 7]))
         elif k.endswith("~"):
-            column_name.append(k[0:len(k) - 1])
+            column_name.append(dqstr(k[0:len(k) - 1]))
         else:
-            column_name.append(k)
+            column_name.append(dqstr(k))
     sql += ','.join(column_name)
     sql += ') values('
     ct = 0
