@@ -314,12 +314,21 @@ class Transaction:
             The method is used to convert mysql values from binlog to openGauss values
         """
         json_type_list = []
+        point_polygon_type_list = []
         for column_name in row_value:
             row_value[column_name] = mysql_source.decode_event_value(table_name, column_map, column_name, row_value[column_name])
             if column_map['column_type'][column_name] == "json":
                 json_type_list.append(column_name)
+            if column_map['column_type'][column_name] in ["point", "polygon", "geometry"]:
+                point_polygon_type_list.append(column_name)
         for i in range(len(json_type_list)):
+            column_name = json_type_list[i]
             new_column_name = column_name + "::jsonb"
+            row_value[new_column_name] = row_value[column_name]
+            del row_value[column_name]
+        for i in range(len(point_polygon_type_list)):
+            column_name = point_polygon_type_list[i]
+            new_column_name = column_name + "~"
             row_value[new_column_name] = row_value[column_name]
             del row_value[column_name]
         return row_value
@@ -367,6 +376,9 @@ def sql_delete(table, row) -> str:
             if k.endswith("::jsonb"):
                 column_name = k[0:len(k) - 7]
                 sql += (dqstr(column_name) + "::jsonb" + '=' + qstr(v))
+            elif k.endswith("~"):
+                column_name = k[0:len(k) - 1]
+                sql += (dqstr(column_name) + "~" + '=' + qstr(v))
             else:
                 sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
@@ -388,6 +400,8 @@ def sql_update(table, before_row, after_row) -> str:
         else:
             if k.endswith("::jsonb"):
                 k = k[0:len(k) - 7]
+            if k.endswith("~"):
+                k = k[0:len(k) - 1]
             sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
             sql += ','
@@ -401,6 +415,9 @@ def sql_update(table, before_row, after_row) -> str:
             if k.endswith("::jsonb"):
                 column_name = k[0:len(k) - 7]
                 sql += (dqstr(column_name) + "::jsonb" + '=' + qstr(v))
+            elif k.endswith("~"):
+                column_name = k[0:len(k) - 1]
+                sql += (dqstr(column_name) + "~" + "=" + qstr(v))
             else:
                 sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
@@ -418,6 +435,8 @@ def sql_insert(table, row) -> str:
     for k in keys:
         if k.endswith("::jsonb"):
             column_name.append(k[0:len(k) - 7])
+        elif k.endswith("~"):
+            column_name.append(k[0:len(k) - 1])
         else:
             column_name.append(k)
     sql += ','.join(column_name)

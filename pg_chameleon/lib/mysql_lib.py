@@ -1460,12 +1460,14 @@ class mysql_source(object):
         :return: true if the table should be replicated, false if shouldn't
         :rtype: boolean
         """
+        """
         self.tables_disabled = self.pg_engine.get_tables_disabled(format='list')
 
         if self.tables_disabled:
             if  "%s.%s" % (schema, table) in self.tables_disabled:
                 return False
 
+        """
         if schema in self.skip_tables:
             if table in self.skip_tables[schema]:
                 return False
