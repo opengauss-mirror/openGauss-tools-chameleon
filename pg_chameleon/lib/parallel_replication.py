@@ -475,11 +475,19 @@ class ConvertToEvent:
             if "COMMIT" == event.query:
                 return True
             elif is_ddl(event.query):
-                # trx.sql_list.append(get_destination_ddl(event, mysql_source, pg_engine))
-                schema = mysql_source.schema_mappings[event.schema.decode('utf-8')]
-                trx_sql_and_schema = event.query +" SCHEMA: "+ schema
-                trx.sql_list.append(trx_sql_and_schema)
-                trx.is_dml = False
+                sql_tokeniser = sql_token()
+                sql_tokeniser.parse_sql(event.query)
+                for token in sql_tokeniser.tokenised:
+                    table_name = token["name"]
+                    store_table = mysql_source.store_binlog_event(table_name, str(event.schema.decode('utf-8')))
+                    if store_table:
+                        schema = mysql_source.schema_mappings[event.schema.decode('utf-8')]
+                        trx_sql_and_schema = event.query + " SCHEMA: " + schema
+                        trx.sql_list.append(trx_sql_and_schema)
+                        trx.is_dml = False
+                    else:
+                        trx.sql_list.append("")
+                        trx.is_dml = False
                 return True
             else:
                 return False
