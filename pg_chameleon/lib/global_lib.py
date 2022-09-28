@@ -769,11 +769,12 @@ class replica_engine(object):
                         trx.binlog_file = binlog_file
                 else:
                     if isinstance(event, RowsEvent):
-                        column_map = table_type_map[event.schema][event.table]
+                        if event.table in table_type_map[event.schema]:
+                            column_map = table_type_map[event.schema][event.table]
                     finished = ConvertToEvent.feed_event(trx, event, self.mysql_source, self.pg_engine)
                     if finished:
                         trx.finished = finished
-                        if trx.is_dml:
+                        if trx.is_dml and len(trx.events) > 0:
                             trx.sql_list = trx.fetch_sql(self.mysql_source, column_map)
                             kk += 1
                         trx.events = []
