@@ -587,6 +587,7 @@ class replica_engine(object):
         self.pg_engine.logger = log_replay[0]
         self.pg_engine.connect_db()
         self.pg_engine.set_source_id()
+        self.pg_engine.check_postgis()
         self.logger.debug("start replay process")
         write_pid(self.pid_file, "replay_replica_process")
         transaction_dispatcher = TransactionDispatcher(6, self.pg_engine)
