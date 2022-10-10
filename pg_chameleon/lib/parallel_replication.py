@@ -288,7 +288,7 @@ class Transaction:
         assert last_committed < sequence_number
         return sequence_number > self.last_committed
 
-    def fetch_sql(self, mysql_source, column_map) -> list:
+    def fetch_sql(self, mysql_source, column_map_list) -> list:
         """
             The method id used to fetch sql from the RowsEvent.
         """
@@ -299,14 +299,14 @@ class Transaction:
                 table = "%s.%s" % (dqstr(event.schema), dqstr(event.table))
                 if isinstance(event, DeleteRowsEvent):
                     for row in event.rows:
-                        sql_list.append(sql_delete(table, self.decode_value(mysql_source, table, column_map, row['values'])))
+                        sql_list.append(sql_delete(table, self.decode_value(mysql_source, table, column_map_list[i], row['values'])))
                 elif isinstance(event, UpdateRowsEvent):
                     for row in event.rows:
-                        sql_list.append(sql_update(table, self.decode_value(mysql_source, table, column_map, row["before_values"]),
-                                               self.decode_value(mysql_source, table, column_map, row["after_values"])))
+                        sql_list.append(sql_update(table, self.decode_value(mysql_source, table, column_map_list[i], row["before_values"]),
+                                               self.decode_value(mysql_source, table, column_map_list[i], row["after_values"])))
                 elif isinstance(event, WriteRowsEvent):
                     for row in event.rows:
-                        sql_list.append(sql_insert(table, self.decode_value(mysql_source, table, column_map, row['values'])))
+                        sql_list.append(sql_insert(table, self.decode_value(mysql_source, table, column_map_list[i], row['values'])))
         return sql_list
 
     def decode_value(self, mysql_source, table_name, column_map, row_value):
