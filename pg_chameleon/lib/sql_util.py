@@ -187,7 +187,7 @@ class sql_token(object):
         self.m_alter_table = re.compile(r'(?:(ALTER\s+?TABLE)\s+(?:`?\b.*?\b`\.?)?(`?\b.*?\b`?))\s+((?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?.*,?)', re.IGNORECASE)
         self.m_alter_list = re.compile(r'((?:\b(?:ADD|DROP|CHANGE|MODIFY)\b\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
         self.m_alter_column = re.compile(r'\(?\s*`?(\w*)`?\s*(\w*(?:\s*\w*)?)\s*(?:\((.*?)\))?\)?', re.IGNORECASE)
-        self.m_default_value = re.compile(r"(\bDEFAULT\b)\s*('?\w*'?)\s*", re.IGNORECASE)
+        self.m_default_value = re.compile(r"(\bDEFAULT\b)\s*('?[\w-]*'?)\s*", re.IGNORECASE)
         self.m_alter_change = re.compile(r'\s*`?(\w*)`?\s*`?(\w*)`?\s*(\w*)\s*(?:\((.*?)\))?', re.IGNORECASE)
         self.m_drop_primary = re.compile(r'(?:(?:ALTER\s+?TABLE)\s+(`?\b.*?\b`?)\s+(DROP\s+PRIMARY\s+KEY))', re.IGNORECASE)
         #self.m_modify = re.compile(r'((?:(?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
@@ -617,7 +617,7 @@ class sql_token(object):
                 if subpartition_number:
                     for i in range(0, int(subpartition_number)):
                         scount += 1
-                        subpartition_name = par_item[0] + "_" + str(i)
+                        subpartition_name = "p%dsp%d" % (count, scount-1)
                         par_dic = {}
                         par_dic["partition_ordinal_position"] = count
                         par_dic["subpartition_ordinal_position"] = scount
