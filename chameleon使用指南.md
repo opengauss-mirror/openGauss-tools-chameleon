@@ -594,52 +594,52 @@ REORGANIZE PARTITION 中，openGauss侧采用MERGE和SPLIT实现分区的MySQL�
 
 char(1)类型能够正常插入汉字跟数据库的编码有关。当数据库是B模式，且编码是UTF-8时，char(1)可成功插入1个汉字；当数据库是B模式，且编码是SQL_ASCII时，插入1个汉字会失败。当数据库是A模式时，插入1个汉字也会失败。
 
-| MySQL              | openGauss                   | 备注                                                         |
-| ------------------ | --------------------------- | ------------------------------------------------------------ |
-| integer            | integer                     |                                                              |
-| mediumint          | integer                     |                                                              |
-| tinyint            | integer                     |                                                              |
-| smallint           | integer                     |                                                              |
-| int                | integer                     |                                                              |
-| bigint             | bigint                      |                                                              |
-| varchar            | character varying           | 支持迁移最大存储长度（character_maximum_length）             |
-| character varying  | character varying           | 支持迁移最大存储长度（character_maximum_length）             |
-| text               | text                        |                                                              |
-| char               | character                   | 支持迁移最大存储长度（character_maximum_length）             |
-| datetime           | timestamp without time zone |                                                              |
-| date               | date                        |                                                              |
-| time               | time without time zone      |                                                              |
-| timestamp          | timestamp without time zone |                                                              |
-| tinytext           | text                        |                                                              |
-| mediumtext         | text                        |                                                              |
-| longtext           | text                        |                                                              |
-| tinyblob           | blob                        |                                                              |
-| mediumblob         | blob                        |                                                              |
-| longblob           | blob                        |                                                              |
-| blob               | blob                        |                                                              |
-| binary             | bytea                       |                                                              |
-| varbinary          | bytea                       |                                                              |
-| decimal            | numeric                     | 支持迁移精度（numeric_precision和numeric_scale）             |
-| dec                | numeric                     | 支持迁移精度（numeric_precision和numeric_scale）             |
-| numeric            | numeric                     | 支持迁移精度（numeric_precision和numeric_scale）             |
-| double             | numeric                     | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧numeric[p,s];当mysql端未指定精度时，转化为openGauss侧numeric |
-| double precision   | numeric                     | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧numeric[p,s];当mysql端未指定精度时，转化为openGauss侧numeric |
-| float              | numeric                     | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧numeric[p,s];当mysql端未指定精度时，转化为openGauss侧numeric |
-| bit                | integer                     |                                                              |
-| year               | integer                     |                                                              |
+| MySQL              | openGauss                   | 备注                                                                                                                              |
+| ------------------ |-----------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| integer            | integer                     |                                                                                                                                 |
+| mediumint          | integer                     |                                                                                                                                 |
+| tinyint            | integer                     |                                                                                                                                 |
+| smallint           | integer                     |                                                                                                                                 |
+| int                | integer                     |                                                                                                                                 |
+| bigint             | bigint                      |                                                                                                                                 |
+| varchar            | character varying           | 支持迁移最大存储长度（character_maximum_length）                                                                                            |
+| character varying  | character varying           | 支持迁移最大存储长度（character_maximum_length）                                                                                            |
+| text               | text                        |                                                                                                                                 |
+| char               | character                   | 支持迁移最大存储长度（character_maximum_length）                                                                                            |
+| datetime           | timestamp without time zone |                                                                                                                                 |
+| date               | date                        |                                                                                                                                 |
+| time               | time without time zone      |                                                                                                                                 |
+| timestamp          | timestamp without time zone |                                                                                                                                 |
+| tinytext           | text                        |                                                                                                                                 |
+| mediumtext         | text                        |                                                                                                                                 |
+| longtext           | text                        |                                                                                                                                 |
+| tinyblob           | blob                        |                                                                                                                                 |
+| mediumblob         | blob                        |                                                                                                                                 |
+| longblob           | blob                        |                                                                                                                                 |
+| blob               | blob                        |                                                                                                                                 |
+| binary             | bytea                       |                                                                                                                                 |
+| varbinary          | bytea                       |                                                                                                                                 |
+| decimal            | number                      | 支持迁移精度（numeric_precision和numeric_scale）,number[p,s]等价于numeric[p,s]                                                                                         |
+| dec                | number                      | 支持迁移精度（numeric_precision和numeric_scale）,number[p,s]等价于numeric[p,s]                                                                                         |
+| numeric            | number                      | 支持迁移精度（numeric_precision和numeric_scale）,number[p,s]等价于numeric[p,s]                                                                                         |
+| double             | number                      | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧number[p,s],number[p,s]等价于numeric[p,s];当mysql端未指定精度时，转化为openGauss侧number,number等价于numeric      |
+| double precision   | number                      | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧number[p,s],number[p,s]等价于numeric[p,s];当mysql端未指定精度时，转化为openGauss侧number,number等价于numeric                       |
+| float              | number                      | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧number[p,s],number[p,s]等价于numeric[p,s];当mysql端未指定精度时，转化为openGauss侧number,number等价于numeric                       |
+| bit                | integer                     |                                                                                                                                 |
+| year               | integer                     |                                                                                                                                 |
 | enum               | enum                        | openGauss不直接支持enum类型。对于MySQL的enum类型，openGauss将通过自定义类型创建枚举类型，例如CREATE TYPE enumtype AS ENUM('a','b')创建ENUM类型，然后使用enumtype去定义列类型。 |
-| set                | set                         |                                                              |
-| json               | json                        |                                                              |
-| bool               | boolean                     |                                                              |
-| boolean            | boolean                     |                                                              |
-| geometry           | point                       | 若openGauss侧安装有postgis，将迁移成geometry类型             |
-| point              | point                       | 若openGauss侧安装有postgis，将迁移成geometry类型             |
-| linestring         | path                        | 若openGauss侧安装有postgis，将迁移成geometry类型             |
-| polygon            | polygon                     | 若openGauss侧安装有postgis，将迁移成geometry类型             |
-| multipoint         | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型             |
-| geometrycollection | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型             |
-| multilinestring    | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型             |
-| multipolygon       | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型             |
+| set                | set                         |                                                                                                                                 |
+| json               | json                        |                                                                                                                                 |
+| bool               | boolean                     |                                                                                                                                 |
+| boolean            | boolean                     |                                                                                                                                 |
+| geometry           | point                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| point              | point                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| linestring         | path                        | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| polygon            | polygon                     | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| multipoint         | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| geometrycollection | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| multilinestring    | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| multipolygon       | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
 
 # **6.** 实例
 

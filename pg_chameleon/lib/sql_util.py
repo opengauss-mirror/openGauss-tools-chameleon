@@ -75,6 +75,7 @@ class ColumnType(Enum):
     O_BYTEA = 'bytea'
     O_BIT = 'bit'
     O_NUM = 'numeric'
+    O_NUMBER = 'number'
     O_FLOAT = 'float'
     O_BIGSERIAL = 'bigserial'
     O_SERIAL = 'serial'
@@ -124,7 +125,7 @@ class ColumnType(Enum):
 
     def get_opengauss_hash_part_key_type():
         return {ColumnType.O_INTEGER.value, ColumnType.O_BINT.value, ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_TEXT.value,
-            ColumnType.O_C_CHAR.value, ColumnType.O_NUM.value, ColumnType.O_DATE.value, ColumnType.O_TIME_NO_TZ.value,
+            ColumnType.O_C_CHAR.value, ColumnType.O_NUM.value, ColumnType.O_NUMBER.value, ColumnType.O_DATE.value, ColumnType.O_TIME_NO_TZ.value,
             ColumnType.O_TIMESTAP_NO_TZ.value, ColumnType.O_TIME.value, ColumnType.O_TIMESTAP.value, ColumnType.O_C_BPCHAR.value,
             ColumnType.O_C_NCHAR.value, ColumnType.O_DEC.value}
 

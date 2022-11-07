@@ -556,16 +556,16 @@ class pg_engine(object):
             ColumnType.M_HEX_BLOB.value:ColumnType.O_BLOB.value,
             ColumnType.M_BINARY.value:ColumnType.O_BYTEA.value,
             ColumnType.M_VARBINARY.value:ColumnType.O_BYTEA.value,
-            ColumnType.M_DECIMAL.value:ColumnType.O_NUM.value,
-            ColumnType.M_DEC.value:ColumnType.O_NUM.value,
-            ColumnType.M_NUM.value:ColumnType.O_NUM.value,
-            ColumnType.M_DOUBLE.value:ColumnType.O_NUM.value,
-            ColumnType.M_DOUBLE_P.value:ColumnType.O_NUM.value,
-            ColumnType.M_FLOAT.value:ColumnType.O_NUM.value,
-            ColumnType.M_FLOAT4.value:ColumnType.O_NUM.value,
-            ColumnType.M_FLOAT8.value:ColumnType.O_NUM.value,
-            ColumnType.M_REAL.value:ColumnType.O_NUM.value,
-            ColumnType.M_FIXED.value:ColumnType.O_NUM.value,
+            ColumnType.M_DECIMAL.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_DEC.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_NUM.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_DOUBLE.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_DOUBLE_P.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_FLOAT.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_FLOAT4.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_FLOAT8.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_REAL.value:ColumnType.O_NUMBER.value,
+            ColumnType.M_FIXED.value:ColumnType.O_NUMBER.value,
             ColumnType.M_BIT.value:ColumnType.O_INTEGER.value,
             ColumnType.M_YEAR.value:ColumnType.O_INTEGER.value,
             ColumnType.M_ENUM.value:ColumnType.O_ENUM.value,
@@ -1499,7 +1499,7 @@ class pg_engine(object):
                 enm_alter = self.build_enum_ddl(schema, enm_dic)
                 ddl_pre_alter.append(enm_alter["pre_alter"])
                 column_type= enm_alter["column_type"]
-                if 	column_type in [ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_CHARACTER.value, ColumnType.O_NUM.value, ColumnType.O_BIT.value, ColumnType.O_FLOAT.value]:
+                if 	column_type in [ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_CHARACTER.value, ColumnType.O_NUM.value,ColumnType.O_NUMBER.value, ColumnType.O_BIT.value, ColumnType.O_FLOAT.value]:
                         column_type = column_type+"("+str(alter_dic["dimension"])+")"
                 if alter_dic["default"]:
                     default_value = "DEFAULT %s::%s" % (alter_dic["default"], column_type.strip())
@@ -1527,7 +1527,7 @@ class pg_engine(object):
 
                 if column_type==ColumnType.O_C_CHAR_VAR.value or column_type==ColumnType.O_C_CHARACTER.value or\
                     column_type==ColumnType.O_NUM.value or column_type==ColumnType.O_BIT.value or\
-                    column_type==ColumnType.O_FLOAT.value:
+                    column_type==ColumnType.O_NUMBER.value or column_type==ColumnType.O_FLOAT.value:
                         column_type=column_type+"("+str(alter_dic["dimension"])+")"
                 sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s  USING "%s"::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
                 if old_column != new_column:
@@ -3164,6 +3164,8 @@ class pg_engine(object):
                 column_type="%s (%s)" % (column_type, str(column["character_maximum_length"]))
             if column_type == ColumnType.O_NUM.value and ('numeric_scale' in column.keys()) and str(column["numeric_scale"]) != "None":
                 column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
+            if column_type == ColumnType.O_NUMBER.value and ('numeric_scale' in column.keys()) and str(column["numeric_scale"]) != "None":
+                            column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
             if column["extra"] == "auto_increment":
                 if (column_type == ColumnType.O_INTEGER.value):
                     column_type = ColumnType.O_SERIAL.value
