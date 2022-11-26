@@ -1333,7 +1333,7 @@ class pg_engine(object):
                     table_pkey = self.get_table_pkey(destination_schema, old_name)
                     self.store_table(destination_schema, new_name, table_pkey, None)
                 elif token["command"] == "DROP TABLE":
-                    query=""" DROP TABLE IF EXISTS "%s"."%s";""" % (destination_schema, token["name"])
+                    query=""" DROP TABLE IF EXISTS "%s"."%s" CASCADE;""" % (destination_schema, token["name"])
                 elif token["command"] == "TRUNCATE":
                     query=""" TRUNCATE TABLE "%s"."%s" CASCADE;""" % (destination_schema, token["name"])
                 elif token["command"] == "ALTER TABLE":
