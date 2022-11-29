@@ -3,16 +3,17 @@ import gc
 import io
 import logging
 import multiprocessing
+import os
 import re
 import secrets
 import sys
+import queue
+import codecs
+import json
+import secrets
 from os import remove
 import MySQLdb
 import MySQLdb.cursors
-import queue
-import secrets
-import pymysql
-import codecs
 import binascii
 import pymysql
 from geomet import wkb
@@ -28,6 +29,7 @@ from pg_chameleon.lib.parallel_replication import BinlogTrxReader, MyGtidEvent, 
 from pg_chameleon.lib.pg_lib import pg_engine
 from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
 from pg_chameleon.lib.task_lib import copy_data_task, create_index_task, read_data_task
+from pg_chameleon.lib.task_lib import TableMetadataTask, ColumnMetadataTask
 
 POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
@@ -47,6 +49,7 @@ BINARY_BASE = 2
 DEFAULT_FLOAT_FORMAT_STR = '{:6g}'
 # 18 means the significant figures, 16 means the precision, e is python format
 DEFAULT_DOUBLE_FORMAT_STR = '{:18.16e}'
+CSV_FILE_SUB_DIR = "chameleon"
 
 class reader_cursor_manager(object):
     def __init__(self, conn_buffered, conn_unbuffered):
@@ -88,6 +91,8 @@ class mysql_source(object):
             all index tasks are removed from the queue and added to the write_task_queue.
         """
         self.index_waiting_queue = None
+        self.table_metadata_queue = None
+        self.column_metadata_queue = None
         self.__init_decode_map()
         self.sql_translator = SqlTranslator()
 
@@ -633,6 +638,57 @@ class mysql_source(object):
                 partition_metadata = self.get_partition_metadata(table, schema)
                 self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
 
+    def generate_table_metadata_statement(self, schema, table, cursor=None):
+        """
+            The method gets table metadata including schema, table, table_count, contain primary key.
+
+            :param schema: the origin schema
+            :param table: the table name
+            :param cursor: the cursor
+        """
+        table_count_select = """SELECT COUNT(*) COUNT FROM %s.%s""" % (schema, table)
+        if cursor is None:
+            self.cursor_buffered.execute(table_count_select)
+            table_count = self.cursor_buffered.fetchone()['COUNT']
+        else:
+            cursor.execute(table_count_select)
+            table_count = cursor.fetchone()['COUNT']
+
+        contain_primary_key_select = """SELECT COUNT(*) COUNT FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s"""
+        if cursor is None:
+            self.cursor_buffered.execute(contain_primary_key_select, (schema, table))
+            contain_primary_key = self.cursor_buffered.fetchone()['COUNT']
+        else:
+            cursor.execute(contain_primary_key_select, (schema, table))
+            contain_primary_key = cursor.fetchone()['COUNT']
+        if contain_primary_key == 0:
+            task = TableMetadataTask(schema, table, table_count, 0)
+        else:
+            task = TableMetadataTask(schema, table, table_count, 1)
+        self.table_metadata_queue.put(task, block=True)
+
+    def generate_column_metadata_statement(self, schema, table, cursor=None):
+        """
+            The method gets column metadata including schema, table, column_name, column_index, column_datatype, column_key.
+
+            :param schema: the origin schema
+            :param table: the table name
+            :param cursor: the cursor
+        """
+        column_metadata_select = """SELECT COLUMN_NAME, ORDINAL_POSITION, COLUMN_TYPE, COLUMN_KEY FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s"""
+        if cursor is None:
+            self.cursor_buffered.execute(column_metadata_select, (schema, table))
+            column_metadata = self.cursor_buffered.fetchall()
+        else:
+            cursor.execute(column_metadata_select, (schema, table))
+            column_metadata = cursor.fetchall()
+        for a_column_metadata in column_metadata:
+            task = ColumnMetadataTask(schema, table, a_column_metadata["COLUMN_NAME"], a_column_metadata["ORDINAL_POSITION"],
+                                        a_column_metadata["COLUMN_TYPE"], a_column_metadata["COLUMN_KEY"])
+            self.column_metadata_queue.put(task, block=True)
+
     def generate_select_statements(self, schema, table, cursor=None):
         """
             The generates the csv output and the statements output for the given schema and table.
@@ -818,6 +874,10 @@ class mysql_source(object):
                     self.copy_table_data(task, engine)
                 elif isinstance(task, create_index_task):
                     self.create_index_process(task, engine)
+                elif isinstance(task, TableMetadataTask):
+                    self.write_metadata_file(task, True)
+                elif isinstance(task, ColumnMetadataTask):
+                    self.write_metadata_file(task, False)
                 else:
                     self.logger.error("unknown write task type")
             elif conn_unbuffered is not None and conn_buffered is not None:
@@ -847,6 +907,24 @@ class mysql_source(object):
             raise
         finally:
             cursor_manager.close()
+
+    def write_metadata_file(self, task, is_table_task):
+        """
+            The method writes table and column metadata to csv files.
+
+            :param task: the table or column metadata task
+            :param is_table_task: true if is table_metadata task
+        """
+        json_string = json.dumps(task.__dict__)
+        schema = task.schema
+        csv_file_dir = self.out_dir + os.sep + CSV_FILE_SUB_DIR + os.sep
+        if is_table_task:
+            metadata_file = csv_file_dir + "%s_information_schema_tables.csv" % schema
+        else:
+            metadata_file = csv_file_dir + "%s_information_schema_columns.csv" % schema
+        column_file = open(metadata_file, 'a')
+        column_file.write(json_string + os.linesep)
+        column_file.close()
 
     def read_data_from_table(self, schema, table, cursor_manager):
         """
@@ -905,6 +983,9 @@ class mysql_source(object):
         self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table))
         master_status = self.get_master_coordinates(cursor_buffered)
 
+        self.generate_table_metadata_statement(schema, table, cursor_buffered)
+        self.generate_column_metadata_statement(schema, table, cursor_buffered)
+
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
         sql_csv = "SELECT /*+ MAX_EXECUTION_TIME(%d) */ %s as data FROM `%s`.`%s`;" %\
             (MAX_EXECUTION_TIME, select_columns["select_csv"], schema, table)
@@ -917,7 +998,7 @@ class mysql_source(object):
                 self.unlock_tables(cursor_buffered)
             slice = 0
             while True:
-                out_file = '%s/%s_%s_slice%d.csv' % (self.out_dir, schema, table, slice + 1)
+                out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_FILE_SUB_DIR, schema, table, slice + 1)
                 csv_results = cursor_unbuffered.fetchmany(copy_limit)
                 if len(csv_results) == 0:
                     break
@@ -977,12 +1058,6 @@ class mysql_source(object):
             slice_insert.append(slice)
         finally:
             csv_file.close()
-            if self.copy_mode == "file":
-                try:
-                    remove(task.csv_file)
-                except:
-                    pass
-            del csv_file
             del task
             gc.collect()
         self.print_progress(slice + 1, total_slices, schema, table)
@@ -1134,12 +1209,15 @@ class mysql_source(object):
             If keep_existing_schema is true for the source then the tables are truncated before the copy,
             the indices are left in place and a REINDEX TABLE is executed after the copy.
         """
+        self.delete_csv_file()
         readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
         writers = self.source_config["writers"] if self.source_config["writers"] > 0 else 1
         size = int(int(self.copy_max_memory) / DEFAULT_MAX_SIZE_OF_CSV)
         self.write_task_queue = multiprocessing.Manager().Queue(size if size > MINIUM_QUEUE_SIZE else MINIUM_QUEUE_SIZE)
         self.read_task_queue = multiprocessing.Manager().Queue()
         self.index_waiting_queue = multiprocessing.Manager().Queue()
+        self.table_metadata_queue = multiprocessing.Manager().Queue()
+        self.column_metadata_queue = multiprocessing.Manager().Queue()
         writer_pool = []
         reader_pool = []
 
@@ -1161,6 +1239,12 @@ class mysql_source(object):
         while not self.index_waiting_queue.empty():
             task = self.index_waiting_queue.get(block=True)
             self.write_task_queue.put(task, block=True)
+        while not self.table_metadata_queue.empty():
+            task = self.table_metadata_queue.get(block=True)
+            self.write_task_queue.put(task, block=True)
+        while not self.column_metadata_queue.empty():
+            task = self.column_metadata_queue.get(block=True)
+            self.write_task_queue.put(task, block=True)
         self.write_task_queue.put(None, block=True)
         self.wait_for_finish(writer_pool)
         writer_pool.clear()
@@ -1170,6 +1254,19 @@ class mysql_source(object):
         for process in processes:
             if process.is_alive():
                 process.join()
+
+    def delete_csv_file(self):
+        """
+            Delete all the csv file in out_dir
+        """
+        csv_file_dir = self.out_dir + os.sep + CSV_FILE_SUB_DIR
+        if os.path.exists(csv_file_dir):
+            file_list = os.listdir(csv_file_dir)
+            for file in file_list:
+                if file.endswith(".csv"):
+                    os.remove(csv_file_dir + os.sep + file)
+        else:
+            os.mkdir(csv_file_dir)
 
     def set_copy_max_memory(self):
         """
@@ -1714,6 +1811,8 @@ class mysql_source(object):
         self.__check_mysql_config()
         master_start = self.get_master_coordinates()
         self.pg_engine.set_source_status("initialising")
+        self.pg_engine.clean_batch_data()
+        self.pg_engine.save_master_status(master_start)        
         self.pg_engine.cleanup_source_tables()
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
@@ -1732,8 +1831,6 @@ class mysql_source(object):
                 self.pg_engine.grant_select()
                 self.pg_engine.swap_schemas()
                 self.drop_loading_schemas()
-            self.pg_engine.clean_batch_data()
-            self.pg_engine.save_master_status(master_start)
             self.pg_engine.set_source_status("initialised")
             self.connect_db_buffered()
             master_end = self.get_master_coordinates()

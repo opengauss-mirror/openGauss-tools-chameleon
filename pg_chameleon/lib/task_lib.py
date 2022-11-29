@@ -21,3 +21,21 @@ class read_data_task:
         self.loading_schema = loading_schema
         self.schema = schema
         self.table = table
+
+
+class TableMetadataTask:
+    def __init__(self, schema, table, count, contain_primary_key):
+        self.schema = schema
+        self.table = table
+        self.count = count
+        self.contain_primary_key = contain_primary_key
+
+
+class ColumnMetadataTask:
+    def __init__(self, schema, table, column_name, column_index, column_data_type, column_key):
+        self.schema = schema
+        self.table = table
+        self.column_name = column_name
+        self.column_index = column_index
+        self.column_data_type = column_data_type
+        self.column_key = column_key

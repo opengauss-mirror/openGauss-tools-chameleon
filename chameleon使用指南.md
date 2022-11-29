@@ -492,11 +492,11 @@ MySQL副本的服务器ID，需要与MySQL服务器配置的server_id保持一�
 
 ### 3.4.12. copy_mode
 
-有效值为“file”和“direct”。“direct”会让复制实时进行。对于“file”，表首先转储到csv文件中，然后在openGauss中重新加载，加载完成后csv文件会被删除。csv文件存储的位置由out_dir配置。
+有效值为“file”和“direct”。“direct”会让复制实时进行。对于“file”，表首先转储到csv文件中，然后在openGauss中重新加载。csv文件存储的位置由out_dir配置。
 
 ### 3.4.13. out_dir
 
-如果copy_mode为file，则在init_replica过程中转储csv文件的目录。
+如果copy_mode为file，则在init_replica过程中，表首先转储到csv文件中，然后在openGauss中重新加载。离线迁移过程中会在out_dir路径下自动创建子目录chameleon，csv文件存储于$out_dir/chameleon路径中，同时会在该路径存储离线迁移的表的元数据信息。
 
 ### 3.4.14. sleep_loop
 
