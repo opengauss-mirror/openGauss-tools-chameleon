@@ -39,3 +39,7 @@ class ColumnMetadataTask:
         self.column_index = column_index
         self.column_data_type = column_data_type
         self.column_key = column_key
+
+
+class KeyWords:
+    keyword_set = {"user", "for"}

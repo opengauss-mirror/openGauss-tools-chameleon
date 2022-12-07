@@ -30,6 +30,7 @@ from pg_chameleon.lib.pg_lib import pg_engine
 from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
 from pg_chameleon.lib.task_lib import copy_data_task, create_index_task, read_data_task
 from pg_chameleon.lib.task_lib import TableMetadataTask, ColumnMetadataTask
+from pg_chameleon.lib.task_lib import KeyWords
 
 POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
@@ -95,6 +96,7 @@ class mysql_source(object):
         self.column_metadata_queue = None
         self.__init_decode_map()
         self.sql_translator = SqlTranslator()
+        self.column_case_sensitive = "Yes"
 
     @classmethod
     def __decode_hexify_value(cls, origin_value, numeric_scale):
@@ -765,7 +767,16 @@ class mysql_source(object):
         select_csv = "COALESCE(REPLACE(%s, '\"', '\"\"'),'{}') ".format(random)
         select_csv = [select_csv % statement["select_csv"] for statement in select_data]
         select_stat = [statement["select_csv"] for statement in select_data]
-        column_list = ['"%s"' % statement["column_name"] for statement in select_data]
+        if self.column_case_sensitive:
+            column_list = ['"%s"' % statement["column_name"] for statement in select_data]
+        else:
+            column_list = []
+            for statement in select_data:
+                if statement["column_name"].lower() in KeyWords.keyword_set:
+                    column_list.append("\"" + statement["column_name"].lower() + "\"")
+                else:
+                    column_list.append(statement["column_name"])
+
         select_columns["select_csv"] = "REPLACE(CONCAT('\"',CONCAT_WS('\",\"',%s),'\"'),'\"%s\"','NULL')" % (','.join(select_csv), random)
         select_columns["select_stat"]  = ','.join(select_stat)
         select_columns["column_list"]  = ','.join(column_list)
