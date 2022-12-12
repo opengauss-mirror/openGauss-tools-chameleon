@@ -96,7 +96,6 @@ class mysql_source(object):
         self.column_metadata_queue = None
         self.__init_decode_map()
         self.sql_translator = SqlTranslator()
-        self.column_case_sensitive = "Yes"
 
     @classmethod
     def __decode_hexify_value(cls, origin_value, numeric_scale):
@@ -289,6 +288,7 @@ class mysql_source(object):
         new_engine.notifier = self.pg_engine.notifier
         new_engine.migrate_default_value = self.pg_engine.migrate_default_value
         new_engine.mysql_version = -1 if self.is_mariadb == False else self.version
+        new_engine.column_case_sensitive = self.pg_engine.column_case_sensitive
         return new_engine
 
     def connect_db_buffered(self):
