@@ -44,7 +44,6 @@ class pgsql_source(object):
         self.schema_loading = {}
         self.schema_list = []
         self.schema_only = {}
-        self.column_case_sensitive = "Yes"
 
     def __del__(self):
         """
@@ -608,7 +607,6 @@ class pg_engine(object):
             {'version': '2.0.6',  'script': '205_to_206.sql'},
             {'version': '2.0.7',  'script': '206_to_207.sql'},
         ]
-        self.column_case_sensitive = "Yes"
 
     def check_postgis(self):
         """
@@ -4899,7 +4897,15 @@ class pg_engine(object):
                 indx = index["index_name"]
                 self.logger.debug("Building DDL for index %s" % (indx))
                 idx_col = [column.strip() for column in index["index_columns"].split(',')]
-                index_columns = ['"%s"' % column.strip() for column in idx_col]
+                if self.column_case_sensitive:
+                    index_columns = ['"%s"' % column.strip() for column in idx_col]
+                else:
+                    index_columns = []
+                    for column in idx_col:
+                        if column.strip().lower() in KeyWords.keyword_set:
+                            index_columns.append("\"" + column.strip.lower() + "\"")
+                        else:
+                            index_columns.append(column.strip())
                 non_unique = index["non_unique"]
                 index_type = index["index_type"]
                 if indx =='PRIMARY':
