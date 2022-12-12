@@ -156,6 +156,10 @@ class replica_engine(object):
             self.pg_engine.migrate_default_value = self.config["sources"][self.source]["migrate_default_value"]
         except KeyError:
             self.pg_engine.migrate_default_value = True
+        try:
+            self.pg_engine.column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
+        except KeyError:
+            self.pg_engine.column_case_sensitive = True
 
         # mysql_source instance initialisation
         self.mysql_source = mysql_source()
@@ -167,6 +171,10 @@ class replica_engine(object):
         self.mysql_source.sources = self.config["sources"]
         self.mysql_source.type_override = self.config["type_override"]
         self.mysql_source.notifier = self.notifier
+        try:        
+            self.mysql_source.column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
+        except KeyError:
+            self.mysql_source.column_case_sensitive = True
 
         # pgsql_source instance initialisation
         self.pgsql_source = pgsql_source()

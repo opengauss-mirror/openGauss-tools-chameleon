@@ -68,6 +68,7 @@ sources:
       update:
     keep_existing_schema: No
     migrate_default_value: Yes
+    column_case_sensitive: Yes
 
   pgsql:
     db_conn:

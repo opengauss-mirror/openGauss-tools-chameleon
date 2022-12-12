@@ -11,6 +11,7 @@ import binascii
 import py_opengauss
 
 from pg_chameleon import sql_token, ColumnType
+from pg_chameleon.lib.task_lib import KeyWords
 
 # from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
@@ -43,6 +44,7 @@ class pgsql_source(object):
         self.schema_loading = {}
         self.schema_list = []
         self.schema_only = {}
+        self.column_case_sensitive = "Yes"
 
     def __del__(self):
         """
@@ -606,6 +608,7 @@ class pg_engine(object):
             {'version': '2.0.6',  'script': '205_to_206.sql'},
             {'version': '2.0.7',  'script': '206_to_207.sql'},
         ]
+        self.column_case_sensitive = "Yes"
 
     def check_postgis(self):
         """
@@ -3172,11 +3175,26 @@ class pg_engine(object):
                 else:
                     column_type = ColumnType.O_BIGSERIAL.value
 
-            ddl_columns.append(  ' "%s" %s %s %s   ' %  (column["column_name"], column_type, default_value, col_is_null ))
+            if self.column_case_sensitive:
+                ddl_columns.append(  ' "%s" %s %s %s   ' % (column["column_name"], column_type, default_value, col_is_null))
+            elif column["column_name"].lower() in KeyWords.keyword_set:
+                ddl_columns.append(  ' "%s" %s %s %s   ' % (column["column_name"].lower(), column_type, default_value, col_is_null))
+            else:
+                ddl_columns.append(  ' %s %s %s %s   ' % (column["column_name"], column_type, default_value, col_is_null))
 
             if "column_comment" in column and column["column_comment"] != "":
-                column_comments = column_comments + ( 'comment on column "%s"."%s"."%s" is \'%s\';\n'\
-                    % (destination_schema, table_name, column["column_name"], column["column_comment"] ) )
+                if self.column_case_sensitive:
+                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is \'%s\';\n'
+                                                         % (destination_schema, table_name, column["column_name"],
+                                                            column["column_comment"]))
+                elif column["column_name"].lower() in KeyWords.keyword_set:
+                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is \'%s\';\n'
+                                                         % (destination_schema, table_name, column["column_name"].lower(),
+                                                            column["column_comment"]))
+                else:
+                    column_comments = column_comments + ('comment on column "%s"."%s".%s is \'%s\';\n'
+                                                         % (destination_schema, table_name, column["column_name"],
+                                                            column["column_comment"]))
 
         table_ddl["column_comments"] = column_comments
         def_columns=str(',').join(ddl_columns)

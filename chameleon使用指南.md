@@ -556,6 +556,10 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 是否迁移MySQL的默认值到openGauss。默认为Yes。由于列的默认值可以是表达式，部分MySQL的表达式若openGauss不支持的话，离线迁移过程中会报错，导致迁移失败。可通过将本值设置为No临时规避此类问题。
 
+### 3.4.25. column_case_sensitive
+
+用于指定迁移过程是否区分列名大小写。默认为Yes。由于MySQL中不区分列名大小写，而openGauss中通过添加双引号可区分列名大小写。当该参数为Yes时，MySQL中查询到的含大写的列名会原样迁移至openGauss，即openGauss为含大写的列名；当该参数为No时，Mysql中的列名均以小写形式迁移至openGauss。
+
 # **4.** 分区表迁移规则
 
 分区表迁移的基本思想是对于openGauss支持的分区类型，迁移成对应的分区表即可。对于openGauss支持的分区表类型详见以下表格，其中不支持的分区表将暂不迁移。
