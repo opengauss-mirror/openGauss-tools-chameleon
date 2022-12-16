@@ -69,6 +69,7 @@ sources:
     keep_existing_schema: No
     migrate_default_value: Yes
     column_case_sensitive: Yes
+    mysql_restart_config: Yes
 
   pgsql:
     db_conn:

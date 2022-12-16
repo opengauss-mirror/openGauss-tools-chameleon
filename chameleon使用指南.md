@@ -560,6 +560,10 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 用于指定迁移过程是否区分列名大小写。默认为Yes。由于MySQL中不区分列名大小写，而openGauss中通过添加双引号可区分列名大小写。当该参数为Yes时，MySQL中查询到的含大写的列名会原样迁移至openGauss，即openGauss为含大写的列名；当该参数为No时，Mysql中的列名均以小写形式迁移至openGauss。
 
+### 3.4.26. mysql_restart_config
+
+用于指定是否允许重启Mysql数据库。默认值为Yes。由于在线迁移需要开启binlog，并设置如下参数：log_bin=on，binlog_format=row，binlog_row_image=full，gtid_mode=on, 若Mysql初始配置与上述参数不一致，则需要修改参数并重启Mysql数据库，方可使用离线和在线功能。当该参数为No时，则表示不允许重启数据库，若在线迁移参数不符合要求，则不允许使用在线迁移功能，仅能在停止业务前提下使用离线迁移功能。
+
 # **4.** 分区表迁移规则
 
 分区表迁移的基本思想是对于openGauss支持的分区类型，迁移成对应的分区表即可。对于openGauss支持的分区表类型详见以下表格，其中不支持的分区表将暂不迁移。
@@ -836,13 +840,15 @@ openGauss侧使用的用户名密码分别是 **opengauss_test**和 **password_1
 
 [mysqld]
 
-binlog_format= ROW
+binlog_format = ROW
 
 log_bin = mysql-bin
 
 server_id = 1
 
-binlog_row_image=FULL
+binlog_row_image = FULL
+
+gtid_mode = ON
 
  
 
