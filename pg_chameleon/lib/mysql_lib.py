@@ -250,15 +250,21 @@ class mysql_source(object):
         self.pg_engine.mysql_version = -1 if self.is_mariadb == False else self.version
         self.logger.debug("mysql version %d" % self.version)
 
-        if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL' and gtid_mode.upper() == 'ON':
-            self.replica_possible = True
+        if self.mysql_restart_config:
+            if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL' and gtid_mode.upper() == 'ON':
+                self.replica_possible = True
+            else:
+                self.replica_possible = False
+                self.pg_engine.set_source_status("error")
+                self.logger.error("The MySQL configuration does not allow the replica. Exiting now")
+                self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s" % (log_bin.upper(),  binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
+                self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
+                sys.exit()
         else:
-            self.replica_possible = False
-            self.pg_engine.set_source_status("error")
-            self.logger.error("The MySQL configuration does not allow the replica. Exiting now")
-            self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s" % (log_bin.upper(),  binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
-            self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
-            sys.exit()
+            self.replica_possible = True
+            self.logger.warning("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s" % (log_bin.upper(),  binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
+            self.logger.warning("Mandatory settings for online migration - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
+
 
     def get_connect(self, is_buffered=True):
         db_conn = self.source_config["db_conn"]

@@ -175,6 +175,10 @@ class replica_engine(object):
             self.mysql_source.column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
         except KeyError:
             self.mysql_source.column_case_sensitive = True
+        try:
+            self.mysql_source.mysql_restart_config = self.config["sources"][self.source]["mysql_restart_config"]
+        except KeyError:
+            self.mysql_source.column_case_sensitive = True
 
         # pgsql_source instance initialisation
         self.pgsql_source = pgsql_source()
