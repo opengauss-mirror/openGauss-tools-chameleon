@@ -60,9 +60,11 @@ args = parser.parse_args()
 replica = replica_engine(args)
 if args.debug:
     getattr(replica, args.command)()
+    replica.logger.info(args.command + " finished.")
 else:
     try:
         getattr(replica, args.command)()
+        replica.logger.info(args.command + " finished.")
     except AttributeError:
         print("ERROR - Invalid command" )
         print(command_help)
