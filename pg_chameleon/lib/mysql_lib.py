@@ -1897,7 +1897,7 @@ class mysql_source(object):
                 create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
 
                 # translate sql dialect in mysql format to opengauss format.
-                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
+                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement, self.pg_engine.column_case_sensitive)
                 tran_create_view_statement = self.__get_tran_create_view_statement(db_object_type, schema, stdout)
                 has_error = self.__unified_log(stderr)
                 if has_error:

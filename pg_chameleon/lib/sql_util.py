@@ -1662,7 +1662,7 @@ class SqlTranslator():
         """
         self.lib_dir = os.path.dirname(os.path.realpath(__file__))
 
-    def mysql_to_opengauss(self, raw_sql):
+    def mysql_to_opengauss(self, raw_sql, column_case_sensitive):
         """
         Translate sql dialect in mysql format to opengauss format.
         Implement the power of translating sql statements with calling java subproject og-translator through CMD.
@@ -1673,7 +1673,11 @@ class SqlTranslator():
         # use base64 to encode raw sql, avoiding the impact of special symbols on bash
         sql_encoded = str(base64.b64encode(raw_sql.encode("utf-8")), "utf-8")
         # chameleon calling the java subproject og-translator to implement the power of translating sql statements
-        cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
+        if column_case_sensitive:
+            cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
+        else:
+            cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s' --column_case_sensitive_no" % (self.lib_dir, sql_encoded)
+        
         communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 
         stdout = communicate[0].decode("utf-8").replace("`", "")  # sql translated into opengauss dialect format
