@@ -38,6 +38,7 @@ LINESTR_PREFIX_LEN = len('LINESTRING ')
 WKB_PREFIX_LEN = 4
 MARIADB = "MariaDB"
 
+
 # we set the default max size of csv file is 2M
 DEFAULT_MAX_SIZE_OF_CSV: int = 2 * 1024 * 1024
 MINIUM_QUEUE_SIZE: int = 5
@@ -51,6 +52,23 @@ DEFAULT_FLOAT_FORMAT_STR = '{:6g}'
 # 18 means the significant figures, 16 means the precision, e is python format
 DEFAULT_DOUBLE_FORMAT_STR = '{:18.16e}'
 CSV_FILE_SUB_DIR = "chameleon"
+
+class process_state():
+    PRECISION_START=0
+    COUNT_EMPTY=0
+    PRECISION_SUCCESS=1
+    PENDING_STATUS=1
+    PROCESSING_STATUS=2
+    ACCOMPLISH_STATUS=3
+    FAIL_STATUS=6
+
+    @classmethod
+    def is_precision_success(self, status):
+        return status == self.PRECISION_SUCCESS
+
+    @classmethod
+    def is_fail_status(self, status):
+        return status == self.FAIL_STATUS
 
 class reader_cursor_manager(object):
     def __init__(self, conn_buffered, conn_unbuffered):
@@ -96,6 +114,16 @@ class mysql_source(object):
         self.column_metadata_queue = None
         self.__init_decode_map()
         self.sql_translator = SqlTranslator()
+ 
+    @classmethod
+    def initJson(cls):
+        manager = multiprocessing.Manager()
+        global managerJson 
+        managerJson = manager.dict({"table": [], "view": [], "function": [], "trigger": [], "procedure": []})
+
+    @classmethod
+    def getmanagerJson(cls):
+        return managerJson
 
     @classmethod
     def __decode_hexify_value(cls, origin_value, numeric_scale):
@@ -441,7 +469,8 @@ class mysql_source(object):
         """
         sql_tables="""
             SELECT
-                table_name as table_name
+                table_name as table_name,
+                table_rows as table_rows
             FROM
                 information_schema.TABLES
             WHERE
@@ -451,7 +480,12 @@ class mysql_source(object):
         """
         for schema in self.schema_list:
             self.cursor_buffered.execute(sql_tables, (schema))
-            table_list = [table["table_name"] for table in self.cursor_buffered.fetchall()]
+            table_list=[]
+            table_list_rows=[]
+            for table in self.cursor_buffered.fetchall():
+                table_list.append(table["table_name"])
+                table_list_rows.append(table["table_rows"])
+
             try:
                 limit_tables = self.limit_tables[schema]
                 if len(limit_tables) > 0:
@@ -466,6 +500,17 @@ class mysql_source(object):
                 pass
 
             self.schema_tables[schema] = table_list
+            if self.dump_json:
+                jsons = managerJson.copy()
+                for index,key in enumerate(table_list):
+                    jsons["table"].append({
+                        "name":key,
+                        "status":process_state.ACCOMPLISH_STATUS if table_list_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
+                        "percent":process_state.PRECISION_START,
+                        "count_rows":table_list_rows[index]
+                    })
+                managerJson.update(jsons)
+
 
     def create_destination_schemas(self):
         """
@@ -1026,14 +1071,14 @@ class mysql_source(object):
                     csv_file = codecs.open(out_file, 'wb', self.charset)
                     csv_file.write(csv_data)
                     csv_file.close()
-                    task = copy_data_task(out_file, count_rows, table, schema, select_columns, slice)
+                    task = copy_data_task(out_file, count_rows, table, schema, select_columns, len(csv_results), slice)
                 else:
                     if self.copy_mode != 'direct':
                         self.logger.warning("unknown copy mode, use direct instead")
                     csv_file = io.BytesIO()
                     csv_file.write(csv_data.encode())
                     csv_file.seek(0)
-                    task = copy_data_task(csv_file, count_rows, table, schema, select_columns, slice)
+                    task = copy_data_task(csv_file, count_rows, table, schema, select_columns, len(csv_results), slice)
                 self.write_task_queue.put(task, block=True)
                 slice += 1
 
@@ -1051,6 +1096,7 @@ class mysql_source(object):
         if csv_file is None:
             self.logger.warning("this is an empty csv file, you should check your batch for errors")
             return
+        rows = task.rows
         count_rows = task.count_rows
         schema = task.schema
         table = task.table
@@ -1077,7 +1123,7 @@ class mysql_source(object):
             csv_file.close()
             del task
             gc.collect()
-        self.print_progress(slice + 1, total_slices, schema, table)
+        self.print_progress(slice + 1, total_slices, schema, table, rows)
         slice += 1
         if len(slice_insert) > 0:
             ins_arg = {}
@@ -1154,7 +1200,7 @@ class mysql_source(object):
         except:
             self.logger.error("create index or constraint error")
 
-    def print_progress (self, iteration, total, schema, table):
+    def print_progress (self, iteration, total, schema, table, rows):
         """
             Print the copy progress in slices and estimated total slices.
             In order to reduce noise when the log level is info only the tables copied in multiple slices
@@ -1170,6 +1216,24 @@ class mysql_source(object):
             self.logger.info("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
+        if self.dump_json:
+            self.__copied_progress_json("table",table,(iteration/total),rows)
+    
+    def __copied_progress_json (self,type_val,name,value,row=0):
+        jsons = managerJson.copy()
+        for object_index in range(0, len(jsons[type_val])): 
+            if ((jsons[type_val][object_index]["name"] == name) and jsons[type_val][object_index]["percent"] < value):
+                jsons[type_val][object_index]["percent"]= value
+                if(process_state.is_precision_success(value)):
+                    jsons[type_val][object_index]["status"] = process_state.ACCOMPLISH_STATUS
+                elif(process_state.is_fail_status(value)):
+                    jsons[type_val][object_index]["status"] = process_state.FAIL_STATUS
+                else:
+                    jsons[type_val][object_index]["status"] = process_state.PROCESSING_STATUS
+                managerJson.update(jsons)
+                break;
+
+
 
     def __create_indices(self, schema, table, pg_engine, cursor_buffered):
         """
@@ -1884,6 +1948,17 @@ class mysql_source(object):
             failure_num = 0  # number of replication fail records
 
             # get metadata (object name) of all objects on schema
+            if self.dump_json:
+                self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
+                jsons = managerJson.copy()
+                for object_metadata in self.cursor_buffered.fetchall():
+                    jsons[db_object_type.value].append({
+                        "name":object_metadata["OBJECT_NAME"],
+                        "status":process_state.PENDING_STATUS,
+                        "percent":process_state.PRECISION_START
+                    })
+                managerJson.update(jsons)
+
             self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
             for object_metadata in self.cursor_buffered.fetchall():
                 object_name = object_metadata["OBJECT_NAME"]
@@ -1904,6 +1979,9 @@ class mysql_source(object):
                     # if translation has any error, this replication also fail
                     # insert a failure record into the object replication status table
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
+                    self.logger.error("Copying the source object fail %s : %s" %(db_object_type.value, object_name))
+                    if self.dump_json:
+                        self.__copied_progress_json(db_object_type.value,object_name,process_state.FAIL_STATUS)
                     failure_num += 1
                     continue
                 # if translate successful, add the corresponding database object to opengauss
@@ -1911,10 +1989,16 @@ class mysql_source(object):
                     self.pg_engine.add_object(object_name, self.schema_mappings[schema], tran_create_view_statement)
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement,
                                                                   tran_create_view_statement)
+                    self.logger.info("Copying the source object success %s : %s" %(db_object_type.value, object_name))
+                    if self.dump_json:
+                        self.__copied_progress_json(db_object_type.value,object_name,process_state.PRECISION_SUCCESS)
                     success_num += 1
                 except Exception as e:
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
                     self.logger.error(e)
+                    self.logger.error("Copying the source object fail %s : %s" %(db_object_type.value, object_name))
+                    if self.dump_json:
+                        self.__copied_progress_json(db_object_type.value,object_name,process_state.FAIL_STATUS)
                     failure_num += 1
 
             self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (

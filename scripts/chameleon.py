@@ -1,8 +1,13 @@
 #!/usr/bin/env python
+import multiprocessing
+import traceback
+import time
+import json
 from pkg_resources import get_distribution
 __version__ = get_distribution('chameleon')
 import argparse
 from pg_chameleon import replica_engine
+from pg_chameleon import mysql_source
 
 commands = [
     'show_config',
@@ -56,9 +61,27 @@ parser.add_argument('--rollbar-level', type=str, default="info", required=False,
 parser.add_argument('--full', default=False, required=False, help=full_help, action='store_true')
 args = parser.parse_args()
 
+try:
+    replica = replica_engine(args)
+except Exception as e:
+    error_msg = traceback.format_exc()
+    print(error_msg)
 
-replica = replica_engine(args)
-if args.debug:
+if replica.config['dump_json']:
+    try:
+        dump_thread = multiprocessing.Process(target=replica.dump_Json)
+        dump_thread.start()
+
+        getattr(replica, args.command)()
+
+        replica.write_Json()
+        dump_thread.terminate()
+        replica.logger.info(args.command + " finished.")
+    except Exception as e:
+        error_msg = traceback.format_exc()
+        print(error_msg)
+elif args.debug:
+
     getattr(replica, args.command)()
     replica.logger.info(args.command + " finished.")
 else:
