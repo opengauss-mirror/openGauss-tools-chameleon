@@ -1510,8 +1510,8 @@ class pg_engine(object):
             elif alter_dic["command"] == 'CHANGE':
                 sql_rename = ""
                 sql_type = ""
-                old_column=alter_dic["old"]
-                new_column=alter_dic["new"]
+                old_column=self.column_case_sen(alter_dic["old"])
+                new_column=self.column_case_sen(alter_dic["new"])
                 column_name = old_column
                 enum_list = str(alter_dic["dimension"]).replace("'", "").split(",")
 
@@ -1530,9 +1530,9 @@ class pg_engine(object):
                     column_type==ColumnType.O_NUM.value or column_type==ColumnType.O_BIT.value or\
                     column_type==ColumnType.O_NUMBER.value or column_type==ColumnType.O_FLOAT.value:
                         column_type=column_type+"("+str(alter_dic["dimension"])+")"
-                sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s  USING "%s"::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
+                sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN %s SET DATA TYPE %s  USING %s::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
                 if old_column != new_column:
-                    sql_rename="""ALTER TABLE "%s"."%s" RENAME COLUMN "%s" TO "%s" ;""" % (schema, table_name, old_column, new_column)
+                    sql_rename="""ALTER TABLE "%s"."%s" RENAME COLUMN %s TO %s ;""" % (schema, table_name, old_column, new_column)
 
                 query = ' '.join(ddl_pre_alter)
                 query += sql_type+sql_rename
@@ -3217,6 +3217,7 @@ class pg_engine(object):
 
         # get partition key num
         part_key = partition_metadata[0]["partition_expression"].replace('`', '')
+        part_key = self.column_case_sen(part_key)
         part_key_split = part_key.split(',')
 
         if len(part_key_split) > self.max_range_column or\
@@ -3265,6 +3266,17 @@ class pg_engine(object):
         table_ddl["table"] = (ddl_head+def_columns+partition_method+def_part+ddl_tail)
         return table_ddl
 
+    def column_case_sen(self, column_name):
+        """
+        This function switches the case of column_name based on sensitivity
+        """
+        if self.column_case_sensitive:
+            return '"%s"' % column_name
+        elif column_name.lower() in KeyWords.keyword_set:
+            return '"%s"' % column_name.lower()
+        else:
+            return column_name
+
     def build_sub_partition(self, schema, table_name, sub_table_metadata, sub_partition_metadata):
         """
         This function is used to compile DDL statements that generate child partitions
@@ -3273,8 +3285,10 @@ class pg_engine(object):
         Hash-Range, Hash-List, Hash-Hash
         """
         part_key = sub_partition_metadata[0]["partition_expression"].replace('`', '')
+        part_key = self.column_case_sen(part_key)
         part_key_split = part_key.split(',')
         sub_part_key = sub_partition_metadata[0]["subpartition_expression"].replace('`', '')
+        sub_part_key = self.column_case_sen(sub_part_key)
         if part_key == sub_part_key:
             print("OpenGauss databases don't support that the partition and subpartition have the same partition key for the level-two partition tables, online migration won't migrate this scenario.")
             return ""
