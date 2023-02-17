@@ -611,6 +611,7 @@ def process_work(pg_engine, arr, i):
     conn = create_connection(pg_engine)
     id = i
     write_pid(pg_engine.pid_file, "execute_sql_process")
+    destination_ddl = ""
     while True:
         if arr[id].flag == -1:
             time.sleep(0.000006)
@@ -619,7 +620,6 @@ def process_work(pg_engine, arr, i):
             try:
                 sql = str(arr[id].txn_sql, encoding="utf-8")
                 if is_ddl(sql):
-                    destination_ddl = ""
                     schema = sql[sql.find(" SCHEMA: ")+len(" SCHEMA: "):]
                     sql = sql[:sql.find(" SCHEMA: ")]
                     sql_tokeniser = sql_token()
@@ -630,8 +630,14 @@ def process_work(pg_engine, arr, i):
                 else:
                     conn.execute(sql)
                 arr[id].flag = -1
-            except Exception as exception:
-                print(exception)
+            except Exception as exp:
+                if is_ddl(sql):
+                    pg_engine.logger.error("Failed to execute ddl sql, the origin sql %s, the executed error sql is %s,"
+                                           " sql code is %s, and error message is %s" %
+                                           (sql, destination_ddl, exp.code, exp.message))
+                else:
+                    pg_engine.logger.error("Failed to execute dml sql, the error sql is %s, sql code is %s, and error "
+                                           "message is %s" % (sql, exp.code, exp.message))
                 arr[id].flag = -1
 
 

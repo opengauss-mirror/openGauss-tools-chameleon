@@ -316,6 +316,10 @@ mysql:
      keep_existing_schema: No
 
      migrate_default_value: Yes
+
+     column_case_sensitive: Yes
+
+     mysql_restart_config: Yes
 ```
 
 配置文件使用yaml文件规则配置，需要特别注意对齐，缩进表示层级关系，缩进时不允许使用Tab键，只允许使用空格，缩进的空格数目不重要，但相同层级的元素左侧需要对齐。
@@ -558,7 +562,7 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 ### 3.4.25. column_case_sensitive
 
-用于指定迁移过程是否区分列名大小写。默认为Yes。由于MySQL中不区分列名大小写，而openGauss中通过添加双引号可区分列名大小写。当该参数为Yes时，MySQL中查询到的含大写的列名会原样迁移至openGauss，即openGauss为含大写的列名；当该参数为No时，Mysql中的列名均以小写形式迁移至openGauss。
+用于指定迁移过程是否区分列名大小写。默认为Yes。由于MySQL中不区分列名大小写，而openGauss中通过添加双引号可区分列名大小写。当该参数为Yes时，MySQL中查询到的含大写的列名会原样迁移至openGauss，即openGauss为含大写的列名；当该参数为No时，Mysql中的列名均以小写形式迁移至openGauss，若列名不符合标识符命名规范，例如列名为'idAA哈12&3'，迁移会失败。
 
 ### 3.4.26. mysql_restart_config
 
@@ -788,6 +792,10 @@ writers: 4
 keep_existing_schema: No
 
 migrate_default_value: Yes
+
+column_case_sensitive: Yes
+
+mysql_restart_config: Yes
 ```
 
 以上配置文件的含义是，迁移数据时，MySQL侧使用的用户名密码分别是 **mysql_test** 和 **password123**。MySQL服务器的IP和port分别是**1.1.1.1**和**3306**，待迁移的数据库是**mysql_database**。

@@ -184,7 +184,7 @@ class mysql_source(object):
         self.disconnect_db_unbuffered()
         self.disconnect_db_buffered()
 
-    def __check_mysql_config(self):
+    def check_mysql_config(self, is_strict=False):
         """
             The method check if the mysql configuration is compatible with the replica requirements.
             If all the configuration requirements are met then the return value is True.
@@ -250,21 +250,20 @@ class mysql_source(object):
         self.pg_engine.mysql_version = -1 if self.is_mariadb == False else self.version
         self.logger.debug("mysql version %d" % self.version)
 
-        if self.mysql_restart_config:
-            if log_bin.upper() == 'ON' and binlog_format.upper() == 'ROW' and binlog_row_image.upper() == 'FULL' and gtid_mode.upper() == 'ON':
-                self.replica_possible = True
-            else:
-                self.replica_possible = False
-                self.pg_engine.set_source_status("error")
+        if self.mysql_restart_config or is_strict:
+            if log_bin.upper() != 'ON' or binlog_format.upper() != 'ROW' or binlog_row_image.upper() != 'FULL' \
+                    or gtid_mode.upper() != 'ON':
                 self.logger.error("The MySQL configuration does not allow the replica. Exiting now")
-                self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s" % (log_bin.upper(),  binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
-                self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
+                self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
+                                  % (log_bin.upper(), binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
+                self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode"
+                                  " ON (only for MySQL 5.6+) ")
                 sys.exit()
         else:
-            self.replica_possible = True
-            self.logger.warning("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s" % (log_bin.upper(),  binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
-            self.logger.warning("Mandatory settings for online migration - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
-
+            self.logger.warning("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
+                                % (log_bin.upper(), binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
+            self.logger.warning("Mandatory settings for online migration - log_bin ON, binlog_format ROW,"
+                                " binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
 
     def get_connect(self, is_buffered=True):
         db_conn = self.source_config["db_conn"]
@@ -1360,7 +1359,7 @@ class mysql_source(object):
         self.replica_conn["port"] = int(db_conn["port"])
         self.__build_table_exceptions()
         self.__build_skip_events()
-        self.__check_mysql_config()
+        self.check_mysql_config()
         if self.gtid_mode:
             master_data = self.get_master_coordinates()
             self.start_xid = master_data[0]["Executed_Gtid_Set"].split(':')[1].split('-')[0]
@@ -1399,7 +1398,7 @@ class mysql_source(object):
         self.logger.debug("starting sync schema for source %s" % self.source)
         self.logger.debug("The schema affected is %s" % self.schema)
         self.__init_sync()
-        self.__check_mysql_config()
+        self.check_mysql_config()
         self.pg_engine.set_source_status("syncing")
         self.__build_table_exceptions()
         self.schema_list = [self.schema]
@@ -1447,7 +1446,7 @@ class mysql_source(object):
         """
         self.logger.info("Starting sync tables for source %s" % self.source)
         self.__init_sync()
-        self.__check_mysql_config()
+        self.check_mysql_config()
         self.pg_engine.set_source_status("syncing")
         if self.tables == 'disabled':
             self.tables = self.pg_engine.get_tables_disabled ()
@@ -1825,7 +1824,7 @@ class mysql_source(object):
         """
         self.logger.debug("starting init replica for source %s" % self.source)
         self.__init_sync()
-        self.__check_mysql_config()
+        self.check_mysql_config()
         master_start = self.get_master_coordinates()
         self.pg_engine.set_source_status("initialising")
         self.pg_engine.clean_batch_data()
