@@ -3970,8 +3970,11 @@ class pg_engine(object):
 
         for composite_statement in composite_ddl:
             self.pgsql_conn.execute(composite_statement)
-
-        self.pgsql_conn.execute(table_ddl)
+        try:
+            self.pgsql_conn.execute(table_ddl)
+        except Exception as exp:
+            self.logger.error("Execute create table failed, the error sql is %s, sql code is %s, and error"
+                              " message is %s" % (table_ddl, exp.code, exp.message))
 
         if column_comments_ddl != '':
             self.pgsql_conn.execute(column_comments_ddl)
