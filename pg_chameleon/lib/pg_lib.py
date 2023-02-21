@@ -2790,6 +2790,19 @@ class pg_engine(object):
         file_schema.close()
         self.pgsql_conn.execute(sql_schema)
 
+    def get_keywords(self):
+        """
+            The Method get all keywords that can not be directly used as the column names.
+        """
+        sql_keywords="""select word from pg_get_keywords() where catcode='R' or catcode='T';"""
+        self.connect_db()
+        try:
+            stmt=self.pgsql_conn.prepare(sql_keywords)
+            for keyword in stmt():
+                KeyWords.keyword_set.add(keyword[0])
+        except:
+            self.logger.debug("Get all the keywords failed")
+
     def get_catalog_version(self):
         """
             The method returns if the replica schema's version
