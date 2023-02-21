@@ -42,4 +42,4 @@ class ColumnMetadataTask:
 
 
 class KeyWords:
-    keyword_set = {"user", "for"}
+    keyword_set = {"user", "for", "check", "all"}
