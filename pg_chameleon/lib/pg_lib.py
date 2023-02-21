@@ -3152,7 +3152,7 @@ class pg_engine(object):
                     default_value = " default %s " % (column["default"])
 
             if column_type == "enum":
-                enum_type = '"%s"."enum_%s_%s"' % (destination_schema, table_name[0:20], column["column_name"][0:20])
+                enum_type = '"%s"."enum_%s_%s"' % (destination_schema, table_name, column["column_name"][0:20])
                 sql_drop_enum = 'DROP TYPE IF EXISTS %s CASCADE;' % enum_type
                 sql_create_enum = 'CREATE TYPE %s AS ENUM %s;' % ( enum_type,  column["enum_list"])
                 ddl_enum.append(sql_drop_enum)
