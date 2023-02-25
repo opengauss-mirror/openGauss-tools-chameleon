@@ -9,12 +9,13 @@ class copy_data_task:
         self.slice = slice
 
 class create_index_task:
-    def __init__(self, table, schema, indices, destination_schema, master_status):
+    def __init__(self, table, schema, indices, destination_schema, master_status, is_parallel_create_index):
         self.table = table
         self.schema = schema
         self.indices = indices
         self.destination_schema = destination_schema
         self.master_status = master_status
+        self.is_parallel_create_index = is_parallel_create_index
 
 class read_data_task:
     def __init__(self, destination_schema, loading_schema, schema, table):

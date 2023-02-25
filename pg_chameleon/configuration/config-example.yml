@@ -59,6 +59,7 @@ sources:
     on_error_replay: continue
     on_error_read: continue
     auto_maintenance: "disabled"
+    index_parallel_workers: 16
     gtid_enable: false
     type: mysql
     skip_events:

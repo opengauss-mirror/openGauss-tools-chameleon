@@ -41,6 +41,7 @@ NUM_PACKET = 1000
 NUM_TRX = 500
 
 MYSQL_PACKET_HAED_LENGTH = 20
+INDEX_PARALLEL_WORKERS = 16
 
 
 class rollbar_notifier(object):
@@ -164,6 +165,16 @@ class replica_engine(object):
         except KeyError:
             column_case_sensitive = True
 
+        try:
+            index_parallel_workers = self.config["sources"][self.source]["index_parallel_workers"]
+        except KeyError:
+            index_parallel_workers = INDEX_PARALLEL_WORKERS
+        if not self.__check_parallel_workers(index_parallel_workers):
+            self.logger.warning("WARNING, the param index_parallel_workers is in [0, 32], but the current setting is "
+                                "%s, so we use the default value %s" % (index_parallel_workers, INDEX_PARALLEL_WORKERS))
+            index_parallel_workers = INDEX_PARALLEL_WORKERS
+        self.pg_engine.index_parallel_workers = index_parallel_workers
+
         if self.__check_param_valid(column_case_sensitive):
             self.pg_engine.column_case_sensitive = column_case_sensitive
         else:
@@ -259,6 +270,7 @@ class replica_engine(object):
         while True:
             self.write_Json()
             time.sleep(2)
+
     def __check_param_valid(self, param):
         """
             The method is used to check whether the param is valid.
@@ -268,6 +280,9 @@ class replica_engine(object):
         elif str(param).lower() == "yes" or str(param).lower() == "no":
             return True
         return False
+
+    def __check_parallel_workers(self, param):
+        return type(param) == int and 0 <= param <= 32
 
     def terminate_replica(self, signal, frame):
         """
@@ -1294,7 +1309,7 @@ class replica_engine(object):
         logger.setLevel(logging.DEBUG)
         logger.propagate = False
         if debug_mode:
-            str_format = "%(asctime)s %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
+            str_format = "%(asctime)s.%(msecs)03d %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
         else:
             str_format = "%(asctime)s %(processName)s %(levelname)s: %(message)s"
         formatter = logging.Formatter(str_format, "%Y-%m-%d %H:%M:%S")

@@ -52,15 +52,16 @@ DEFAULT_FLOAT_FORMAT_STR = '{:6g}'
 # 18 means the significant figures, 16 means the precision, e is python format
 DEFAULT_DOUBLE_FORMAT_STR = '{:18.16e}'
 CSV_FILE_SUB_DIR = "chameleon"
+DATA_NUM_FOR_PARALLEL_INDEX = 100000
 
 class process_state():
-    PRECISION_START=0
-    COUNT_EMPTY=0
-    PRECISION_SUCCESS=1
-    PENDING_STATUS=1
-    PROCESSING_STATUS=2
-    ACCOMPLISH_STATUS=3
-    FAIL_STATUS=6
+    PRECISION_START = 0
+    COUNT_EMPTY = 0
+    PRECISION_SUCCESS = 1
+    PENDING_STATUS = 1
+    PROCESSING_STATUS = 2
+    ACCOMPLISH_STATUS = 3
+    FAIL_STATUS = 6
 
     @classmethod
     def is_precision_success(self, status):
@@ -233,7 +234,7 @@ class mysql_source(object):
                     sql_uuid = """SHOW SLAVE STATUS;"""
                     self.cursor_buffered.execute(sql_uuid)
                     slave_status = self.cursor_buffered.fetchall()
-                    if len(slave_status)>0:
+                    if len(slave_status) > 0:
                         gtid_set=slave_status[0]["Retrieved_Gtid_Set"]
                     else:
                         sql_uuid = """SHOW GLOBAL VARIABLES LIKE 'server_uuid';"""
@@ -322,6 +323,7 @@ class mysql_source(object):
         new_engine.migrate_default_value = self.pg_engine.migrate_default_value
         new_engine.mysql_version = -1 if self.is_mariadb == False else self.version
         new_engine.column_case_sensitive = self.pg_engine.column_case_sensitive
+        new_engine.index_parallel_workers = self.pg_engine.index_parallel_workers
         return new_engine
 
     def connect_db_buffered(self):
@@ -680,12 +682,14 @@ class mysql_source(object):
             The method creates the destination tables in the loading schema.
             The tables names are looped using the values stored in the class dictionary schema_tables.
         """
+        self.logger.info("Start to create tables")
         for schema in self.schema_tables:
             table_list = self.schema_tables[schema]
             for table in table_list:
                 table_metadata = self.get_table_metadata(table, schema)
                 partition_metadata = self.get_partition_metadata(table, schema)
                 self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
+        self.logger.info("Finish creating all the tables")
 
     def generate_table_metadata_statement(self, schema, table, cursor=None):
         """
@@ -716,6 +720,7 @@ class mysql_source(object):
         else:
             task = TableMetadataTask(schema, table, table_count, 1)
         self.table_metadata_queue.put(task, block=True)
+        return table_count >= DATA_NUM_FOR_PARALLEL_INDEX
 
     def generate_column_metadata_statement(self, schema, table, cursor=None):
         """
@@ -956,9 +961,12 @@ class mysql_source(object):
 
         self.logger.info("Copying the source table %s into %s.%s" % (table, loading_schema, table))
         try:
-            master_status = self.read_data_from_table(schema, table, cursor_manager)
+            master_status, is_parallel_create_index = self.read_data_from_table(schema, table, cursor_manager)
             indices = self.__get_index_data(schema=schema, table=table, cursor_buffered=cursor_manager.cursor_buffered)
-            index_write_task = create_index_task(table, schema, indices, destination_schema, master_status)
+            index_write_task = create_index_task(table, schema, indices, destination_schema, master_status, is_parallel_create_index)
+            readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
+            if self.index_waiting_queue.qsize() > readers:
+                self.write_task_queue.put(self.index_waiting_queue.get(block=True))
             self.index_waiting_queue.put(index_write_task, block=True)
         except:
             self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
@@ -1041,7 +1049,7 @@ class mysql_source(object):
         self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table))
         master_status = self.get_master_coordinates(cursor_buffered)
 
-        self.generate_table_metadata_statement(schema, table, cursor_buffered)
+        is_parallel_create_index = self.generate_table_metadata_statement(schema, table, cursor_buffered)
         self.generate_column_metadata_statement(schema, table, cursor_buffered)
 
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
@@ -1051,8 +1059,10 @@ class mysql_source(object):
 
         with self.reader_xact(self, cursor_buffered, table_txs):
             cursor_unbuffered.execute(sql_csv)
+            self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
             # unlock tables
             if table_txs:
+                self.logger.debug("Finish executing query, so unlocking the tables")
                 self.unlock_tables(cursor_buffered)
             slice = 0
             while True:
@@ -1064,7 +1074,7 @@ class mysql_source(object):
                 # will lead to different value stored in MySQL and openGauss, we have no choice...
                 csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
                 if self.copy_mode == 'file':
-                    csv_file = codecs.open(out_file, 'wb', self.charset)
+                    csv_file = codecs.open(out_file, 'wb', self.charset, buffering=-1)
                     csv_file.write(csv_data)
                     csv_file.close()
                     task = copy_data_task(out_file, count_rows, table, schema, select_columns, len(csv_results), slice)
@@ -1077,8 +1087,9 @@ class mysql_source(object):
                     task = copy_data_task(csv_file, count_rows, table, schema, select_columns, len(csv_results), slice)
                 self.write_task_queue.put(task, block=True)
                 slice += 1
+                self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, slice, total_slices))
 
-        return master_status
+        return [master_status, is_parallel_create_index]
 
     def copy_table_data(self, task, writer_engine):
         slice_insert = []
@@ -1192,7 +1203,7 @@ class mysql_source(object):
                 writer_engine.cleanup_idx_cons(destination_schema, table)
                 writer_engine.truncate_table(destination_schema, table)
             else:
-                table_pkey = writer_engine.create_indices(loading_schema, table, task.indices)
+                table_pkey = writer_engine.create_indices(loading_schema, table, task.indices, task.is_parallel_create_index)
             writer_engine.store_table(destination_schema, table, table_pkey, master_status)
             if self.keep_existing_schema:
                 self.logger.info(
