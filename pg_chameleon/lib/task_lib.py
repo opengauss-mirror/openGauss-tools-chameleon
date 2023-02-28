@@ -1,10 +1,11 @@
 class copy_data_task:
-    def __init__(self, csv_file, count_rows, table, schema, select_columns, slice=0):
+    def __init__(self, csv_file, count_rows, table, schema, select_columns, rows, slice=0):
         self.csv_file = csv_file
         self.count_rows = count_rows
         self.table = table
         self.schema = schema
         self.select_columns = select_columns
+        self.rows = rows
         self.slice = slice
 
 class create_index_task:

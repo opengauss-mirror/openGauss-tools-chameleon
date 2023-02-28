@@ -6,6 +6,7 @@ import pickle
 import pprint
 import signal
 import sys
+import json
 import time
 from logging.handlers import TimedRotatingFileHandler
 from shutil import copy
@@ -134,6 +135,7 @@ class replica_engine(object):
         self.__set_conf_permissions(cham_dir)
 
         self.load_config()
+        self.is_debug_or_dump_json = self.args.debug or self.config['dump_json']
         log_list = self.__init_logger("global")
         self.logger = log_list[0]
         self.logger_fds = log_list[1]
@@ -171,6 +173,12 @@ class replica_engine(object):
 
         # mysql_source instance initialisation
         self.mysql_source = mysql_source()
+        if self.config['dump_json']:
+            self.mysql_source.initJson()
+        try:        
+            self.mysql_source.dump_json = self.config["dump_json"]
+        except KeyError:
+            self.mysql_source.dump_json = False
         self.mysql_source.source = self.args.source
         self.mysql_source.tables = self.args.tables
         self.mysql_source.schema = self.args.schema.strip()
@@ -226,6 +234,15 @@ class replica_engine(object):
                 print("FATAL, The source %s is not registered. Please add it add_source" % (self.args.source))
                 sys.exit()
 
+    def write_Json(self):
+        with open('data_'+self.args.config+'_'+self.args.command+'.json', 'w', encoding='utf8') as f:
+            f.seek(0)
+            json.dump(self.mysql_source.getmanagerJson().copy(),f)
+
+    def dump_Json(self):
+        while True:
+            self.write_Json()
+            time.sleep(2)
     def __check_param_valid(self, param):
         """
             The method is used to check whether the param is valid.
@@ -403,7 +420,7 @@ class replica_engine(object):
             The method  initialise a replica for a given mysql source within the specified configuration.
             The method is called by the public method init_replica.
         """
-        if self.args.debug:
+        if self.is_debug_or_dump_json:
             self.mysql_source.init_replica()
         else:
             if self.config["log_dest"] == 'stdout':
@@ -424,7 +441,7 @@ class replica_engine(object):
             The method is called by the public method init_replica.
         """
 
-        if self.args.debug:
+        if self.is_debug_or_dump_json:
             self.pgsql_source.init_replica()
         else:
             if self.config["log_dest"] == 'stdout':
@@ -451,7 +468,7 @@ class replica_engine(object):
             print("You must specify an origin's schema name using the argument --schema")
         else:
             self.__stop_replica()
-            if self.args.debug:
+            if self.is_debug_or_dump_json:
                 self.mysql_source.refresh_schema()
             else:
                 if self.config["log_dest"] == 'stdout':
@@ -480,7 +497,7 @@ class replica_engine(object):
                 "You must specify one or more tables, in the form schema.table, separated by comma using the argument --tables")
         else:
             self.__stop_replica()
-            if self.args.debug:
+            if self.is_debug_or_dump_json:
                 self.mysql_source.sync_tables()
             else:
                 if self.config["log_dest"] == 'stdout':
@@ -915,7 +932,7 @@ class replica_engine(object):
         signal.signal(signal.SIGINT, self.terminate_replica)
         log_queue = mp.Queue()
         self.sleep_loop = self.config["sources"][self.args.source]["sleep_loop"]
-        if self.args.debug:
+        if self.is_debug_or_dump_json:
             check_timeout = self.sleep_loop
         else:
             check_timeout = self.sleep_loop*10
@@ -941,7 +958,7 @@ class replica_engine(object):
                 if replay_alive:
                     self.replay_daemon.terminate()
                     self.logger.error("Read daemon crashed. Terminating the replay daemon.")
-                if self.args.debug:
+                if self.is_debug_or_dump_json:
                     replica_status = "stopped"
                 else:
                     replica_status = "error"
@@ -996,7 +1013,7 @@ class replica_engine(object):
                 self.logger.info("Cleaning not processed batches for source %s" % (self.args.source))
                 self.pg_engine.clean_not_processed_batches()
                 self.pg_engine.disconnect_db()
-                if self.args.debug:
+                if self.is_debug_or_dump_json:
                     self.__run_replica()
                     print("enter into run replica based on debug")
                 else:
@@ -1203,7 +1220,7 @@ class replica_engine(object):
         if self.args.source == "*":
             print("You must specify a source name with the argument --source")
         else:
-            if self.args.debug:
+            if self.is_debug_or_dump_json:
                 self.pg_engine.run_maintenance()
             else:
                 if self.config["log_dest"] == 'stdout':
@@ -1248,7 +1265,7 @@ class replica_engine(object):
         }
         config_name = self.args.config
         source_name = self.args.source
-        debug_mode = self.args.debug
+        debug_mode = self.is_debug_or_dump_json
         if source_name == '*':
             log_name = "%s_general" % (config_name)
         elif logger_name == "global":
@@ -1312,7 +1329,7 @@ class replica_engine(object):
 
         :param db_object_type: the database object type, refer to enumeration class DBObjectType
         """
-        if self.args.debug:
+        if self.is_debug_or_dump_json:
             self.mysql_source.start_database_object_replica(db_object_type)
         else:
             if self.config["log_dest"] == 'stdout':

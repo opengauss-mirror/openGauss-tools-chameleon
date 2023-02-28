@@ -221,6 +221,8 @@ rollbar_key: ''
 
 rollbar_env: ''
 
+dump_json： No
+
  
 
 type_override:
@@ -353,6 +355,10 @@ log文件保留时间，单位为天。
 ### 3.1.7. rollbar_env
 
 可选项。用于表示rollbar环境，与rollbar_key配合使用。若同时配置了 rollbar_key 和 rollbar_env，工具执行阶段的部分消息将被发送到 rollbar，可在rollbar官网登录自己的账号后看到相关消息。
+
+### 3.1.8. dump_json
+
+可选项。默认是No，当前开启时，在迁移过程中会在执行chameleon的地方生成json文件记录实时的迁移进度。
 
 ## **3.2.** 类型重载规则
 
@@ -690,6 +696,8 @@ log_days_keep: 10
 rollbar_key: ''
 
 rollbar_env: ''
+
+dump_json： No
 
  
 
