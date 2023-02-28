@@ -1510,8 +1510,8 @@ class pg_engine(object):
             elif alter_dic["command"] == 'CHANGE':
                 sql_rename = ""
                 sql_type = ""
-                old_column=alter_dic["old"]
-                new_column=alter_dic["new"]
+                old_column=self.column_case_sen(alter_dic["old"])
+                new_column=self.column_case_sen(alter_dic["new"])
                 column_name = old_column
                 enum_list = str(alter_dic["dimension"]).replace("'", "").split(",")
 
@@ -1530,9 +1530,9 @@ class pg_engine(object):
                     column_type==ColumnType.O_NUM.value or column_type==ColumnType.O_BIT.value or\
                     column_type==ColumnType.O_NUMBER.value or column_type==ColumnType.O_FLOAT.value:
                         column_type=column_type+"("+str(alter_dic["dimension"])+")"
-                sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s  USING "%s"::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
+                sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN %s SET DATA TYPE %s  USING %s::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
                 if old_column != new_column:
-                    sql_rename="""ALTER TABLE "%s"."%s" RENAME COLUMN "%s" TO "%s" ;""" % (schema, table_name, old_column, new_column)
+                    sql_rename="""ALTER TABLE "%s"."%s" RENAME COLUMN %s TO %s ;""" % (schema, table_name, old_column, new_column)
 
                 query = ' '.join(ddl_pre_alter)
                 query += sql_type+sql_rename
@@ -2790,6 +2790,19 @@ class pg_engine(object):
         file_schema.close()
         self.pgsql_conn.execute(sql_schema)
 
+    def get_keywords(self):
+        """
+            The Method get all keywords that can not be directly used as the column names.
+        """
+        sql_keywords="""select word from pg_get_keywords() where catcode='R' or catcode='T';"""
+        self.connect_db()
+        try:
+            stmt=self.pgsql_conn.prepare(sql_keywords)
+            for keyword in stmt():
+                KeyWords.keyword_set.add(keyword[0])
+        except:
+            self.logger.debug("Get all the keywords failed")
+
     def get_catalog_version(self):
         """
             The method returns if the replica schema's version
@@ -3152,7 +3165,7 @@ class pg_engine(object):
                     default_value = " default %s " % (column["default"])
 
             if column_type == "enum":
-                enum_type = '"%s"."enum_%s_%s"' % (destination_schema, table_name[0:20], column["column_name"][0:20])
+                enum_type = '"%s"."enum_%s_%s"' % (destination_schema, table_name, column["column_name"][0:20])
                 sql_drop_enum = 'DROP TYPE IF EXISTS %s CASCADE;' % enum_type
                 sql_create_enum = 'CREATE TYPE %s AS ENUM %s;' % ( enum_type,  column["enum_list"])
                 ddl_enum.append(sql_drop_enum)
@@ -3217,6 +3230,7 @@ class pg_engine(object):
 
         # get partition key num
         part_key = partition_metadata[0]["partition_expression"].replace('`', '')
+        part_key = self.column_case_sen(part_key)
         part_key_split = part_key.split(',')
 
         if len(part_key_split) > self.max_range_column or\
@@ -3265,6 +3279,17 @@ class pg_engine(object):
         table_ddl["table"] = (ddl_head+def_columns+partition_method+def_part+ddl_tail)
         return table_ddl
 
+    def column_case_sen(self, column_name):
+        """
+        This function switches the case of column_name based on sensitivity
+        """
+        if self.column_case_sensitive:
+            return '"%s"' % column_name
+        elif column_name.lower() in KeyWords.keyword_set:
+            return '"%s"' % column_name.lower()
+        else:
+            return column_name
+
     def build_sub_partition(self, schema, table_name, sub_table_metadata, sub_partition_metadata):
         """
         This function is used to compile DDL statements that generate child partitions
@@ -3273,8 +3298,10 @@ class pg_engine(object):
         Hash-Range, Hash-List, Hash-Hash
         """
         part_key = sub_partition_metadata[0]["partition_expression"].replace('`', '')
+        part_key = self.column_case_sen(part_key)
         part_key_split = part_key.split(',')
         sub_part_key = sub_partition_metadata[0]["subpartition_expression"].replace('`', '')
+        sub_part_key = self.column_case_sen(sub_part_key)
         if part_key == sub_part_key:
             print("OpenGauss databases don't support that the partition and subpartition have the same partition key for the level-two partition tables, online migration won't migrate this scenario.")
             return ""
@@ -3956,8 +3983,11 @@ class pg_engine(object):
 
         for composite_statement in composite_ddl:
             self.pgsql_conn.execute(composite_statement)
-
-        self.pgsql_conn.execute(table_ddl)
+        try:
+            self.pgsql_conn.execute(table_ddl)
+        except Exception as exp:
+            self.logger.error("Execute create table failed, the error sql is %s, sql code is %s, and error"
+                              " message is %s" % (table_ddl, exp.code, exp.message))
 
         if column_comments_ddl != '':
             self.pgsql_conn.execute(column_comments_ddl)

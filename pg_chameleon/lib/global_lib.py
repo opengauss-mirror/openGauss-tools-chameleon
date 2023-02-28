@@ -154,14 +154,22 @@ class replica_engine(object):
         self.pg_engine.type_override = self.config["type_override"]
         self.pg_engine.sources = self.config["sources"]
         self.pg_engine.notifier = self.notifier
+        self.pg_engine.get_keywords()
         try:
             self.pg_engine.migrate_default_value = self.config["sources"][self.source]["migrate_default_value"]
         except KeyError:
             self.pg_engine.migrate_default_value = True
         try:
-            self.pg_engine.column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
+            column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
         except KeyError:
-            self.pg_engine.column_case_sensitive = True
+            column_case_sensitive = True
+
+        if self.__check_param_valid(column_case_sensitive):
+            self.pg_engine.column_case_sensitive = column_case_sensitive
+        else:
+            self.logger.error("FATAL, the parameter column_case_sensitive setting is improper, it should be set to "
+                              "Yes or No, but current setting is %s" % column_case_sensitive)
+            sys.exit()
 
         # mysql_source instance initialisation
         self.mysql_source = mysql_source()
@@ -179,14 +187,17 @@ class replica_engine(object):
         self.mysql_source.sources = self.config["sources"]
         self.mysql_source.type_override = self.config["type_override"]
         self.mysql_source.notifier = self.notifier
-        try:        
-            self.mysql_source.column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
-        except KeyError:
-            self.mysql_source.column_case_sensitive = True
+        self.mysql_source.column_case_sensitive = column_case_sensitive
         try:
-            self.mysql_source.mysql_restart_config = self.config["sources"][self.source]["mysql_restart_config"]
+            mysql_restart_config = self.config["sources"][self.source]["mysql_restart_config"]
         except KeyError:
-            self.mysql_source.column_case_sensitive = True
+            mysql_restart_config = True
+        if self.__check_param_valid(mysql_restart_config):
+            self.mysql_source.mysql_restart_config = mysql_restart_config
+        else:
+            self.logger.error("FATAL, the parameter mysql_restart_config setting is improper, it should be set to "
+                              "Yes or No, but current setting is %s" % mysql_restart_config)
+            sys.exit()
 
         # pgsql_source instance initialisation
         self.pgsql_source = pgsql_source()
@@ -203,12 +214,11 @@ class replica_engine(object):
         # safety checks
         if self.args.command == 'upgrade_replica_schema':
             self.pg_engine.sources = self.config["sources"]
-            print(
-                "WARNING, entering upgrade mode. Disabling the catalogue version's check. Expected version %s, installed version %s" % (
-                self.catalog_version, catalog_version))
+            print("WARNING, entering upgrade mode. Disabling the catalogue version's check. Expected version %s,"
+                  " installed version %s" % (self.catalog_version, catalog_version))
         elif self.args.command == 'enable_replica' and self.catalog_version != catalog_version:
-            print("WARNING, catalogue mismatch. Expected version %s, installed version %s" % (
-            self.catalog_version, catalog_version))
+            print("WARNING, catalogue mismatch. Expected version %s, installed version %s" %
+                  (self.catalog_version, catalog_version))
         else:
             if catalog_version:
                 if self.catalog_version != catalog_version:
@@ -233,6 +243,15 @@ class replica_engine(object):
         while True:
             self.write_Json()
             time.sleep(2)
+    def __check_param_valid(self, param):
+        """
+            The method is used to check whether the param is valid.
+        """
+        if type(param) == bool:
+            return True
+        elif str(param).lower() == "yes" or str(param).lower() == "no":
+            return True
+        return False
 
     def terminate_replica(self, signal, frame):
         """
@@ -986,8 +1005,11 @@ class replica_engine(object):
                 print("The replica process is in error state.")
                 print("You may need to check the replica status first. To enable it run the following command.")
                 print("chameleon.py enable_replica --config %s --source %s " % (self.args.config, self.args.source))
-
             else:
+                self.mysql_source.source_config = self.config["sources"][self.args.source]
+                self.mysql_source.connect_db_buffered()
+                self.mysql_source.check_mysql_config(True)
+
                 self.logger.info("Cleaning not processed batches for source %s" % (self.args.source))
                 self.pg_engine.clean_not_processed_batches()
                 self.pg_engine.disconnect_db()

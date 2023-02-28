@@ -171,6 +171,7 @@ class sql_token(object):
 
         #re for fields
         self.m_field=re.compile(r'(?:`)?(\w*)(?:`)?\s*(?:`)?(\w*\s*(?:precision|varying)?)(?:`)?\s*((\(\s*\d*\s*\)|\(\s*\d*\s*,\s*\d*\s*\))?)', re.IGNORECASE)
+        self.m_field1=re.compile(r'(?:`)([^`]*)(?:`)\s*(?:`)?(\w*\s*(?:precision|varying)?)(?:`)?\s*((\(\s*\d*\s*\)|\(\s*\d*\s*,\s*\d*\s*\))?)', re.IGNORECASE)
         self.m_dbl_dgt=re.compile(r'((\(\s?\d+\s?),(\s?\d+\s?\)))',re.IGNORECASE)
         self.m_pars=re.compile(r'(\((:?.*?)\))', re.IGNORECASE)
         self.m_dimension=re.compile(r'(\(.*?\))', re.IGNORECASE)
@@ -190,6 +191,7 @@ class sql_token(object):
         self.m_alter_column = re.compile(r'\(?\s*`?(\w*)`?\s*(\w*(?:\s*\w*)?)\s*(?:\((.*?)\))?\)?', re.IGNORECASE)
         self.m_default_value = re.compile(r"(\bDEFAULT\b)\s*('?[\w\.-]*'?)\s*", re.IGNORECASE)
         self.m_alter_change = re.compile(r'\s*`?(\w*)`?\s*`?(\w*)`?\s*(\w*)\s*(?:\((.*?)\))?', re.IGNORECASE)
+        self.m_change1 = re.compile(r'(?:`(\S*)`\s*`(\S*)`\s*(\w+))|(?:(\w+)\s*`(\S*)`\s*(\w+))|(?:`(\S*)`\s*(\w+)\s*(\w+))', re.IGNORECASE)
         self.m_drop_primary = re.compile(r'(?:(?:ALTER\s+?TABLE)\s+(`?\b.*?\b`?)\s+(DROP\s+PRIMARY\s+KEY))', re.IGNORECASE)
         #self.m_modify = re.compile(r'((?:(?:ADD|DROP|CHANGE|MODIFY)\s+(?:\bCOLUMN\b)?))(.*?,)', re.IGNORECASE)
         self.m_ignore_keywords = re.compile(r'(CONSTRAINT)|(PRIMARY)|(INDEX)|(KEY)|(UNIQUE)|(FOREIGN\s*KEY)', re.IGNORECASE)
@@ -248,7 +250,7 @@ class sql_token(object):
         self.t_par_sub = re.compile(r"""SUBPARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([^\)]*(?:[\s\)]*)?\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*))\s*(?:SUBPARTITIONS\s*(\w*))?\s*\(([^\;]*)\)""", re.IGNORECASE)
         self.t_par_def = re.compile(r"""PARTITION\s*(\w*)\s*(?:(?:VALUES\s*LESS\s*THAN\s*\(?\s*([\w\,\s]*)\s*\)?)|(?:VALUES\s*IN\s*\(\s*(.*?)\s*\)))?\s*(?:TABLESPACE\s*\=?\s*(\w*))?\s*""", re.IGNORECASE)
         self.t_alter_part = re.compile(r"""ALTER\s*TABLE\s*(\w*)\s*(\w*)\s*PARTITION\s*([\w\,\s]*)\s*(?:\(([^\;]*)\))?""", re.IGNORECASE)
-        self.expression = re.compile(r"""\(([\s\w]*\(?[\s\w\,]*\)?\s*)\)""", re.IGNORECASE)
+        self.expression = re.compile(r"""\(([\s\w\`]*\(?[\s\w\,]*\)?\s*)\)""", re.IGNORECASE)
     VERSION_SCALE = 1000
 
     def reset_lists(self):
@@ -274,11 +276,14 @@ class sql_token(object):
             :rtype: dictionary
         """
         colmatch = self.m_field.search(col_def)
+        colmatch1 = self.m_field1.search(col_def)
         dimmatch = self.m_dimension.search(col_def)
         col_dic={}
         dimensions = None
+        if colmatch1:
+            colmatch = colmatch1
         if colmatch:
-            col_dic["column_name"]=colmatch.group(1).strip("`").strip()
+            col_dic["column_name"]=colmatch.group(1)
             col_dic["data_type"]=colmatch.group(2).lower().strip()
             col_dic["is_nullable"]="YES"
             if dimmatch:
@@ -837,11 +842,26 @@ class sql_token(object):
                 elif command == 'CHANGE':
                     alter_dic["command"] = command
                     alter_column = self.m_alter_change.search(alter_item[1].strip())
+                    column_point = self.m_change1.search(alter_item[1].strip())
                     if alter_column:
                         alter_dic["command"] = command
-                        alter_dic["old"] = alter_column.group(1).strip().strip('`')
-                        alter_dic["new"] = alter_column.group(2).strip().strip('`')
-                        alter_dic["type"] = alter_column.group(3).strip().strip('`').lower()
+                        if column_point:
+                            if column_point.group(1):
+                                alter_dic["old"] = column_point.group(1)
+                                alter_dic["new"] = column_point.group(2)
+                                alter_dic["type"] = column_point.group(3).strip().strip('`').lower()
+                            elif column_point.group(4):
+                                alter_dic["old"] = column_point.group(4)
+                                alter_dic["new"] = column_point.group(5)
+                                alter_dic["type"] = column_point.group(6).strip().strip('`').lower()
+                            else:
+                                alter_dic["old"] = column_point.group(7)
+                                alter_dic["new"] = column_point.group(8)
+                                alter_dic["type"] = column_point.group(9).strip().strip('`').lower()
+                        else:
+                            alter_dic["old"] = alter_column.group(1).strip().strip('`')
+                            alter_dic["new"] = alter_column.group(2).strip().strip('`')
+                            alter_dic["type"] = alter_column.group(3).strip().strip('`').lower()
                         alter_dic["name"] = alter_column.group(1).strip().strip('`')
                         try:
                             alter_dic["dimension"]=alter_column.group(4).replace('|', ',').strip()
@@ -1662,7 +1682,7 @@ class SqlTranslator():
         """
         self.lib_dir = os.path.dirname(os.path.realpath(__file__))
 
-    def mysql_to_opengauss(self, raw_sql):
+    def mysql_to_opengauss(self, raw_sql, column_case_sensitive):
         """
         Translate sql dialect in mysql format to opengauss format.
         Implement the power of translating sql statements with calling java subproject og-translator through CMD.
@@ -1673,7 +1693,11 @@ class SqlTranslator():
         # use base64 to encode raw sql, avoiding the impact of special symbols on bash
         sql_encoded = str(base64.b64encode(raw_sql.encode("utf-8")), "utf-8")
         # chameleon calling the java subproject og-translator to implement the power of translating sql statements
-        cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
+        if column_case_sensitive:
+            cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
+        else:
+            cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s' --column_case_sensitive_no" % (self.lib_dir, sql_encoded)
+        
         communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 
         stdout = communicate[0].decode("utf-8").replace("`", "")  # sql translated into opengauss dialect format
