@@ -18,6 +18,7 @@ from pg_chameleon.lib.task_lib import KeyWords
 COLUMNDEFAULT_INCLUDE_QUOTE_VER = 7 + sql_token.VERSION_SCALE * 2 + \
                                   (sql_token.VERSION_SCALE * sql_token.VERSION_SCALE) * 10
 
+ON_UPDATE_CURRENT_TIMESTAMP = "on update current_timestamp"
 
 class pg_encoder(json.JSONEncoder):
     def default(self, obj):
@@ -3185,13 +3186,16 @@ class pg_engine(object):
                     column_type = ColumnType.O_SERIAL.value
                 else:
                     column_type = ColumnType.O_BIGSERIAL.value
+            extra = ""
+            if column["extra"].lower() == ON_UPDATE_CURRENT_TIMESTAMP:
+                extra = ON_UPDATE_CURRENT_TIMESTAMP
 
             if self.column_case_sensitive:
-                ddl_columns.append(  ' "%s" %s %s %s   ' % (column["column_name"], column_type, default_value, col_is_null))
+                ddl_columns.append(  ' "%s" %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
             elif column["column_name"].lower() in KeyWords.keyword_set:
-                ddl_columns.append(  ' "%s" %s %s %s   ' % (column["column_name"].lower(), column_type, default_value, col_is_null))
+                ddl_columns.append(  ' "%s" %s %s %s %s  ' % (column["column_name"].lower(), column_type, default_value, col_is_null, extra))
             else:
-                ddl_columns.append(  ' %s %s %s %s   ' % (column["column_name"], column_type, default_value, col_is_null))
+                ddl_columns.append(  ' %s %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
 
             if "column_comment" in column and column["column_comment"] != "":
                 if self.column_case_sensitive:
