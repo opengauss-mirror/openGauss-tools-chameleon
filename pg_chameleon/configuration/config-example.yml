@@ -7,6 +7,7 @@ log_level: info
 log_days_keep: 10
 rollbar_key: ''
 rollbar_env: ''
+dump_json: No
 
 # type_override allows the user to override the default type conversion
 # into a different one.
