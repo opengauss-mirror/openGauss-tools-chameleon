@@ -4,6 +4,7 @@ import io
 import json
 import multiprocessing as mp
 import os
+import random
 import sys
 import time
 
@@ -4959,7 +4960,8 @@ class pg_engine(object):
                         using = 'USING BTREE(%s)' % (','.join(index_columns))
                     else:
                         using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
-                    index_name='idx_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp, self.idx_sequence)
+                    index_name='idx_%s_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp,
+                                                       random.randint(0, 10000), self.idx_sequence)
                     idx_def='CREATE %s INDEX "%s" ON "%s"."%s" %s;' % (unique_key, index_name, schema, table, using)
                     idx_ddl[index_name] = idx_def
                 self.idx_sequence+=1
