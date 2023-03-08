@@ -67,7 +67,7 @@ except Exception as e:
     error_msg = traceback.format_exc()
     print(error_msg)
 
-if replica.config['dump_json']:
+if (replica.config['dump_json'] and (args.command == 'init_replica' or args.command == 'start_view_replica' or args.command == 'start_trigger_replica' or args.command == 'start_func_replica' or args.command == 'start_proc_replica')):
     try:
         dump_thread = multiprocessing.Process(target=replica.dump_Json)
         dump_thread.start()
@@ -88,6 +88,8 @@ else:
     try:
         getattr(replica, args.command)()
         replica.logger.info(args.command + " finished.")
-    except AttributeError:
+    except Exception as e:
         print("ERROR - Invalid command" )
+        error_msg = traceback.format_exc()
+        print(error_msg)
         print(command_help)
