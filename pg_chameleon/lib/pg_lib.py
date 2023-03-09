@@ -710,6 +710,7 @@ class pg_engine(object):
             file_schema = open(self.sql_dir+"create_schema.sql", 'r')
             sql_schema = file_schema.read()
             file_schema.close()
+            self.pgsql_conn.execute("set dolphin.b_compatibility_mode = off")
             self.pgsql_conn.execute(sql_schema)
 
         else:
