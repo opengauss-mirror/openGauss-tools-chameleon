@@ -35,6 +35,7 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - 对于HASH分区及KEY分区表在线迁移，由于MySQL和openGauss中hash分区内核实现不同，迁移后openGauss数据存放分区与MySQL中数据存放的分区存在差异。
 - 对于二级分区表，openGauss不支持一级和二级分区采用相同的键值。
 - 对于drop table操作，当表含有关联对象时，例如视图，mysql端可以用drop table只删除表而保留视图，openGauss端用drop table仅删除表会失败，此问题属于内核兼容性问题。因此对于mysql端的drop table语句，openGauss端将采用drop table cascade一并删除表及其关联的对象。
+- mysql的ddl里面comment包含"\0"时，迁移到openGauss端会转换为"\x00" 
 
 ### 1.3.2. 对象迁移限制
 
@@ -358,7 +359,23 @@ log文件保留时间，单位为天。
 
 ### 3.1.8. dump_json
 
-可选项。默认是No，当前开启时，在迁移过程中会在执行chameleon的地方生成json文件记录实时的迁移进度。
+可选项。默认是No，当前开启时，在迁移过程中会在执行chameleon的地方生成json文件记录实时的迁移进度:
+
+1.在迁移开始阶段，获取到源端的表的列表以及每张表的行数，存储到全局变量中，初始化完成。对象迁移会获取全部的对象名称，并保存到全局变量进行初始化。
+
+2.全量迁移多进程在回放端，回放成功后，将回放进度信息刷新到全局变量内,每一个回放进程都可以刷新全局变量的内容，在主进程开启一个独立的进程进行定时写任务，把全局变量写入到本地的Data_xxx.json。
+
+json结构：{"table": [], "view": [], "function": [], "trigger": [], "procedure": []}
+
+状态说明：
+
+name：对象名称
+
+status：状态（1：待迁移，2：迁移中，3迁移完成，6迁移失败）
+
+percent：迁移进度（小于1时处于正常范围，status为6时可以是大于1的值）
+
+count_rows：迁移表时，记录表的总行数(仅在表数据迁移时有用)
 
 ## **3.2.** 类型重载规则
 

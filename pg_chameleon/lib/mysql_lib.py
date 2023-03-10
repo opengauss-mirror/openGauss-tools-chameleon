@@ -119,7 +119,7 @@ class mysql_source(object):
     def initJson(cls):
         manager = multiprocessing.Manager()
         global managerJson 
-        managerJson = manager.dict({"table": [], "view": [], "function": [], "trigger": [], "procedure": []})
+        managerJson = manager.dict({})
 
     @classmethod
     def getmanagerJson(cls):
@@ -479,11 +479,7 @@ class mysql_source(object):
         """
         for schema in self.schema_list:
             self.cursor_buffered.execute(sql_tables, (schema))
-            table_list=[]
-            table_list_rows=[]
-            for table in self.cursor_buffered.fetchall():
-                table_list.append(table["table_name"])
-                table_list_rows.append(table["table_rows"])
+            table_list = [table["table_name"] for table in self.cursor_buffered.fetchall()]
 
             try:
                 limit_tables = self.limit_tables[schema]
@@ -500,15 +496,16 @@ class mysql_source(object):
 
             self.schema_tables[schema] = table_list
             if self.dump_json:
-                jsons = managerJson.copy()
                 for index,key in enumerate(table_list):
-                    jsons["table"].append({
+                    sql_tables_rows="""SELECT COUNT(*) COUNT FROM %s.%s""" % (schema, key)
+                    self.cursor_buffered.execute(sql_tables_rows)
+                    table_count = self.cursor_buffered.fetchone()['COUNT']
+                    managerJson.update({key:{
                         "name":key,
-                        "status":process_state.ACCOMPLISH_STATUS if table_list_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
+                        "status":process_state.ACCOMPLISH_STATUS if table_count == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
                         "percent":process_state.PRECISION_START,
-                        "count_rows":table_list_rows[index]
-                    })
-                managerJson.update(jsons)
+                        "count_rows":table_count
+                    }})
 
 
     def create_destination_schemas(self):
@@ -1112,7 +1109,11 @@ class mysql_source(object):
         slice = task.slice
         try:
             writer_engine.copy_data(csv_file, loading_schema, table, column_list)
+            if self.dump_json:
+                self.__copied_progress_json("table",table,(slice + 1)/total_slices,rows)
         except Exception as e:
+            if self.dump_json:
+                self.__copied_progress_json("table",table,process_state.FAIL_STATUS,rows)
             self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
             self.logger.info(
                 "Table %s.%s error in PostgreSQL copy, saving slice number for the fallback to insert statements" % (
@@ -1122,7 +1123,7 @@ class mysql_source(object):
             csv_file.close()
             del task
             gc.collect()
-        self.print_progress(slice + 1, total_slices, schema, table, rows)
+        self.print_progress(slice + 1, total_slices, schema, table)
         slice += 1
         if len(slice_insert) > 0:
             ins_arg = {}
@@ -1199,7 +1200,7 @@ class mysql_source(object):
         except:
             self.logger.error("create index or constraint error")
 
-    def print_progress (self, iteration, total, schema, table, rows):
+    def print_progress (self, iteration, total, schema, table):
         """
             Print the copy progress in slices and estimated total slices.
             In order to reduce noise when the log level is info only the tables copied in multiple slices
@@ -1215,22 +1216,21 @@ class mysql_source(object):
             self.logger.info("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
-        if self.dump_json:
-            self.__copied_progress_json("table",table,(iteration/total),rows)
     
     def __copied_progress_json (self,type_val,name,value,row=0):
-        jsons = managerJson.copy()
-        for object_index in range(0, len(jsons[type_val])): 
-            if ((jsons[type_val][object_index]["name"] == name) and jsons[type_val][object_index]["percent"] < value):
-                jsons[type_val][object_index]["percent"]= value
-                if(process_state.is_precision_success(value)):
-                    jsons[type_val][object_index]["status"] = process_state.ACCOMPLISH_STATUS
-                elif(process_state.is_fail_status(value)):
-                    jsons[type_val][object_index]["status"] = process_state.FAIL_STATUS
-                else:
-                    jsons[type_val][object_index]["status"] = process_state.PROCESSING_STATUS
-                managerJson.update(jsons)
-                break;
+        if(managerJson[name]["percent"] < value):
+            if(process_state.is_precision_success(value)):
+                status = process_state.ACCOMPLISH_STATUS
+            elif(process_state.is_fail_status(value)):
+                status = process_state.FAIL_STATUS
+            else:
+                status = process_state.PROCESSING_STATUS
+            managerJson.update({name:{
+                "name":name,
+                "status":status,
+                "percent":value,
+                "count_rows":managerJson[name]["count_rows"]
+            }})
 
 
 
@@ -1949,14 +1949,13 @@ class mysql_source(object):
             # get metadata (object name) of all objects on schema
             if self.dump_json:
                 self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
-                jsons = managerJson.copy()
                 for object_metadata in self.cursor_buffered.fetchall():
-                    jsons[db_object_type.value].append({
+                    managerJson.update({object_metadata["OBJECT_NAME"]:{
                         "name":object_metadata["OBJECT_NAME"],
                         "status":process_state.PENDING_STATUS,
-                        "percent":process_state.PRECISION_START
-                    })
-                managerJson.update(jsons)
+                        "percent":process_state.PRECISION_START,
+                        "count_rows":0
+                    }})
 
             self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
             for object_metadata in self.cursor_buffered.fetchall():

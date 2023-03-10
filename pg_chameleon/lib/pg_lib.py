@@ -4,6 +4,7 @@ import io
 import json
 import multiprocessing as mp
 import os
+import random
 import sys
 import time
 
@@ -709,6 +710,7 @@ class pg_engine(object):
             file_schema = open(self.sql_dir+"create_schema.sql", 'r')
             sql_schema = file_schema.read()
             file_schema.close()
+            self.pgsql_conn.execute("set dolphin.b_compatibility_mode = off")
             self.pgsql_conn.execute(sql_schema)
 
         else:
@@ -3155,6 +3157,7 @@ class pg_engine(object):
         ddl_enum=[]
         table_ddl = {}
         for column in table_metadata:
+            column["column_comment"] = repr(column["column_comment"])
             if column["is_nullable"] == "NO":
                     col_is_null = "NOT NULL"
             else:
@@ -3199,15 +3202,15 @@ class pg_engine(object):
 
             if "column_comment" in column and column["column_comment"] != "":
                 if self.column_case_sensitive:
-                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is \'%s\';\n'
+                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
                                                             column["column_comment"]))
                 elif column["column_name"].lower() in KeyWords.keyword_set:
-                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is \'%s\';\n'
+                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"].lower(),
                                                             column["column_comment"]))
                 else:
-                    column_comments = column_comments + ('comment on column "%s"."%s".%s is \'%s\';\n'
+                    column_comments = column_comments + ('comment on column "%s"."%s".%s is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
                                                             column["column_comment"]))
 
@@ -4959,7 +4962,8 @@ class pg_engine(object):
                         using = 'USING BTREE(%s)' % (','.join(index_columns))
                     else:
                         using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
-                    index_name='idx_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp, self.idx_sequence)
+                    index_name='idx_%s_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp,
+                                                       random.randint(0, 10000), self.idx_sequence)
                     idx_def='CREATE %s INDEX "%s" ON "%s"."%s" %s;' % (unique_key, index_name, schema, table, using)
                     idx_ddl[index_name] = idx_def
                 self.idx_sequence+=1
