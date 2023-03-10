@@ -3291,7 +3291,7 @@ class pg_engine(object):
         This function switches the case of column_name based on sensitivity
         """
         if self.column_case_sensitive:
-            return '"%s"' % column_name
+            return column_name
         elif column_name.lower() in KeyWords.keyword_set:
             return '"%s"' % column_name.lower()
         else:
