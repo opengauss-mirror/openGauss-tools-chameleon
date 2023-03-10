@@ -1109,7 +1109,11 @@ class mysql_source(object):
         slice = task.slice
         try:
             writer_engine.copy_data(csv_file, loading_schema, table, column_list)
+            if self.dump_json:
+                self.__copied_progress_json("table",table,(slice + 1)/total_slices,rows)
         except Exception as e:
+            if self.dump_json:
+                self.__copied_progress_json("table",table,process_state.FAIL_STATUS,rows)
             self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
             self.logger.info(
                 "Table %s.%s error in PostgreSQL copy, saving slice number for the fallback to insert statements" % (
@@ -1119,7 +1123,7 @@ class mysql_source(object):
             csv_file.close()
             del task
             gc.collect()
-        self.print_progress(slice + 1, total_slices, schema, table, rows)
+        self.print_progress(slice + 1, total_slices, schema, table)
         slice += 1
         if len(slice_insert) > 0:
             ins_arg = {}
@@ -1196,7 +1200,7 @@ class mysql_source(object):
         except:
             self.logger.error("create index or constraint error")
 
-    def print_progress (self, iteration, total, schema, table, rows):
+    def print_progress (self, iteration, total, schema, table):
         """
             Print the copy progress in slices and estimated total slices.
             In order to reduce noise when the log level is info only the tables copied in multiple slices
@@ -1212,8 +1216,6 @@ class mysql_source(object):
             self.logger.info("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
-        if self.dump_json:
-            self.__copied_progress_json("table",table,(iteration/total),rows)
     
     def __copied_progress_json (self,type_val,name,value,row=0):
         if(managerJson[name]["percent"] < value):
