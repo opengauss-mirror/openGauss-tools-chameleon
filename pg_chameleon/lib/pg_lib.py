@@ -3157,7 +3157,6 @@ class pg_engine(object):
         ddl_enum=[]
         table_ddl = {}
         for column in table_metadata:
-            column["column_comment"] = repr(column["column_comment"])
             if column["is_nullable"] == "NO":
                     col_is_null = "NOT NULL"
             else:
@@ -3201,6 +3200,7 @@ class pg_engine(object):
                 ddl_columns.append(  ' %s %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
 
             if "column_comment" in column and column["column_comment"] != "":
+                column["column_comment"] = repr(column["column_comment"])
                 if self.column_case_sensitive:
                     column_comments = column_comments + ('comment on column "%s"."%s"."%s" is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
@@ -3291,7 +3291,7 @@ class pg_engine(object):
         This function switches the case of column_name based on sensitivity
         """
         if self.column_case_sensitive:
-            return '"%s"' % column_name
+            return column_name
         elif column_name.lower() in KeyWords.keyword_set:
             return '"%s"' % column_name.lower()
         else:

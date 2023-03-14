@@ -246,11 +246,11 @@ class sql_token(object):
         self.t_alter_table_.append(re.compile(r"""(WITHOUT|WITH)\s*VALIDATION\s*""", re.IGNORECASE))
 
         #adding partition table
-        self.t_par_table = re.compile(r"""PARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([\s\w]*\(?[\s\w]*\)?\s*\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*)|(?:RANGE\s*(?:COLUMNS)?\s*\([^\)]*\)\s*)|(?:LIST\s*(?:COLUMNS)?\s*\([^\)]*\)\s*))\s*(?:PARTITIONS\s*(\w*))?\s*\(?([^\;]*)\)?""", re.IGNORECASE)
+        self.t_par_table = re.compile(r"""PARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([\s\w]*\(?[\s\w\+\-\*\/\^]*\)?\s*\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*)|(?:RANGE\s*(?:COLUMNS)?\s*\([^\)]*\)\s*)|(?:LIST\s*(?:COLUMNS)?\s*\([^\)]*\)\s*))\s*(?:PARTITIONS\s*(\w*))?\s*\(?([^\;]*)\)?""", re.IGNORECASE)
         self.t_par_sub = re.compile(r"""SUBPARTITION\s*BY\s*((?:(?:LINEAR)?\s*HASH\s*\([^\)]*(?:[\s\)]*)?\)\s*)|(?:(?:LINEAR)?\s*KEY\s*(?:ALGORITHM\s*\=\s*\w*)?\s*\([^\)]*\)\s*))\s*(?:SUBPARTITIONS\s*(\w*))?\s*\(([^\;]*)\)""", re.IGNORECASE)
         self.t_par_def = re.compile(r"""PARTITION\s*(\w*)\s*(?:(?:VALUES\s*LESS\s*THAN\s*\(?\s*([\w\,\s]*)\s*\)?)|(?:VALUES\s*IN\s*\(\s*(.*?)\s*\)))?\s*(?:TABLESPACE\s*\=?\s*(\w*))?\s*""", re.IGNORECASE)
         self.t_alter_part = re.compile(r"""ALTER\s*TABLE\s*(\w*)\s*(\w*)\s*PARTITION\s*([\w\,\s]*)\s*(?:\(([^\;]*)\))?""", re.IGNORECASE)
-        self.expression = re.compile(r"""\(([\s\w\`]*\(?[\s\w\,]*\)?\s*)\)""", re.IGNORECASE)
+        self.expression = re.compile(r"""\(([\s\w\`]*\(?[\s\w\+\-\*\/\^\,]*\)?\s*)\)""", re.IGNORECASE)
     VERSION_SCALE = 1000
 
     def reset_lists(self):
@@ -574,9 +574,6 @@ class sql_token(object):
         par_method = par_stat.group(1).strip()
         partition_method = par_method[:par_method.find("(")].strip()
         partition_expression = self.expression.search(par_method).group(1).strip()
-        if partition_expression.find('(') != -1:
-            print("Now we do not support the expression expr as the key value partitions_keys")
-            partition_expression = self.expression.search(partition_expression).group(1).strip()
         partition_number = par_stat.group(2)
         # subpartition by
         par_stat_1 = par_stat.group(3).strip()
@@ -585,9 +582,6 @@ class sql_token(object):
             subpar_method = par_sub.group(1).strip()
             subpartition_method = subpar_method[:subpar_method.find("(")].strip()
             subpartition_expression = self.expression.search(subpar_method).group(1).strip()
-            if subpartition_expression.find('(') != -1:
-                print("Now we do not support the expression expr as the key value partitions_keys")
-                subpartition_expression = self.expression.search(subpartition_expression).group(1).strip()
             subpartition_number = par_sub.group(2)
             par_stat_2 = par_sub.group(3).strip()
             par_def = self.t_par_def.findall(par_stat_2)
