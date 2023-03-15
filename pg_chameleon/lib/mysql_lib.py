@@ -479,7 +479,11 @@ class mysql_source(object):
         """
         for schema in self.schema_list:
             self.cursor_buffered.execute(sql_tables, (schema))
-            table_list = [table["table_name"] for table in self.cursor_buffered.fetchall()]
+            table_list = []
+            table_rows = []
+            for table in self.cursor_buffered.fetchall():
+                table_list.append(table["table_name"])
+                table_rows.append(table["table_rows"])
 
             try:
                 limit_tables = self.limit_tables[schema]
@@ -497,14 +501,10 @@ class mysql_source(object):
             self.schema_tables[schema] = table_list
             if self.dump_json:
                 for index,key in enumerate(table_list):
-                    sql_tables_rows="""SELECT COUNT(*) COUNT FROM %s.%s""" % (schema, key)
-                    self.cursor_buffered.execute(sql_tables_rows)
-                    table_count = self.cursor_buffered.fetchone()['COUNT']
                     managerJson.update({key:{
                         "name":key,
-                        "status":process_state.ACCOMPLISH_STATUS if table_count == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
-                        "percent":process_state.PRECISION_START,
-                        "count_rows":table_count
+                        "status":process_state.ACCOMPLISH_STATUS if table_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
+                        "percent":process_state.PRECISION_START
                     }})
 
 
@@ -1110,10 +1110,10 @@ class mysql_source(object):
         try:
             writer_engine.copy_data(csv_file, loading_schema, table, column_list)
             if self.dump_json:
-                self.__copied_progress_json("table",table,(slice + 1)/total_slices,rows)
+                self.__copied_progress_json("table",table,(slice + 1)/total_slices)
         except Exception as e:
             if self.dump_json:
-                self.__copied_progress_json("table",table,process_state.FAIL_STATUS,rows)
+                self.__copied_progress_json("table",table,process_state.FAIL_STATUS)
             self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
             self.logger.info(
                 "Table %s.%s error in PostgreSQL copy, saving slice number for the fallback to insert statements" % (
@@ -1217,7 +1217,7 @@ class mysql_source(object):
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
     
-    def __copied_progress_json (self,type_val,name,value,row=0):
+    def __copied_progress_json (self,type_val,name,value):
         if(managerJson[name]["percent"] < value):
             if(process_state.is_precision_success(value)):
                 status = process_state.ACCOMPLISH_STATUS
@@ -1228,8 +1228,7 @@ class mysql_source(object):
             managerJson.update({name:{
                 "name":name,
                 "status":status,
-                "percent":value,
-                "count_rows":managerJson[name]["count_rows"]
+                "percent":value
             }})
 
 
@@ -1953,8 +1952,7 @@ class mysql_source(object):
                     managerJson.update({object_metadata["OBJECT_NAME"]:{
                         "name":object_metadata["OBJECT_NAME"],
                         "status":process_state.PENDING_STATUS,
-                        "percent":process_state.PRECISION_START,
-                        "count_rows":0
+                        "percent":process_state.PRECISION_START
                     }})
 
             self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
