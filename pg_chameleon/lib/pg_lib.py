@@ -2966,6 +2966,7 @@ class pg_engine(object):
                 """
                 self.pgsql_conn.execute(sql_add% (self.source, schema_mappings, log_table_1, log_table_2, source_type))
 
+                self.pgsql_conn.execute("set dolphin.b_compatibility_mode = off")
                 sql_parts = """SELECT sch_chameleon.fn_refresh_parts() ;"""
                 self.pgsql_conn.execute(sql_parts)
                 self.insert_source_timings()
