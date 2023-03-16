@@ -1110,7 +1110,8 @@ class mysql_source(object):
         try:
             writer_engine.copy_data(csv_file, loading_schema, table, column_list)
             if self.dump_json:
-                self.__copied_progress_json("table",table,(slice + 1)/total_slices)
+                percent = 1.0 if (slice + 1) > total_slices else  (slice + 1)/total_slices
+                self.__copied_progress_json("table",table,percent)
         except Exception as e:
             if self.dump_json:
                 self.__copied_progress_json("table",table,process_state.FAIL_STATUS)
