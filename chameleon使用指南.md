@@ -143,9 +143,9 @@ ALTER TABLE tbl_name REORGANIZE PARTITION partition_names INTO (partition_defini
 
 安装包下载地址：
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-3.1.1-py3-none-any.whl
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-5.0.0-py3-none-any.whl
 
-其中3.1.1表示当前版本号，其可以通过chameleon --version命令查询。
+其中5.0.0表示当前版本号，其可以通过chameleon --version命令查询。
 
 下载完成后，通过python virtual env环境进行安装，首先创建python虚拟环境并激活：
 
@@ -155,7 +155,7 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-3.
 
 然后通过pip安装即可：
 
-**pip3 install ./chameleon-3.1.1-py3-none-any.whl**
+**pip3 install ./chameleon-5.0.0-py3-none-any.whl**
 
 注意：安装过程中，将自动安装该工具依赖的其他库，请确保本机的pip能正常下载安装相关依赖。相关依赖库及版本要求为：
 
@@ -179,7 +179,32 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-3.
 
 **mysqlclient>=2.1.1**
 
-注意：mysqlclient的安装需要先使用yum安装mysql-devel，直接使用yum install mysql-devel即可。
+注意：chameleon安装需要前置安装一些yum包，包括mysql5-devel和python3-devel。 其中mysqlclient的安装依赖mysql5-devel包。
+
+如果安装过程中错误信息为：
+
+```
+/bin/sh: mysql_config: command not found
+```
+
+请安装mysql5-devel包，对应的命令为：
+
+```
+yum install mysql5-devel
+```
+
+如果安装过程中错误信息为：
+
+```
+fatal error: Python.h: No such file or directory
+```
+
+请安装python3-devel包，对应的命令为：
+
+```
+yum install python3-devel
+```
+
 
 ## **2.2.** 源码安装
 
