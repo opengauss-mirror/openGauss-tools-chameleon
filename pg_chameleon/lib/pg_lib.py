@@ -587,6 +587,7 @@ class pg_engine(object):
         self.hash_part_key_type = ColumnType.get_opengauss_hash_part_key_type()
         self.character_type = ColumnType.get_opengauss_char_type()
         self.date_type = ColumnType.get_opengauss_date_type()
+        self.index_parallel_workers = 16
         self.default_value_map = {
             # without time zone
             'curdate()': "CURRENT_DATE",
@@ -1309,7 +1310,7 @@ class pg_engine(object):
         """
 
         count_table = self.__count_table_schema(token["name"], destination_schema)
-        query=""
+        query = ""
         if token["command"] =="CREATE TABLE":
             table_metadata = token["columns"]
             table_name = token["name"]
@@ -1488,8 +1489,8 @@ class pg_engine(object):
         alter_cmd = []
         ddl_pre_alter = []
         ddl_post_alter = []
-        query_cmd=token["command"]
-        table_name=token["name"]
+        query_cmd = token["command"]
+        table_name = token["name"]
 
         for alter_dic in token["alter_cmd"]:
             if alter_dic["command"] == 'DROP':
@@ -1513,8 +1514,8 @@ class pg_engine(object):
             elif alter_dic["command"] == 'CHANGE':
                 sql_rename = ""
                 sql_type = ""
-                old_column=self.column_case_sen(alter_dic["old"])
-                new_column=self.column_case_sen(alter_dic["new"])
+                old_column = self.column_case_sen(alter_dic["old"])
+                new_column = self.column_case_sen(alter_dic["new"])
                 column_name = old_column
                 enum_list = str(alter_dic["dimension"]).replace("'", "").split(",")
 
@@ -3041,8 +3042,8 @@ class pg_engine(object):
             destination_schema = schema
         ddl_head = 'CREATE TABLE "%s"."%s" (' % (destination_schema, table_name)
         ddl_tail = ");"
-        ddl_enum=[]
-        ddl_composite=[]
+        ddl_enum = []
+        ddl_composite = []
         for column in table_metadata:
             column_name = column["column_name"]
             if column["column_default"]:
@@ -3414,17 +3415,17 @@ class pg_engine(object):
                 type = index['index_n']
                 self.logger.debug("Generating the DDL for index %s" % (type))
                 index_columns = ['"%s"' % column for column in index["index_columns"]]
-                if type =='PRIMARY':
+                if type == 'PRIMARY':
                     pkey_name = "pk_%s_%s_%s " % (table[0:10],table_timestamp,  self.idx_sequence)
                     pkey_def = 'ALTER TABLE "%s"."%s" ADD CONSTRAINT "%s" PRIMARY KEY (%s) ;' % (schema, table, pkey_name, ','.join(index_columns))
                     idx_ddl[pkey_name] = pkey_def
                     table_primary = index["index_columns"]
-                elif type =='UNIQUE':
+                elif type == 'UNIQUE':
                     index_name = "%s_%s" %(table,index["index_name"])
                     idx_def = 'CREATE UNIQUE INDEX "%s" ON "%s"."%s" (%s);' % (index_name, schema, table, ','.join(index_columns))
                     idx_ddl[index_name] = idx_def
                 elif type == 'INDEX':
-                    index_name = "%s_%s" %(table,index["index_name"])
+                    index_name = "%s_%s" % (table, index["index_name"])
                     idx_def='CREATE INDEX "%s" ON "%s"."%s" (%s);' % (index_name, schema, table, ','.join(index_columns))
                     idx_ddl[index_name] = idx_def
                 elif type == 'FOREIGN':
@@ -3907,8 +3908,6 @@ class pg_engine(object):
                         if value:
                             event_before[key] = str(value).replace("\x00", "")
 
-                    #event_after = {key: str(value).replace("\x00", "") for key, value in event_after.items() if value}
-                    #event_before = {key: str(value).replace("\x00", "") for key, value in event_before.items() if value}
                     try:
                         stmt = self.pgsql_conn.prepare(sql_insert)
                         stmt(
@@ -4916,7 +4915,7 @@ class pg_engine(object):
         pkey_col = stmt.first(schema,table)
         return pkey_col
 
-    def create_indices(self, schema, table, index_data):
+    def create_indices(self, schema, table, index_data, is_parallel_create_index):
         """
             The method loops odver the list index_data and creates the indices on the table
             specified with schema and table parameters.
@@ -4968,9 +4967,43 @@ class pg_engine(object):
                     idx_def='CREATE %s INDEX "%s" ON "%s"."%s" %s;' % (unique_key, index_name, schema, table, using)
                     idx_ddl[index_name] = idx_def
                 self.idx_sequence+=1
+
+        if is_parallel_create_index:
+            if self.index_parallel_workers == 0:
+                self.logger.warning("param index_parallel_workers = 0, so disable parallel create index")
+            else:
+                set_parallel_index = 'alter table "%s"."%s" set (parallel_workers = %s);' \
+                             % (schema, table, self.index_parallel_workers)
+                self.logger.info("ready to set parallel index workers %s for table %s.%s"
+                         % (self.index_parallel_workers, schema, table))
+                try:
+                    self.pgsql_conn.execute(set_parallel_index)
+                except Exception as exp:
+                    self.logger.error("create parallel index error, error code is %s and error is %s"
+                                  % (exp.code, exp.message))
+                self.logger.info("set parallel index workers %s for table %s.%s"
+                         % (self.index_parallel_workers, schema, table))
+
         for index in idx_ddl:
             self.logger.info("Building index %s on %s.%s" % (index, schema, table))
-            self.pgsql_conn.execute(idx_ddl[index])
+            try:
+                self.pgsql_conn.execute(idx_ddl[index])
+            except Exception as exp:
+                self.logger.error("create index error, error sql is %s, error code is %s and error message is %s"
+                                  % (idx_ddl[index], exp.code, exp.message))
+            self.logger.info("Finish Building index %s on %s.%s" % (index, schema, table))
+
+        if is_parallel_create_index and self.index_parallel_workers != 0:
+            reset_parallel_index = 'alter table "%s"."%s" reset (parallel_workers);' % (schema, table)
+            self.logger.info("ready to reset parallel index workers %s for table %s.%s"
+                         % (self.index_parallel_workers, schema, table))
+            try:
+                self.pgsql_conn.execute(reset_parallel_index)
+            except Exception as exp:
+                self.logger.error("reset parallel index error, error code is %s and error is %s"
+                                  % (exp.code, exp.message))
+            self.logger.info("reset parallel index workers %s for table %s.%s"
+                             % (self.index_parallel_workers, schema, table))
 
         return table_primary
 
