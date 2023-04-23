@@ -1,4 +1,3 @@
----
 # global settings
 pid_dir: '~/.pg_chameleon/pid/'
 log_dir: '~/.pg_chameleon/logs/'
@@ -13,10 +12,10 @@ dump_json: No
 # into a different one.
 
 type_override:
-  "tinyint(1)":
-    override_to: boolean
-    override_tables:
-      - "*"
+#  "tinyint(1)":
+#    override_to: boolean
+#    override_tables:
+#      - "*"
 
 
 # postgres  destination connection
@@ -24,7 +23,7 @@ pg_conn:
   host: "localhost"
   port: "5432"
   user: "usr_replica"
-  password: "never_commit_password"
+  password: "never_commit_passwords"
   database: "db_replica"
   charset: "utf8"
 
@@ -55,6 +54,9 @@ sources:
     copy_max_memory: "300M"
     copy_mode: 'file'
     out_dir: /tmp
+    csv_dir: /tmp
+    contain_columns: Yes
+    column_split: ','
     sleep_loop: 1
     on_error_replay: continue
     on_error_read: continue
