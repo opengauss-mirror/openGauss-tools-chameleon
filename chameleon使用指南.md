@@ -143,7 +143,7 @@ ALTER TABLE tbl_name REORGANIZE PARTITION partition_names INTO (partition_defini
 
 安装包下载地址：
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-5.0.0-py3-none-any.whl
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/chameleon-5.0.0-py3-none-any.whl
 
 其中5.0.0表示当前版本号，其可以通过chameleon --version命令查询。
 
