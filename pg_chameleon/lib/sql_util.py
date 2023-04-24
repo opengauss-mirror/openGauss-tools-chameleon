@@ -1651,8 +1651,8 @@ class DBObjectType(Enum):
         sql_on_dict = {
             DBObjectType.VIEW: "SELECT TABLE_NAME AS OBJECT_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '%s';",
             DBObjectType.TRIGGER: "SELECT TRIGGER_NAME AS OBJECT_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = '%s';",
-            DBObjectType.PROC: "SELECT NAME AS OBJECT_NAME FROM mysql.proc WHERE type = 'PROCEDURE' AND db = '%s';",
-            DBObjectType.FUNC: "SELECT NAME AS OBJECT_NAME FROM mysql.proc WHERE type = 'FUNCTION' AND db = '%s';"
+            DBObjectType.PROC: "SELECT ROUTINE_NAME AS OBJECT_NAME FROM information_schema.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' AND ROUTINE_SCHEMA = '%s';",
+            DBObjectType.FUNC: "SELECT ROUTINE_NAME AS OBJECT_NAME FROM information_schema.ROUTINES WHERE ROUTINE_TYPE = 'FUNCTION' AND ROUTINE_SCHEMA = '%s';"
         }
         return sql_on_dict[self]
 
