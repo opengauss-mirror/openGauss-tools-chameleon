@@ -246,7 +246,7 @@ class replica_engine(object):
                 sys.exit()
 
     def write_Json(self):
-        dump_jsons = {"table": [], "view": [], "function": [], "trigger": [], "procedure": []}
+        dump_jsons = {"total": [], "table": [], "view": [], "function": [], "trigger": [], "procedure": []}
         dump_object = self.mysql_source.getmanagerJson().copy()
         dump_object_name=''
         if(self.args.command =='init_replica'):
@@ -261,7 +261,10 @@ class replica_engine(object):
             dump_object_name='procedure'
 
         for key in dump_object:
-                dump_jsons[dump_object_name].append(dump_object[key])
+            if key == "total":
+                dump_jsons["total"] = dump_object[key]
+            else:
+            	dump_jsons[dump_object_name].append(dump_object[key])
         with open('data_'+self.args.config+'_'+self.args.command+'.json', 'w', encoding='utf8') as f:
             f.seek(0)
             json.dump(dump_jsons,f)
