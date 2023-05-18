@@ -11,6 +11,7 @@ import queue
 import codecs
 import json
 import secrets
+import time
 from os import remove
 import MySQLdb
 import MySQLdb.cursors
@@ -39,6 +40,7 @@ WKB_PREFIX_LEN = 4
 MARIADB = "MariaDB"
 
 
+BYTE_TO_MB_CONVERSION: int = 1024  * 1024
 # we set the default max size of csv file is 2M
 DEFAULT_MAX_SIZE_OF_CSV: int = 2 * 1024 * 1024
 MINIUM_QUEUE_SIZE: int = 5
@@ -120,7 +122,14 @@ class mysql_source(object):
     def initJson(cls):
         manager = multiprocessing.Manager()
         global managerJson 
-        managerJson = manager.dict({})
+        managerJson = manager.dict({"total": {}})
+        global totalRecord
+        totalRecord = manager.dict({"totalRecord": 0})
+        global totalData
+        totalData = manager.dict({"totalData": 0})
+        global initialTime
+        start_time = time.time()
+        initialTime = manager.dict({"initialTime": int(start_time)})
 
     @classmethod
     def getmanagerJson(cls):
@@ -1008,6 +1017,7 @@ class mysql_source(object):
         sql_rows = """
             SELECT
                 table_rows as table_rows,
+                avg_row_length as avg_row_length,
                 CASE
                     WHEN avg_row_length>0
                     then
@@ -1110,6 +1120,7 @@ class mysql_source(object):
         select_columns = task.select_columns
         total_rows = count_rows["table_rows"]
         copy_limit = int(count_rows["copy_limit"])
+        avg_row_length = int(count_rows["avg_row_length"])
         loading_schema = self.schema_loading[schema]["loading"]
         column_list = select_columns["column_list"]
         if copy_limit == 0:
@@ -1123,6 +1134,7 @@ class mysql_source(object):
             if self.dump_json:
                 percent = 1.0 if (slice + 1) > total_slices else  (slice + 1)/total_slices
                 self.__copied_progress_json("table",table,percent)
+                self.__copy_total_progress_json(copy_limit, avg_row_length)
         except Exception as e:
             if self.dump_json:
                 self.__copied_progress_json("table",table,process_state.FAIL_STATUS)
@@ -1243,6 +1255,29 @@ class mysql_source(object):
                 "percent":value
             }})
 
+    def __copy_total_progress_json(self, record, avg_row_length):
+        origin_record = totalRecord["totalRecord"]
+        total_record = origin_record + record
+        origin_data = totalData["totalData"]
+        total_data = origin_data + record * avg_row_length
+        data = format(total_data / BYTE_TO_MB_CONVERSION, '.2f')
+        start_time = initialTime["initialTime"]
+        tt = time.time()
+        current_time = int(tt)
+        migration_time = current_time - start_time
+        if migration_time > 0:
+            speed = format(total_data / migration_time / BYTE_TO_MB_CONVERSION, '.2f')
+        else:
+            speed = 0
+
+        totalRecord.update({"totalRecord": total_record})
+        totalData.update({"totalData": total_data})
+        managerJson.update({"total": {
+            "record": total_record,
+            "data": data,
+            "time": migration_time,
+            "speed": speed
+        }})
 
 
     def __create_indices(self, schema, table, pg_engine, cursor_buffered):
