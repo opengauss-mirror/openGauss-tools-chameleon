@@ -38,6 +38,7 @@ POLYGON_PREFIX_LEN = len('POLYGON ')
 LINESTR_PREFIX_LEN = len('LINESTRING ')
 WKB_PREFIX_LEN = 4
 MARIADB = "MariaDB"
+LOG_LEVEL_INDEX = 3
 
 
 BYTE_TO_MB_CONVERSION: int = 1024  * 1024
@@ -2038,7 +2039,7 @@ class mysql_source(object):
                     success_num += 1
                 except Exception as e:
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-                    self.logger.error(e)
+                    self.logger.error(e.message)
                     self.logger.error("Copying the source object fail %s : %s" %(db_object_type.value, object_name))
                     if self.dump_json:
                         self.__copied_progress_json(db_object_type.value,object_name,process_state.FAIL_STATUS)
@@ -2076,16 +2077,22 @@ class mysql_source(object):
         has_error = False  # a sign of whether the translation is successful
         # the log format on og-translator is: %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{100} - %msg%n
         for log in stderr.splitlines():
-            level_name = logging.getLevelName(log.split(' ')[3])
-            if level_name == logging.ERROR or not isinstance(level_name, int):
-                # when level_name value is ERROR
-                # it means there is an error log record in the translation, maybe the sql statement cannot be translated
-                # when level_name could not be got
-                # it means there is a problem with the project og-translator itself
-                has_error = True
-                self.logger.error(log)
+            log_split = log.split(' ')
+            if len(log_split) > LOG_LEVEL_INDEX:
+                level_name = logging.getLevelName(log_split[LOG_LEVEL_INDEX])
+                if level_name == logging.ERROR:
+                    # when level_name value is ERROR
+                    # it means there is an error log record in the translation, maybe the sql statement cannot be translated
+                    # when level_name could not be got
+                    # it means there is a problem with the project og-translator itself
+                    has_error = True
+                    self.logger.error(log)
+                elif not isinstance(level_name, int):
+                    print(log)
+                else:
+                    self.logger.log(level_name, log)
             else:
-                self.logger.log(level_name, log)
+                print(log)
         return has_error
 
     def __get_create_object_statement(self, create_object_metadata, db_object_type):
