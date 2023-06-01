@@ -1,14 +1,18 @@
-class copy_data_task:
-    def __init__(self, csv_file, count_rows, table, schema, select_columns, rows, slice=0):
+class CopyDataTask:
+    def __init__(self, csv_file, count_rows, table, schema, select_columns, rows, task_slice=0,
+                 contain_columns=False, column_split=','):
         self.csv_file = csv_file
         self.count_rows = count_rows
         self.table = table
         self.schema = schema
         self.select_columns = select_columns
         self.rows = rows
-        self.slice = slice
+        self.slice = task_slice
+        self.contain_columns = contain_columns
+        self.column_split = column_split
 
-class create_index_task:
+
+class CreateIndexTask:
     def __init__(self, table, schema, indices, destination_schema, master_status, is_parallel_create_index):
         self.table = table
         self.schema = schema
@@ -17,7 +21,8 @@ class create_index_task:
         self.master_status = master_status
         self.is_parallel_create_index = is_parallel_create_index
 
-class read_data_task:
+
+class ReadDataTask:
     def __init__(self, destination_schema, loading_schema, schema, table):
         self.destination_schema = destination_schema
         self.loading_schema = loading_schema

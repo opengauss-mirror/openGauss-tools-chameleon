@@ -2,6 +2,7 @@ import codecs
 import gc
 import io
 import logging
+import math
 import multiprocessing
 import os
 import re
@@ -29,7 +30,7 @@ from pg_chameleon import sql_token, ColumnType
 from pg_chameleon.lib.parallel_replication import BinlogTrxReader, MyGtidEvent, modified_my_gtid_event
 from pg_chameleon.lib.pg_lib import pg_engine
 from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
-from pg_chameleon.lib.task_lib import copy_data_task, create_index_task, read_data_task
+from pg_chameleon.lib.task_lib import CopyDataTask, CreateIndexTask, ReadDataTask
 from pg_chameleon.lib.task_lib import TableMetadataTask, ColumnMetadataTask
 from pg_chameleon.lib.task_lib import KeyWords
 
@@ -56,6 +57,8 @@ DEFAULT_FLOAT_FORMAT_STR = '{:6g}'
 DEFAULT_DOUBLE_FORMAT_STR = '{:18.16e}'
 CSV_FILE_SUB_DIR = "chameleon"
 DATA_NUM_FOR_PARALLEL_INDEX = 100000
+DATA_NUM_FOR_A_SLICE_CSV = 1000000
+
 
 class process_state():
     PRECISION_START = 0
@@ -74,6 +77,7 @@ class process_state():
     def is_fail_status(self, status):
         return status == self.FAIL_STATUS
 
+
 class reader_cursor_manager(object):
     def __init__(self, conn_buffered, conn_unbuffered):
         self.cursor_buffered = conn_buffered.cursor()
@@ -85,6 +89,7 @@ class reader_cursor_manager(object):
     def close(self):
         self.cursor_buffered.close()
         self.cursor_unbuffered.close()
+
 
 class mysql_source(object):
     def __init__(self):
@@ -128,9 +133,9 @@ class mysql_source(object):
         totalRecord = manager.dict({"totalRecord": 0})
         global totalData
         totalData = manager.dict({"totalData": 0})
-        global initialTime
+        global INITIAL_TIME
         start_time = time.time()
-        initialTime = manager.dict({"initialTime": int(start_time)})
+        INITIAL_TIME = manager.dict({"initialTime": int(start_time)})
 
     @classmethod
     def getmanagerJson(cls):
@@ -510,15 +515,42 @@ class mysql_source(object):
             except KeyError:
                 pass
 
-            self.schema_tables[schema] = table_list
+            self.schema_tables[schema] = self.filter_table_list_from_csv_file(schema, table_list)
+
             if self.dump_json:
-                for index,key in enumerate(table_list):
-                    managerJson.update({key:{
-                        "name":key,
-                        "status":process_state.ACCOMPLISH_STATUS if table_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
-                        "percent":process_state.PRECISION_START
+                for index, key in enumerate(table_list):
+                    managerJson.update({key: {
+                        "name": key,
+                        "status": process_state.ACCOMPLISH_STATUS
+                        if table_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
+                        "percent": process_state.PRECISION_START
                     }})
 
+    def filter_table_list_from_csv_file(self, schema, table_list):
+        """
+            The method filters table list from csv files.
+
+            :param schema: the schema name
+            :param table_list: the table list
+            :return: the table list filtered by csv files
+            :rtype: list
+        """
+        if len(self.csv_dir) == 0:
+            self.logger.warning("csv dir is empty, so copy data according to select query for all mysql schemas.")
+        else:
+            csv_table_list = []
+            for table in table_list:
+                table_csv_file = self.csv_dir + os.path.sep + schema + "_" + table + ".csv"
+                if os.path.exists(table_csv_file):
+                    csv_table_list.append(table)
+            if len(csv_table_list) == 0:
+                self.logger.warning("csv dir exists, but no valid csv file, so copy data according to select query "
+                                    "for %s schema." % schema)
+            else:
+                self.logger.info("csv dir is valid, so copy data according to existed csv files for %s schema."
+                                 % schema)
+                table_list = [table for table in table_list if table in csv_table_list]
+        return table_list
 
     def create_destination_schemas(self):
         """
@@ -536,12 +568,12 @@ class mysql_source(object):
             self.logger.debug("Keep existing schema is set to True. Skipping the schema creation." )
             for schema in self.schema_list:
                 destination_schema = self.schema_mappings[schema]
-                self.schema_loading[schema] = {'destination':destination_schema, 'loading':destination_schema}
+                self.schema_loading[schema] = {'destination': destination_schema, 'loading': destination_schema}
         else:
             for schema in self.schema_list:
                 destination_schema = self.schema_mappings[schema]
                 loading_schema = "_%s_tmp" % destination_schema[0:59]
-                self.schema_loading[schema] = {'destination':destination_schema, 'loading':loading_schema}
+                self.schema_loading[schema] = {'destination': destination_schema, 'loading': loading_schema}
                 self.logger.debug("Creating the loading schema %s." % loading_schema)
                 self.pg_engine.create_database_schema(loading_schema)
                 self.logger.debug("Creating the destination schema %s." % destination_schema)
@@ -701,22 +733,15 @@ class mysql_source(object):
                 self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
         self.logger.info("Finish creating all the tables")
 
-    def generate_table_metadata_statement(self, schema, table, cursor=None):
+    def generate_table_metadata_statement(self, schema, table, table_count, cursor=None):
         """
             The method gets table metadata including schema, table, table_count, contain primary key.
 
             :param schema: the origin schema
             :param table: the table name
+            :param table_count: the table count
             :param cursor: the cursor
         """
-        table_count_select = """SELECT COUNT(*) COUNT FROM %s.%s""" % (schema, table)
-        if cursor is None:
-            self.cursor_buffered.execute(table_count_select)
-            table_count = self.cursor_buffered.fetchone()['COUNT']
-        else:
-            cursor.execute(table_count_select)
-            table_count = cursor.fetchone()['COUNT']
-
         contain_primary_key_select = """SELECT COUNT(*) COUNT FROM information_schema.KEY_COLUMN_USAGE 
             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s"""
         if cursor is None:
@@ -730,7 +755,6 @@ class mysql_source(object):
         else:
             task = TableMetadataTask(schema, table, table_count, 1)
         self.table_metadata_queue.put(task, block=True)
-        return table_count >= DATA_NUM_FOR_PARALLEL_INDEX
 
     def generate_column_metadata_statement(self, schema, table, cursor=None):
         """
@@ -943,9 +967,9 @@ class mysql_source(object):
                 break
             if engine is not None:
                 # this is the data_writer process
-                if isinstance(task, copy_data_task):
+                if isinstance(task, CopyDataTask):
                     self.copy_table_data(task, engine)
-                elif isinstance(task, create_index_task):
+                elif isinstance(task, CreateIndexTask):
                     self.create_index_process(task, engine)
                 elif isinstance(task, TableMetadataTask):
                     self.write_metadata_file(task, True)
@@ -955,7 +979,7 @@ class mysql_source(object):
                     self.logger.error("unknown write task type")
             elif conn_unbuffered is not None and conn_buffered is not None:
                 # this is the data_reader process
-                if isinstance(task, read_data_task):
+                if isinstance(task, ReadDataTask):
                     self.read_data_process(conn_buffered, conn_unbuffered, task)
                 else:
                     self.logger.error("unknown read task type")
@@ -971,9 +995,13 @@ class mysql_source(object):
 
         self.logger.info("Copying the source table %s into %s.%s" % (table, loading_schema, table))
         try:
-            master_status, is_parallel_create_index = self.read_data_from_table(schema, table, cursor_manager)
+            if self.is_read_data_from_csv(schema, table):
+                master_status, is_parallel_create_index = self.read_data_from_csv(schema, table, cursor_manager)
+            else:
+                master_status, is_parallel_create_index = self.read_data_from_table(schema, table, cursor_manager)
             indices = self.__get_index_data(schema=schema, table=table, cursor_buffered=cursor_manager.cursor_buffered)
-            index_write_task = create_index_task(table, schema, indices, destination_schema, master_status, is_parallel_create_index)
+            index_write_task = CreateIndexTask(table, schema, indices, destination_schema, master_status,
+                                                 is_parallel_create_index)
             readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
             if self.index_waiting_queue.qsize() > readers:
                 self.write_task_queue.put(self.index_waiting_queue.get(block=True))
@@ -1002,19 +1030,107 @@ class mysql_source(object):
         column_file.write(json_string + os.linesep)
         column_file.close()
 
-    def read_data_from_table(self, schema, table, cursor_manager):
+    def is_read_data_from_csv(self, schema, table):
         """
-            The method copy the data between the origin and destination table.
-            The method locks the table read only mode and  gets the log coordinates which are returned to the calling method.
+            The method judge copy the data from the table or csv file.
 
             :param schema: the origin's schema
             :param table: the table name
-            :param cursor_buffered: the cursor which store the data in client
-            :param cursor_unbuffered: the cursor which store the data in server
-            :return: the log coordinates for the given table
-            :rtype: dictionary
+            :return: true if read data from the csv file
+            :rtype: bool
         """
-        self.logger.debug("estimating rows in %s.%s" % (schema , table))
+        origin_csv_file = "%s_%s.csv" % (schema, table)
+        origin_csv_path = self.csv_dir + os.path.sep + origin_csv_file
+        return os.path.exists(origin_csv_path)
+
+    def read_data_from_csv(self, schema, table, cursor_manager):
+        """
+            The method copy the data from existed csv file.
+
+            :param schema: the origin's schema
+            :param table: the table name
+            :param cursor_manager: the cursor manager
+            :return: the log coordinates for the given table and parallel create index flag
+            :rtype: list
+        """
+        self.logger.info("find csv file for table %s.%s, and directly use csv file for copy, omit select query"
+                         " from mysql" % (schema, table))
+        self.logger.debug("estimating rows in %s.%s" % (schema, table))
+
+        cursor_buffered = cursor_manager.cursor_buffered
+        # get master status
+        self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table))
+        master_status = self.get_master_coordinates(cursor_buffered)
+
+        origin_csv_file = "%s_%s.csv" % (schema, table)
+        origin_csv_path = self.csv_dir + os.path.sep + origin_csv_file
+        self.logger.info("statistic line number for %s file" % origin_csv_path)
+        line_num_cmd = "wc -l -c %s | awk -F \" \" '{print$1,$2}'"
+        line_num_and_bytes = os.popen(line_num_cmd % origin_csv_path).read().strip()
+        line_num = int(line_num_and_bytes.split(" ")[0])
+        bytes_num = int(line_num_and_bytes.split(" ")[1])
+        avg_row_length = bytes_num // line_num
+
+        self.logger.info("statistic line number %s for %s file" % (line_num, origin_csv_path))
+
+        self.logger.info("generate table and column metadata csv file")
+        is_parallel_create_index = line_num >= DATA_NUM_FOR_PARALLEL_INDEX
+        self.generate_table_metadata_statement(schema, table, line_num, cursor_buffered)
+        self.generate_column_metadata_statement(schema, table, cursor_buffered)
+        select_columns = self.generate_select_statements(schema, table, cursor_buffered)
+
+        count_rows = {"table_rows": line_num, "copy_limit": DATA_NUM_FOR_A_SLICE_CSV, "avg_row_length": avg_row_length}
+        total_slice = math.ceil(line_num / DATA_NUM_FOR_A_SLICE_CSV)
+        suffix_length = len(str(total_slice))
+        file_suffix = "%s_%s_slice" % (schema, table)
+        self.logger.info("split csv file for table %s.%s into %s slices of %s rows"
+                         % (schema, table, total_slice, DATA_NUM_FOR_A_SLICE_CSV))
+        split_cmd = "split -l %s %s -d -a %s /%s/%s && ls %s | grep %s" \
+                    % (DATA_NUM_FOR_A_SLICE_CSV, origin_csv_path, suffix_length, self.csv_dir, file_suffix,
+                       self.csv_dir, file_suffix)
+        self.logger.info(split_cmd)
+        file_list = os.popen(split_cmd).readlines()
+        self.logger.info("finish splitting csv files")
+        for file_name in file_list:
+            split_file_name = file_name.strip()
+            index = int(split_file_name[-1 * suffix_length:])
+            csv_file = file_suffix + str(index + 1) + ".csv"
+            generated_csv_path = self.out_dir + os.path.sep + CSV_FILE_SUB_DIR + os.path.sep + csv_file
+            split_csv = self.csv_dir + os.path.sep + split_file_name
+            if os.system("mv %s %s" % (split_csv, generated_csv_path)) == 0:
+                csv_len = int(str(os.popen(line_num_cmd % generated_csv_path).read()).strip().split(" ")[0])
+            else:
+                self.logger.error("mv csv file to out_dir failed for table {}.{}", schema, table)
+            if self.contains_columns and index == 0:
+                # read column name list
+                with open(generated_csv_path, 'r') as f:
+                    first_line = f.readline()
+                    select_columns["column_list"] = first_line.strip()
+                task = CopyDataTask(generated_csv_path, count_rows, table, schema, select_columns, csv_len, index,
+                                      True, self.column_split)
+            else:
+                task = CopyDataTask(generated_csv_path, count_rows, table, schema, select_columns, csv_len, index,
+                                      False, self.column_split)
+            self.write_task_queue.put(task, block=True)
+            self.logger.info("Table %s.%s generated %s slices of total %s slices"
+                             % (schema, table, index+1, len(file_list)))
+        self.logger.info("Table %s.%s generated %s slices" % (schema, table, len(file_list)))
+        return [master_status, is_parallel_create_index]
+
+    def read_data_from_table(self, schema, table, cursor_manager):
+        """
+            The method copy the data between the origin and destination table.
+            The method locks the table read only mode and gets the log coordinates which are returned to
+            the calling method.
+
+            :param schema: the origin's schema
+            :param table: the table name
+            :param cursor_manager: the cursor manager
+            :return: the log coordinates for the given table and parallel create index flag
+            :rtype: list
+        """
+        self.logger.debug("read data from table according to select query")
+        self.logger.debug("estimating rows in %s.%s" % (schema, table))
         sql_rows = """
             SELECT
                 table_rows as table_rows,
@@ -1046,24 +1162,24 @@ class mysql_source(object):
         copy_limit = int(count_rows["copy_limit"])
         table_txs = count_rows["transactions"] == "YES"
         if copy_limit == 0:
-            copy_limit = 1000000
+            copy_limit = DATA_NUM_FOR_A_SLICE_CSV
         num_slices = int(total_rows//copy_limit)
         range_slices = list(range(num_slices+1))
         total_slices = len(range_slices)
 
-        self.logger.debug("The table %s.%s will be copied in %s  estimated slice(s) of %s rows, using a transaction %s"  % (schema, table, total_slices, copy_limit, table_txs))
-
+        self.logger.debug("The table %s.%s will be copied in %s estimated slice(s) of %s rows, using a transaction %s"
+                          % (schema, table, total_slices, copy_limit, table_txs))
         # lock the table and flush the cache
         self.lock_table(schema, table, cursor_buffered)
 
         # get master status
         self.logger.debug("collecting the master's coordinates for table `%s`.`%s`" % (schema, table))
         master_status = self.get_master_coordinates(cursor_buffered)
-
-        is_parallel_create_index = self.generate_table_metadata_statement(schema, table, cursor_buffered)
+        is_parallel_create_index = total_rows >= DATA_NUM_FOR_PARALLEL_INDEX
+        self.generate_table_metadata_statement(schema, table, total_rows, cursor_buffered)
         self.generate_column_metadata_statement(schema, table, cursor_buffered)
-
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
+
         sql_csv = "SELECT /*+ MAX_EXECUTION_TIME(%d) */ %s as data FROM `%s`.`%s`;" %\
             (MAX_EXECUTION_TIME, select_columns["select_csv"], schema, table)
         self.logger.debug("Executing query for table %s.%s" % (schema, table))
@@ -1075,9 +1191,9 @@ class mysql_source(object):
             if table_txs:
                 self.logger.debug("Finish executing query, so unlocking the tables")
                 self.unlock_tables(cursor_buffered)
-            slice = 0
+            task_slice = 0
             while True:
-                out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_FILE_SUB_DIR, schema, table, slice + 1)
+                out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_FILE_SUB_DIR, schema, table, task_slice + 1)
                 csv_results = cursor_unbuffered.fetchmany(copy_limit)
                 if len(csv_results) == 0:
                     break
@@ -1088,17 +1204,19 @@ class mysql_source(object):
                     csv_file = codecs.open(out_file, 'wb', self.charset, buffering=-1)
                     csv_file.write(csv_data)
                     csv_file.close()
-                    task = copy_data_task(out_file, count_rows, table, schema, select_columns, len(csv_results), slice)
+                    task = CopyDataTask(out_file, count_rows, table, schema, select_columns,
+                                          len(csv_results), task_slice)
                 else:
                     if self.copy_mode != 'direct':
                         self.logger.warning("unknown copy mode, use direct instead")
                     csv_file = io.BytesIO()
                     csv_file.write(csv_data.encode())
                     csv_file.seek(0)
-                    task = copy_data_task(csv_file, count_rows, table, schema, select_columns, len(csv_results), slice)
+                    task = CopyDataTask(csv_file, count_rows, table, schema, select_columns,
+                                          len(csv_results), task_slice)
                 self.write_task_queue.put(task, block=True)
-                slice += 1
-                self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, slice, total_slices))
+                task_slice += 1
+                self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, task_slice, total_slices))
 
         return [master_status, is_parallel_create_index]
 
@@ -1114,7 +1232,6 @@ class mysql_source(object):
         if csv_file is None:
             self.logger.warning("this is an empty csv file, you should check your batch for errors")
             return
-        rows = task.rows
         count_rows = task.count_rows
         schema = task.schema
         table = task.table
@@ -1125,39 +1242,36 @@ class mysql_source(object):
         loading_schema = self.schema_loading[schema]["loading"]
         column_list = select_columns["column_list"]
         if copy_limit == 0:
-            copy_limit = 1000000
+            copy_limit = DATA_NUM_FOR_A_SLICE_CSV
         num_slices = int(total_rows // copy_limit)
         range_slices = list(range(num_slices + 1))
         total_slices = len(range_slices)
-        slice = task.slice
+        task_slice = task.slice
+        contain_columns = task.contain_columns
+        column_split = task.column_split
         try:
-            writer_engine.copy_data(csv_file, loading_schema, table, column_list)
+            writer_engine.copy_data(csv_file, loading_schema, table, column_list, contain_columns, column_split)
             if self.dump_json:
-                percent = 1.0 if (slice + 1) > total_slices else  (slice + 1)/total_slices
-                self.__copied_progress_json("table",table,percent)
+                percent = 1.0 if (task_slice + 1) > total_slices else (task_slice + 1) / total_slices
+                self.__copied_progress_json("table", table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
         except Exception as e:
             if self.dump_json:
-                self.__copied_progress_json("table",table,process_state.FAIL_STATUS)
+                self.__copied_progress_json("table", table, process_state.FAIL_STATUS)
             self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
-            self.logger.info(
-                "Table %s.%s error in PostgreSQL copy, saving slice number for the fallback to insert statements" % (
-                loading_schema, table))
-            slice_insert.append(slice)
+            self.logger.info("Table %s.%s error in copy csv mode, saving slice number for the fallback to "
+                             "insert statements" % (loading_schema, table))
+            slice_insert.append(task_slice)
         finally:
             csv_file.close()
             del task
             gc.collect()
-        self.print_progress(slice + 1, total_slices, schema, table)
-        slice += 1
+        self.print_progress(task_slice + 1, total_slices, schema, table)
+        task_slice += 1
         if len(slice_insert) > 0:
-            ins_arg = {}
-            ins_arg["slice_insert"] = slice_insert
-            ins_arg["table"] = table
-            ins_arg["schema"] = schema
-            ins_arg["select_stat"] = select_columns["select_stat"]
-            ins_arg["column_list"] = column_list
-            ins_arg["copy_limit"] = copy_limit
+            ins_arg = {"slice_insert": slice_insert, "table": table, "schema": schema,
+                       "select_stat": select_columns["select_stat"], "column_list": column_list,
+                       "copy_limit": copy_limit}
             self.insert_table_data(ins_arg)
 
     def insert_table_data(self, ins_arg):
@@ -1262,7 +1376,7 @@ class mysql_source(object):
         origin_data = totalData["totalData"]
         total_data = origin_data + record * avg_row_length
         data = format(total_data / BYTE_TO_MB_CONVERSION, '.2f')
-        start_time = initialTime["initialTime"]
+        start_time = INITIAL_TIME["initialTime"]
         tt = time.time()
         current_time = int(tt)
         migration_time = current_time - start_time
@@ -1357,7 +1471,7 @@ class mysql_source(object):
             table_list = self.schema_tables[schema]
             for table in table_list:
                 self.connect_db_buffered()
-                task = read_data_task(destination_schema=destination_schema, loading_schema=loading_schema,
+                task = ReadDataTask(destination_schema=destination_schema, loading_schema=loading_schema,
                                       schema=schema, table=table)
                 self.read_task_queue.put(task, block=True)
 
@@ -1486,6 +1600,26 @@ class mysql_source(object):
             self.logger.error("The source %s doesn't exists " % (self.source))
             sys.exit()
         self.out_dir = self.source_config["out_dir"]
+        try:
+            csv_dir = self.source_config["csv_dir"]
+            if os.path.exists(csv_dir):
+                self.csv_dir = csv_dir
+            else:
+                self.csv_dir = ""
+        except KeyError:
+            self.csv_dir = ""
+        try:
+            contains_columns = self.source_config["contain_columns"]
+            if type(contains_columns) == bool:
+                self.contains_columns = contains_columns
+            else:
+                self.contains_columns = False
+        except KeyError:
+            self.contains_columns = False
+        try:
+            self.column_split = self.source_config["column_split"]
+        except KeyError:
+            self.column_split = ","
         self.copy_mode = self.source_config["copy_mode"]
         self.pg_engine.lock_timeout = self.source_config["lock_timeout"]
         self.pg_engine.grant_select_to = self.source_config["grant_select_to"]

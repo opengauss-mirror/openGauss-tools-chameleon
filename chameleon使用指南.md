@@ -259,7 +259,7 @@ type_override:
 
      override_tables:
 
-       \- "*"
+       - "*"
 
   "float(5,2)":
 
@@ -267,7 +267,7 @@ type_override:
 
      override_tables:
 
-       \- "*"
+       - "*"
 
  
 
@@ -336,8 +336,16 @@ mysql:
      copy_mode: 'file'
 
      out_dir: /tmp
+ 
+     csv_dir: /tmp
+ 
+     contain_columns: Yes
+
+     column_split: ','
 
      sleep_loop: 1
+
+     index_parallel_workers: 16
 
      type: mysql
 
@@ -416,7 +424,7 @@ type_override:
 
      override_tables:
 
-       \- "*"
+       - "*"
 
   "float(5,2)":
 
@@ -424,7 +432,7 @@ type_override:
 
      override_tables:
 
-       \- schema.table
+       - schema.table
 ```
 
 
@@ -619,6 +627,22 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 用于指定并发创建索引时bgworker的线程数，取值范围：[0, 32]，其中0表示关闭并发，默认值为16。当表数据量大于100000时，创建索引将通过该参数显式指定并发线程数。
 
+### 3.4.28. csv_dir
+
+全量数据导入支持两种方式：(1)从MySQL库查询数据导入openGauss；(2)从指定CSV文件导入特定表的数据。该参数用于指定方式二从CSV文件直接进行全量数据导入的CSV文件目录。
+其中一个表对应一个CSV文件，CSV文件命名规则为schema_table.csv。针对一个schema，若csv_dir为非法路径，或者该路径下未包含该schema对应表的CSV文件，该schema的表
+数据将通过方式一从MySQL库查询数据导入openGauss；若该路径下包含部分表的CSV文件，将只迁移该部分表的结构及数据。
+
+### 3.4.29. contain_columns
+
+对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件首行是否包含表的列名信息，默认值为No，表示不包含，此时将对表的所有列进行copy数据，
+csv文件对应列的顺序应和表的所有列的自然顺序保持一致。若取值为Yes，则表示文件首行为表的列名信息，copy数据时将跳过首行，对于多列信息，列名之间应按照','分隔，此时将对首行指定
+的列进行copy数据。
+
+### 3.4.30. column_split
+
+对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件多列之间的分隔符，默认值为','，可自定义。
+
 # **4.** 分区表迁移规则
 
 分区表迁移的基本思想是对于openGauss支持的分区类型，迁移成对应的分区表即可。对于openGauss支持的分区表类型详见以下表格，其中不支持的分区表将暂不迁移。
@@ -742,69 +766,69 @@ rollbar_key: ''
 
 rollbar_env: ''
 
-dump_json： No
+dump_json: No
 
  
 
-\# type_override allows the user to override the default type conversion
+# type_override allows the user to override the default type conversion
 
-\# into a different one.
+# into a different one.
 
 type_override:
 
-"tinyint(1)":
+  "tinyint(1)":
 
-  override_to: boolean
+    override_to: boolean
 
-  override_tables:
+    override_tables:
 
-  \- "*"
+      - "*"
 
  
 
-\# postgres destination connection
+# postgres destination connection
 
 pg_conn:
 
- host: "1.1.1.1"
+  host: "127.0.0.1"
 
- port: "5432"
+  port: "5432"
 
- user: "opengauss_test"
+  user: "opengauss_test"
 
- password: "password_123"
+  password: "password123"
 
- database: "opengauss_database"
+  database: "opengauss_database"
 
- charset: "utf8"
+  charset: "utf8"
 
  
 
 sources:
 
- mysql:
+  mysql:
 
-readers: 4
+    readers: 4
 
-writers: 4
+    writers: 4
 
-  db_conn:
+    db_conn:
 
-   host: "1.1.1.1"  
+      host: "127.0.0.1"  
 
-   port: "3306"
+      port: "3306"
 
-   user: "mysql_test"
+      user: "mysql_test"
 
-   password: "password123"
+      password: "password123"
 
-   charset: 'utf8'
+      charset: 'utf8'
 
-   connect_timeout: 10
+      connect_timeout: 10
 
   schema_mappings:
 
-   mysql_database:sch_mysql_database
+    mysql_database: sch_mysql_database
 
   limit_tables:
 
@@ -812,7 +836,7 @@ writers: 4
 
   grant_select_to:
 
-   \- usr_migration
+    - usr_migration
 
   lock_timeout: "120s"
 
@@ -830,6 +854,12 @@ writers: 4
 
   out_dir: /tmp
 
+  csv_dir: /tmp
+
+  contain_columns: Yes
+
+  column_split: ','
+
   sleep_loop: 1
 
   on_error_replay: continue
@@ -837,6 +867,8 @@ writers: 4
   on_error_read: continue
 
   auto_maintenance: "disabled"
+
+  index_parallel_workers: 16
 
   gtid_enable: false
 
@@ -851,9 +883,9 @@ column_case_sensitive: Yes
 mysql_restart_config: Yes
 ```
 
-以上配置文件的含义是，迁移数据时，MySQL侧使用的用户名密码分别是 **mysql_test** 和 **password123**。MySQL服务器的IP和port分别是**1.1.1.1**和**3306**，待迁移的数据库是**mysql_database**。
+以上配置文件的含义是，迁移数据时，MySQL侧使用的用户名密码分别是 **mysql_test** 和 **password123**。MySQL服务器的IP和port分别是**127.0.0.1**和**3306**，待迁移的数据库是**mysql_database**。
 
-openGauss侧使用的用户名密码分别是 **opengauss_test**和 **password_123**。openGauss服务器的IP和port分别是**1.1.1.1**和**5432**，目标数据库是**opengauss_database**，同时会在**opengauss_database**下创建**sch_mysql_database** schema，迁移的表都将位于该schema下。
+openGauss侧使用的用户名密码分别是 **opengauss_test**和 **password123**。openGauss服务器的IP和port分别是**127.0.0.1**和**5432**，目标数据库是**opengauss_database**，同时会在**opengauss_database**下创建**sch_mysql_database** schema，迁移的表都将位于该schema下。
 
 需要注意的是，这里使用的用户需要有远程连接MySQL和openGauss的权限，以及对对应数据库的读写权限。同时对于openGauss，运行chameleon所在的机器需要在openGauss的远程访问白名单中。对于MySQL，用户还需要有RELOAD、REPLICATION CLIENT、REPLICATION SLAVE的权限。
 
@@ -1008,7 +1040,7 @@ END;**
 
 ![img](./images/wps2.jpg) 
 
-​	在openGauss侧查看 test_decimal 表的数据：
+在openGauss侧查看 test_decimal 表的数据：
 
 ![img](./images/wps3.jpg) 
 

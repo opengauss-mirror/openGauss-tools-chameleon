@@ -4813,7 +4813,7 @@ class pg_engine(object):
             )
 
 
-    def copy_data(self, csv_file, schema, table, column_list):
+    def copy_data(self, csv_file, schema, table, column_list, contain_columns, column_split):
         """
             The method copy the data into postgresql using psycopg2's copy_expert.
             The csv_file is a file like object which can be either a  csv file or a string io object, accordingly with the
@@ -4825,7 +4825,9 @@ class pg_engine(object):
             :param table: the table name used in the COPY FROM command
             :param column_list: A string with the list of columns to use in the COPY FROM command already quoted and comma separated
         """
-        sql_copy='COPY "%s"."%s" (%s) FROM STDIN WITH NULL \'NULL\' CSV QUOTE \'"\' DELIMITER \',\' ESCAPE \'"\' ; ' % (schema, table, column_list)
+        header = "HEADER" if contain_columns else ""
+        sql_copy = 'COPY "%s"."%s" (%s) FROM STDIN WITH NULL \'NULL\' CSV QUOTE \'"\' DELIMITER \'%s\' ESCAPE \'"\' %s'\
+                   % (schema, table, column_list, column_split, header)
         receive_stmt = self.pgsql_conn.prepare(sql_copy)
         receive_stmt.load_rows(csv_file)
 
