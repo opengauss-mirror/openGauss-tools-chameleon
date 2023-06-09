@@ -99,6 +99,7 @@ class mysql_source(object):
         """
         self.statement_skip = ['BEGIN', 'COMMIT']
         self.schema_tables = {}
+        self.enable_compress_tables = {}
         self.schema_mappings = {}
         self.schema_loading = {}
         self.schema_list = []
@@ -122,6 +123,7 @@ class mysql_source(object):
         self.table_metadata_queue = None
         self.column_metadata_queue = None
         self.__init_decode_map()
+        self.enable_compress = False
         self.sql_translator = SqlTranslator()
  
     @classmethod
@@ -478,6 +480,29 @@ class mysql_source(object):
                         pass
                 self.skip_tables[table_list[0]]  = list_exclude
 
+        self.__get_compress_table()
+
+    def __get_compress_table(self):
+        if self.enable_compress:
+            self.compress_tables = {}
+            compress_tables = self.source_config["compress_tables"]
+            if compress_tables:
+                table_compress = [table.split('.') for table in compress_tables]
+                self.__parse_compress_table_list(table_compress)
+
+    def __parse_compress_table_list(self, table_compress):
+        for table_list in table_compress:
+            list_exclude = []
+            try:
+                list_exclude = self.compress_tables[table_list[0]]
+                list_exclude.append(table_list[1])
+            except KeyError:
+                try:
+                    list_exclude.append(table_list[1])
+                except IndexError:
+                    pass
+            self.compress_tables[table_list[0]] = list_exclude
+
     def get_table_list(self):
         """
             The method pulls the table list from the information_schema.
@@ -515,6 +540,8 @@ class mysql_source(object):
             except KeyError:
                 pass
 
+            self.get_compress_tables(schema, table_list)
+
             self.schema_tables[schema] = self.filter_table_list_from_csv_file(schema, table_list)
 
             if self.dump_json:
@@ -525,6 +552,18 @@ class mysql_source(object):
                         if table_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
                         "percent": process_state.PRECISION_START
                     }})
+
+    def get_compress_tables(self, schema, table_list):
+        if self.enable_compress:
+            try:
+                compress_tables = self.compress_tables[schema]
+                if len(compress_tables) > 0:
+                    self.enable_compress_tables[schema] = [table for table in table_list if table in compress_tables]
+                else:
+                    self.enable_compress_tables[schema] = table_list
+            except KeyError:
+                self.enable_compress_tables[schema] = table_list
+                pass
 
     def filter_table_list_from_csv_file(self, schema, table_list):
         """
@@ -727,10 +766,18 @@ class mysql_source(object):
         self.logger.info("Start to create tables")
         for schema in self.schema_tables:
             table_list = self.schema_tables[schema]
+            try:
+                compress_tables = self.enable_compress_tables[schema]
+                enable_compress = True
+            except KeyError:
+                enable_compress = False
             for table in table_list:
                 table_metadata = self.get_table_metadata(table, schema)
                 partition_metadata = self.get_partition_metadata(table, schema)
-                self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
+                if enable_compress and table in compress_tables:
+                    self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql', True)
+                else:
+                    self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
         self.logger.info("Finish creating all the tables")
 
     def generate_table_metadata_statement(self, schema, table, table_count, cursor=None):

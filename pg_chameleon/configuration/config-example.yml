@@ -17,8 +17,16 @@ type_override:
 #    override_tables:
 #      - "*"
 
+# specify the compress properties when creating tables
+compress_properties:
+  compresstype: 0
+  compress_level: 0
+  compress_chunk_size: 4096
+  compress_prealloc_chunks: 0
+  compress_byte_convert: false
+  compress_diff_convert: false
 
-# postgres  destination connection
+# postgres destination connection
 pg_conn:
   host: "localhost"
   port: "5432"
@@ -44,6 +52,9 @@ sources:
       - delphis_mediterranea.foo
     skip_tables:
       - delphis_mediterranea.bar
+    enable_compress: No
+    compress_tables:
+      - delphis_mediterranea.foo
     grant_select_to:
       - usr_readonly
     lock_timeout: "120s"
