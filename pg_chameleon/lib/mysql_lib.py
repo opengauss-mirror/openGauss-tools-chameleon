@@ -806,10 +806,6 @@ class mysql_source(object):
                     THEN
                         concat('cast(`',column_name,'` AS unsigned)')
                     WHEN
-                        data_type IN ('"""+ColumnType.M_DATATIME.value+"""','"""+ColumnType.M_TIMESTAMP.value+"""','"""+ColumnType.M_DATE.value+"""')
-                    THEN
-                        concat('nullif(`',column_name,'`,cast("0000-00-00 00:00:00" as date))')
-                    WHEN
                         data_type IN ('"""+"','".join(self.postgis_spatial_datatypes)+"""')
                     THEN
                         concat('ST_AsText(',column_name,')')
