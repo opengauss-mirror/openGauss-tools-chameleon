@@ -3104,7 +3104,7 @@ class pg_engine(object):
         # when we need to quote value, we also need to add '\' to escape single quotation mark for string type
         quote = ''
         if self.mysql_version < COLUMNDEFAULT_INCLUDE_QUOTE_VER:
-            if column_type in self.character_type:
+            if column_type in self.character_type or column_type == ColumnType.O_ENUM.value:
                 quote = '\''
                 origin_default = origin_default.replace('\'', '\\\'')
             elif column_type in self.date_type:
@@ -3202,7 +3202,8 @@ class pg_engine(object):
                 ddl_columns.append(  ' %s %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
 
             if "column_comment" in column and column["column_comment"] != "":
-                column["column_comment"] = repr(column["column_comment"])
+                single_quote = "\'"
+                column["column_comment"] = single_quote + str(column["column_comment"]).replace(single_quote, single_quote + single_quote) + single_quote
                 if self.column_case_sensitive:
                     column_comments = column_comments + ('comment on column "%s"."%s"."%s" is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
@@ -3986,10 +3987,18 @@ class pg_engine(object):
         table_ddl = table_ddl["table"]
 
         for enum_statement in enum_ddl:
-            self.pgsql_conn.execute(enum_statement)
+            try:
+            	self.pgsql_conn.execute(enum_statement)
+            except Exception as exp:
+                self.logger.error("Execute create enum type failed, the error sql is %s, sql code is %s, and " 
+                                  "error message is %s" % (enum_statement, exp.code, exp.message))
 
         for composite_statement in composite_ddl:
-            self.pgsql_conn.execute(composite_statement)
+            try:
+                self.pgsql_conn.execute(composite_statement)
+            except Exception as exp:
+                self.logger.error("Execute create composite statement failed, the error sql is %s, sql code "
+                                  "is %s, and error message is %s" % (composite_statement, exp.code, exp.message))
         try:
             self.pgsql_conn.execute(table_ddl)
         except Exception as exp:
@@ -3997,7 +4006,11 @@ class pg_engine(object):
                               " message is %s" % (table_ddl, exp.code, exp.message))
 
         if column_comments_ddl != '':
-            self.pgsql_conn.execute(column_comments_ddl)
+            try:
+                self.pgsql_conn.execute(column_comments_ddl)
+            except Exception as exp:
+                self.logger.error("Execute create column comment ddl failed, the error sql is %s, sql code "
+                                  "is %s, and error message is %s" % (column_comments_ddl, exp.code, exp.message))
 
     def update_schema_mappings(self):
         """
