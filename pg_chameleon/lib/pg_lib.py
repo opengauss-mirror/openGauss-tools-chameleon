@@ -3202,7 +3202,8 @@ class pg_engine(object):
                 ddl_columns.append(  ' %s %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
 
             if "column_comment" in column and column["column_comment"] != "":
-                column["column_comment"] = repr(column["column_comment"])
+                single_quote = "\'"
+                column["column_comment"] = single_quote + str(column["column_comment"]).replace(single_quote, single_quote + single_quote) + single_quote
                 if self.column_case_sensitive:
                     column_comments = column_comments + ('comment on column "%s"."%s"."%s" is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
