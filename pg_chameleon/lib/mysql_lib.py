@@ -1260,6 +1260,13 @@ class mysql_source(object):
             slice_insert.append(task_slice)
         finally:
             csv_file.close()
+            if self.copy_mode == "file":
+                try:
+                    remove(task.csv_file)
+                except Exception as exp:
+                    self.logger.error("remove csv file failed %s and the exp message is %s"
+                                      % (task.csv_file, exp.message))
+            del csv_file
             del task
             gc.collect()
         self.print_progress(task_slice + 1, total_slices, schema, table)
