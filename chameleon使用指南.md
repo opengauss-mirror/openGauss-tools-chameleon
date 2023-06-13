@@ -269,9 +269,27 @@ type_override:
 
        - "*"
 
- 
 
-\# postgres destination connection
+
+# specify the compress properties when creating tables
+
+compress_properties:
+
+  compresstype: 0
+
+  compress_level: 0
+
+  compress_chunk_size: 4096
+
+  compress_prealloc_chunks: 0
+
+  compress_byte_convert: false
+
+  compress_diff_convert: false
+
+
+
+# postgres destination connection
 
 pg_conn:
 
@@ -318,6 +336,10 @@ mysql:
      limit_tables:
 
      skip_tables:
+
+     enable_compress: No
+
+     compress_tables:
 
      grant_select_to:
 
@@ -643,6 +665,52 @@ csv文件对应列的顺序应和表的所有列的自然顺序保持一致。�
 
 对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件多列之间的分隔符，默认值为','，可自定义。
 
+### 3.4.31. enable_compress
+
+用于指定是否启用行存表的压缩属性。默认为No，表示不启用。当设置为Yes时，表示启用压缩相关属性。压缩相关参数由compress_properties参数配置。
+启用压缩属性的表由compress_tables参数配置。
+
+### 3.4.32. compress_tables
+
+当启用行存表的压缩属性时，该参数用于指定用于压缩的表的白名单，支持表级和库级的表的白名单，默认对整个迁移的库按照参数compress_properties配置的
+属性进行压缩，也可指定具体的表按照参数compress_properties配置的属性进行压缩。
+
+## **3.5.** 压缩参数配置
+
+compress_properties用于配置行存表压缩相关的参数，详情请参考[create table压缩参数](https://docs.opengauss.org/zh/docs/latest/docs/SQLReference/CREATE-TABLE.html)。
+
+### 3.5.1. compresstype
+
+行存表参数，设置行存表压缩算法。1代表pglz算法（不推荐使用），2代表zstd算法，默认不压缩。该参数生效后不允许修改。（仅支持ASTORE下的普通表）。
+取值范围：0~2，默认值为0。
+
+### 3.5.2. compress_level
+
+行存表参数，设置行存表压缩算法等级，仅当compresstype为2时生效。压缩等级越高，表的压缩效果越好，表的访问速度越慢。该参数允许修改，
+修改后影响变更数据、新增数据的压缩等级。（仅支持ASTORE下的普通表）。取值范围：-31~31，默认值为0。
+
+### 3.5.3. compress_chunk_size
+
+行存表参数，设置行存表压缩chunk块大小。chunk数据块越小，预期能达到的压缩效果越好，同时数据越离散，影响表的访问速度。该参数生效后不允许修改。
+（仅支持ASTORE下的普通表）。取值范围：与页面大小有关。在页面大小为8k场景，取值范围为：512、1024、2048、4096。 默认值：4096。
+
+### 3.5.4. compress_prealloc_chunks
+
+行存表参数，设置行存表压缩chunk块预分配数量。预分配数量越大，表的压缩率相对越差，离散度越小，访问性能越好。该参数允许修改，
+修改后影响变更数据、新增数据的预分配数量。（仅支持ASTORE下的普通表）。取值范围：0~7，默认值为0。
+当COMPRESS_CHUNK_SIZE为512和1024时，支持预分配设置最大为7；当COMPRESS_CHUNK_SIZE为2048时，支持预分配设置最大为3；
+当COMPRESS_CHUNK_SIZE为4096时，支持预分配设置最大为1。
+
+### 3.5.5. compress_byte_convert
+
+行存表参数，设置行存表压缩字节转换预处理。在一些场景下可以提升压缩效果，同时会导致一定性能劣化。该参数允许修改，修改后决定变更数据、
+新增数据是否进行字节转换预处理。当COMPRESS_DIFF_CONVERT为真时，该值不允许修改为假。取值范围：布尔值，默认关闭，设置为false。
+
+### 3.5.6. compress_diff_convert
+
+行存表参数，设置行存表压缩字节差分预处理。只能与compress_byte_convert一起使用。在一些场景下可以提升压缩效果，同时会导致一定性能劣化。
+该参数允许修改，修改后决定变更数据、新增数据是否进行字节差分预处理。取值范围：布尔值，默认关闭，设置为false。
+
 # **4.** 分区表迁移规则
 
 分区表迁移的基本思想是对于openGauss支持的分区类型，迁移成对应的分区表即可。对于openGauss支持的分区表类型详见以下表格，其中不支持的分区表将暂不迁移。
@@ -784,7 +852,25 @@ type_override:
 
       - "*"
 
- 
+
+
+# specify the compress properties when creating tables
+
+compress_properties:
+
+  compresstype: 0
+
+  compress_level: 0
+
+  compress_chunk_size: 4096
+
+  compress_prealloc_chunks: 0
+
+  compress_byte_convert: false
+
+  compress_diff_convert: false
+
+
 
 # postgres destination connection
 
@@ -833,6 +919,10 @@ sources:
   limit_tables:
 
   skip_tables:
+
+  enable_compress: No
+
+  comporess_tables:
 
   grant_select_to:
 

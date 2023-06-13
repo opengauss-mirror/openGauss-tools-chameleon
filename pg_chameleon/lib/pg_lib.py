@@ -535,6 +535,7 @@ class pg_engine(object):
         self.idx_ddl={}
         self.type_ddl={}
         self.idx_sequence=0
+        self.enable_compress = False
         self.type_dictionary = {
             ColumnType.M_INTEGER.value:ColumnType.O_INTEGER.value,
             ColumnType.M_MINT.value:ColumnType.O_INTEGER.value,
@@ -3154,7 +3155,7 @@ class pg_engine(object):
 
         column_comments = ''
         ddl_head = 'CREATE TABLE "%s"."%s" (' % (destination_schema, table_name)
-        ddl_tail = ");"
+        ddl_tail = ")"
         ddl_columns = []
         ddl_enum=[]
         table_ddl = {}
@@ -3968,7 +3969,7 @@ class pg_engine(object):
         stmt(batch_id, schema, table,hex_row)
 
 
-    def create_table(self,  table_metadata, partition_metadata, table_name,  schema, metadata_type):
+    def create_table(self,  table_metadata, partition_metadata, table_name,  schema, metadata_type, enable_compress=False):
         """
             Executes the create table returned by __build_create_table (mysql or pgsql) on the destination_schema.
 
@@ -3985,6 +3986,11 @@ class pg_engine(object):
         composite_ddl = table_ddl["composite"]
         column_comments_ddl = ( table_ddl["column_comments"] if "column_comments" in table_ddl else '' )
         table_ddl = table_ddl["table"]
+
+        if enable_compress and len(self.compress_param_map) > 0:
+            print(self.compress_param_map)
+            compress_sql = [(key + " = " + str(self.compress_param_map[key])) for key in self.compress_param_map]
+            table_ddl += " with (" + ', '.join(compress_sql) + ");"
 
         for enum_statement in enum_ddl:
             try:
