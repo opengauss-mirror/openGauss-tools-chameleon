@@ -992,21 +992,20 @@ class mysql_source(object):
         return master_status
 
     def data_reader(self):
-        with self.get_connect(True) as conn_buffered, self.get_connect(False) as conn_unbuffered:
-            self.execute_task(queue=self.read_task_queue, conn_unbuffered=conn_unbuffered, conn_buffered=conn_buffered)
+        self.execute_task(task_queue=self.read_task_queue)
 
     def data_writer(self):
         writer_engine = self.get_new_engine()
         writer_engine.connect_db()
         writer_engine.set_source_status("initialising")
-        self.execute_task(queue=self.write_task_queue, engine=writer_engine)
+        self.execute_task(task_queue=self.write_task_queue, engine=writer_engine)
         writer_engine.disconnect_db()
 
-    def execute_task(self, queue, engine=None, conn_buffered=None, conn_unbuffered=None):
+    def execute_task(self, task_queue, engine=None):
         while True:
-            task = queue.get(block=True)
+            task = task_queue.get(block=True)
             if task is None:
-                queue.put(task, block=True)
+                task_queue.put(task, block=True)
                 break
             if engine is not None:
                 # this is the data_writer process
@@ -1020,21 +1019,22 @@ class mysql_source(object):
                     self.write_metadata_file(task, False)
                 else:
                     self.logger.error("unknown write task type")
-            elif conn_unbuffered is not None and conn_buffered is not None:
-                # this is the data_reader process
-                if isinstance(task, ReadDataTask):
-                    self.read_data_process(conn_buffered, conn_unbuffered, task)
-                else:
-                    self.logger.error("unknown read task type")
+            # this is the data_reader process
+            elif isinstance(task, ReadDataTask):
+                self.read_data_process(task)
             else:
-                self.logger.error("this is an error process")
+                self.logger.error("unknown read task type")
 
-    def read_data_process(self, conn_buffered, conn_unbuffered, task):
+
+    def read_data_process(self, task):
+        conn_buffered = self.get_connect(True)
+        conn_unbuffered = self.get_connect(False)
         cursor_manager = reader_cursor_manager(conn_buffered, conn_unbuffered)
         destination_schema = task.destination_schema
         loading_schema = task.loading_schema
         schema = task.schema
         table = task.table
+        self.logger.warning("create connection for table %s.%s" % (schema, table))
 
         self.logger.info("Copying the source table %s into %s.%s" % (table, loading_schema, table))
         try:
@@ -1049,11 +1049,19 @@ class mysql_source(object):
             if self.index_waiting_queue.qsize() > readers:
                 self.write_task_queue.put(self.index_waiting_queue.get(block=True))
             self.index_waiting_queue.put(index_write_task, block=True)
-        except:
+        except Exception as exp:
+            self.logger.error(exp)
             self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
             raise
         finally:
-            cursor_manager.close()
+            try:
+                cursor_manager.close()
+                conn_buffered.close()
+                conn_unbuffered.close()
+            except Exception as exp:
+                self.logger.warning("catch exception in cursor and conn close and exp is %s" % exp)
+            finally:
+                self.logger.warning("close connection for table %s.%s" % (schema, table))
 
     def write_metadata_file(self, task, is_table_task):
         """
@@ -1237,7 +1245,11 @@ class mysql_source(object):
             task_slice = 0
             while True:
                 out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_FILE_SUB_DIR, schema, table, task_slice + 1)
-                csv_results = cursor_unbuffered.fetchmany(copy_limit)
+                try:
+                    csv_results = cursor_unbuffered.fetchmany(copy_limit)
+                except Exception as exp:
+                    self.logger.error("catch exception in fetch many and exp is %s" % exp)
+                    break
                 if len(csv_results) == 0:
                     break
                 # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
