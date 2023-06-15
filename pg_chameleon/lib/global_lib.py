@@ -351,17 +351,17 @@ class replica_engine(object):
     def write_Json(self):
         dump_jsons = {"total": [], "table": [], "view": [], "function": [], "trigger": [], "procedure": []}
         dump_object = self.mysql_source.getmanagerJson().copy()
-        dump_object_name=''
-        if(self.args.command =='init_replica'):
-            dump_object_name='table'
-        elif(self.args.command =='start_view_replica'):
-            dump_object_name='view'
-        elif(self.args.command =='start_trigger_replica'):
-            dump_object_name='trigger'
-        elif(self.args.command =='start_func_replica'):
-            dump_object_name='function'
-        elif(self.args.command =='start_proc_replica'):
-            dump_object_name='procedure'
+        dump_object_name = ''
+        if self.args.command == 'init_replica':
+            dump_object_name = 'table'
+        elif self.args.command == 'start_view_replica':
+            dump_object_name = 'view'
+        elif self.args.command == 'start_trigger_replica':
+            dump_object_name = 'trigger'
+        elif self.args.command == 'start_func_replica':
+            dump_object_name = 'function'
+        elif self.args.command == 'start_proc_replica':
+            dump_object_name = 'procedure'
 
         for key in dump_object:
             if key == "total":
