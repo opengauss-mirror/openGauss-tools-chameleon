@@ -1081,7 +1081,7 @@ chameleon支持将视图、触发器、自定义函数、存储过程从MySQL迁
 
 | 字段             | 类型                     | 描述                                                                             |
 | ---------------- | ------------------------ | -------------------------------------------------------------------------------- |
-| i_id_object      | bigint                | id                                                                               |
+| i_id_object      | bigint                | id，该列为主键列                                                                               |
 | i_id_source      | bigint                   | 与sch_schema.t_sources的id相对应                                                 |
 | en_object_type   | 枚举类型                 | 迁移对象所属类型（VIEW/TRIGGER/FUNC/PROC)                                        |
 | ts_created       | timestamp with time zone | 迁移时间                                                                         |
