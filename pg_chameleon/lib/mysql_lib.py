@@ -550,7 +550,8 @@ class mysql_source(object):
                         "name": key,
                         "status": process_state.ACCOMPLISH_STATUS
                         if table_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
-                        "percent": process_state.PRECISION_START
+                        "percent": process_state.PRECISION_START,
+                        "error": ""
                     }})
 
     def get_compress_tables(self, schema, table_list):
@@ -1310,10 +1311,10 @@ class mysql_source(object):
                 percent = 1.0 if (task_slice + 1) > total_slices else (task_slice + 1) / total_slices
                 self.__copied_progress_json("table", table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
-        except Exception as e:
+        except Exception as exp:
             if self.dump_json:
-                self.__copied_progress_json("table", table, process_state.FAIL_STATUS)
-            self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
+                self.__copied_progress_json("table", table, process_state.FAIL_STATUS, exp.message)
+            self.logger.error("SQLCODE: %s SQLERROR: %s" % (exp.code, exp.message))
             self.logger.info("Table %s.%s error in copy csv mode, saving slice number for the fallback to "
                              "insert statements" % (loading_schema, table))
             slice_insert.append(task_slice)
@@ -1392,7 +1393,8 @@ class mysql_source(object):
                 writer_engine.cleanup_idx_cons(destination_schema, table)
                 writer_engine.truncate_table(destination_schema, table)
             else:
-                table_pkey = writer_engine.create_indices(loading_schema, table, task.indices, task.is_parallel_create_index)
+                table_pkey = writer_engine.create_indices(loading_schema, table, task.indices,
+                                                          task.is_parallel_create_index)
             writer_engine.store_table(destination_schema, table, table_pkey, master_status)
             if self.keep_existing_schema:
                 self.logger.info(
@@ -1401,7 +1403,7 @@ class mysql_source(object):
         except:
             self.logger.error("create index or constraint error")
 
-    def print_progress (self, iteration, total, schema, table):
+    def print_progress(self, iteration, total, schema, table):
         """
             Print the copy progress in slices and estimated total slices.
             In order to reduce noise when the log level is info only the tables copied in multiple slices
@@ -1411,25 +1413,28 @@ class mysql_source(object):
             :param total: The estimated total slices
             :param table_name: The table name
         """
-        if iteration>=total:
+        if iteration >= total:
             total = iteration
-        if total>1:
+        if total > 1:
             self.logger.info("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
     
-    def __copied_progress_json (self,type_val,name,value):
-        if(managerJson[name]["percent"] < value):
-            if(process_state.is_precision_success(value)):
+    def __copied_progress_json(self, type_val, name, value, error=""):
+        if managerJson[name]["percent"] < value:
+            if process_state.is_precision_success(value):
                 status = process_state.ACCOMPLISH_STATUS
-            elif(process_state.is_fail_status(value)):
+            elif process_state.is_fail_status(value):
                 status = process_state.FAIL_STATUS
             else:
                 status = process_state.PROCESSING_STATUS
-            managerJson.update({name:{
-                "name":name,
-                "status":status,
-                "percent":value
+            if len(managerJson[name]["error"]) > 0:
+                error = managerJson[name]["error"] + error
+            managerJson.update({name: {
+                "name": name,
+                "status": status,
+                "percent": value,
+                "error": error
             }})
 
     def __copy_total_progress_json(self, record, avg_row_length):
@@ -2193,10 +2198,11 @@ class mysql_source(object):
             if self.dump_json:
                 self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
                 for object_metadata in self.cursor_buffered.fetchall():
-                    managerJson.update({object_metadata["OBJECT_NAME"]:{
-                        "name":object_metadata["OBJECT_NAME"],
-                        "status":process_state.PENDING_STATUS,
-                        "percent":process_state.PRECISION_START
+                    managerJson.update({object_metadata["OBJECT_NAME"]: {
+                        "name": object_metadata["OBJECT_NAME"],
+                        "status": process_state.PENDING_STATUS,
+                        "percent": process_state.PRECISION_START,
+                        "error": ""
                     }})
 
             self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
@@ -2212,16 +2218,18 @@ class mysql_source(object):
                 create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
 
                 # translate sql dialect in mysql format to opengauss format.
-                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement, self.pg_engine.column_case_sensitive)
+                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement,
+                                                                        self.pg_engine.column_case_sensitive)
                 tran_create_view_statement = self.__get_tran_create_view_statement(db_object_type, schema, stdout)
-                has_error = self.__unified_log(stderr)
+                has_error, error_message = self.__unified_log(stderr)
                 if has_error:
                     # if translation has any error, this replication also fail
                     # insert a failure record into the object replication status table
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-                    self.logger.error("Copying the source object fail %s : %s" %(db_object_type.value, object_name))
+                    self.logger.error("Copying the source object fail %s : %s" % (db_object_type.value, object_name))
                     if self.dump_json:
-                        self.__copied_progress_json(db_object_type.value,object_name,process_state.FAIL_STATUS)
+                        self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
+                                                    error_message)
                     failure_num += 1
                     continue
                 # if translate successful, add the corresponding database object to opengauss
@@ -2229,16 +2237,17 @@ class mysql_source(object):
                     self.pg_engine.add_object(object_name, self.schema_mappings[schema], tran_create_view_statement)
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement,
                                                                   tran_create_view_statement)
-                    self.logger.info("Copying the source object success %s : %s" %(db_object_type.value, object_name))
+                    self.logger.info("Copying the source object success %s : %s" % (db_object_type.value, object_name))
                     if self.dump_json:
-                        self.__copied_progress_json(db_object_type.value,object_name,process_state.PRECISION_SUCCESS)
+                        self.__copied_progress_json(db_object_type.value, object_name, process_state.PRECISION_SUCCESS)
                     success_num += 1
-                except Exception as e:
+                except Exception as exp:
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-                    self.logger.error(e.message)
-                    self.logger.error("Copying the source object fail %s : %s" %(db_object_type.value, object_name))
+                    self.logger.error(exp.message)
+                    self.logger.error("Copying the source object fail %s : %s" % (db_object_type.value, object_name))
                     if self.dump_json:
-                        self.__copied_progress_json(db_object_type.value,object_name,process_state.FAIL_STATUS)
+                        self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
+                                                    exp.message)
                     failure_num += 1
 
             self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
@@ -2252,15 +2261,22 @@ class mysql_source(object):
         :param stdout:
         :return:
         """
-        if db_object_type == DBObjectType.VIEW:
-            tran_create_view_statement = stdout.replace("CREATE ", "CREATE OR REPLACE ")\
-                .replace(schema + ".", self.schema_mappings[schema] + ".").replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
-        elif db_object_type == DBObjectType.TRIGGER:
-            tran_create_view_statement = stdout.replace(schema + ".", self.schema_mappings[schema] + ".").replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
-        elif db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
-            # can not end with '/', so delete it.
-            tran_create_view_statement = re.sub(r"/[\s]*$", "", stdout).replace(schema + ".", self.schema_mappings[schema] + ".").replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
-        else:
+        try:
+            if db_object_type == DBObjectType.VIEW:
+                tran_create_view_statement = stdout.replace("CREATE ", "CREATE OR REPLACE ")\
+                    .replace(schema + ".", self.schema_mappings[schema] + ".")\
+                    .replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
+            elif db_object_type == DBObjectType.TRIGGER:
+                tran_create_view_statement = stdout.replace(schema + ".", self.schema_mappings[schema] + ".")\
+                    .replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
+            elif db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
+                # can not end with '/', so delete it.
+                tran_create_view_statement = re.sub(r"/[\s]*$", "", stdout)\
+                    .replace(schema + ".", self.schema_mappings[schema] + ".")\
+                    .replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
+            else:
+                tran_create_view_statement = stdout
+        except KeyError:
             tran_create_view_statement = stdout
         return tran_create_view_statement
 
@@ -2272,24 +2288,27 @@ class mysql_source(object):
         """
         has_error = False  # a sign of whether the translation is successful
         # the log format on og-translator is: %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{100} - %msg%n
+        error_message = ["Translate failed by og-translator"]
         for log in stderr.splitlines():
             log_split = log.split(' ')
             if len(log_split) > LOG_LEVEL_INDEX:
                 level_name = logging.getLevelName(log_split[LOG_LEVEL_INDEX])
                 if level_name == logging.ERROR:
                     # when level_name value is ERROR
-                    # it means there is an error log record in the translation, maybe the sql statement cannot be translated
+                    # it means there is an error log record in the translation, maybe the sql statement
+                    # cannot be translated
                     # when level_name could not be got
                     # it means there is a problem with the project og-translator itself
                     has_error = True
                     self.logger.error(log)
+                    error_message.append(log)
                 elif not isinstance(level_name, int):
                     print(log)
                 else:
                     self.logger.log(level_name, log)
             else:
                 print(log)
-        return has_error
+        return [has_error, error_message]
 
     def __get_create_object_statement(self, create_object_metadata, db_object_type):
         """
