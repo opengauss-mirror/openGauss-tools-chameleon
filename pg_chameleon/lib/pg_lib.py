@@ -4850,7 +4850,7 @@ class pg_engine(object):
         receive_stmt = self.pgsql_conn.prepare(sql_copy)
         receive_stmt.load_rows(csv_file)
 
-    def insert_data(self, schema, table, insert_data , column_list):
+    def insert_data(self, schema, table, insert_data, column_list, column_list_select):
         """
             The method is a fallback procedure for when the copy method fails.
             The procedure performs a row by row insert, very slow but capable to skip the rows with problematic data (e.g. encoding issues).
@@ -4861,20 +4861,33 @@ class pg_engine(object):
             :param column_list: the list of column names quoted  for the inserts
         """
         sample_row = insert_data[0]
-        column_marker=','.join(['%s' for column in sample_row])
+        column_marker = ','.join(['%s' for column in sample_row])
 
-        sql_head='INSERT INTO "%s"."%s"(%s) VALUES (%s);' % (schema, table, column_list, column_marker)
+        sql_head = 'INSERT INTO "%s"."%s"(%s) VALUES (%s);' % (schema, table, column_list, column_marker)
+        self.logger.info(sql_head)
         for data_row in insert_data:
             try:
                 data_row = list(data_row)
                 for key in range(len(data_row)):
-                    if(data_row[key] != None):
-                        data_row[key] = "'" + data_row[key].replace("'","''") + "'"
+                    if data_row[key] is not None:
+                        data_row[key] = "'" + data_row[key].replace("'", "''") + "'"
                     else:
                         data_row[key] = 'null'
                 data_row = tuple(data_row)
                 self.pgsql_conn.execute(sql_head % data_row)
             except Exception as e:
+                if "column" in str(e.message) and "does not exist" in str(e.message):
+                    self.logger.warning("%s contains columns that do not exist, so using column list from select %s "
+                                        "and retry insert data" % (column_list, column_list_select))
+                    sql_head = 'INSERT INTO "%s"."%s"(%s) VALUES (%s);' % (schema, table, column_list_select,
+                                                                           column_marker)
+                    try:
+                        self.logger.info(sql_head)
+                        self.pgsql_conn.execute(sql_head % data_row)
+                    except Exception as exp:
+                        self.logger.error("SQLCODE: %s SQLERROR: %s" % (exp.code, exp.message))
+                        self.logger.error(sql_head % data_row)
+                else:
                     self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
                     self.logger.error(sql_head % data_row)
             except ValueError:
@@ -4887,11 +4900,9 @@ class pg_engine(object):
                         cleanup_data_row.append(item)
                 data_row = cleanup_data_row
                 try:
-                    self.pgsql_conn.execute(sql_head%data_row)
+                    self.pgsql_conn.execute(sql_head % data_row)
                 except:
                     self.logger.error("error when inserting the row, skipping the row")
-
-
             except:
                 self.logger.error("unexpected error when processing the row")
                 self.logger.error(" - > Table: %s.%s" % (schema, table))
