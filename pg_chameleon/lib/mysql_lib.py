@@ -908,8 +908,9 @@ class mysql_source(object):
                     column_list.append(statement["column_name"])
 
         select_columns["select_csv"] = "REPLACE(CONCAT('\"',CONCAT_WS('\",\"',%s),'\"'),'\"%s\"','NULL')" % (','.join(select_csv), random)
-        select_columns["select_stat"]  = ','.join(select_stat)
-        select_columns["column_list"]  = ','.join(column_list)
+        select_columns["select_stat"] = ','.join(select_stat)
+        select_columns["column_list"] = ','.join(column_list)
+        select_columns["column_list_select"] = select_columns["column_list"]
         return select_columns
 
     # Use an inner class to represent transactions
@@ -1260,16 +1261,16 @@ class mysql_source(object):
                     csv_file = codecs.open(out_file, 'wb', self.charset, buffering=-1)
                     csv_file.write(csv_data)
                     csv_file.close()
-                    task = CopyDataTask(out_file, count_rows, table, schema, select_columns,
-                                          len(csv_results), task_slice)
+                    task = CopyDataTask(out_file, count_rows, table, schema, select_columns, len(csv_results),
+                                        task_slice)
                 else:
                     if self.copy_mode != 'direct':
                         self.logger.warning("unknown copy mode, use direct instead")
                     csv_file = io.BytesIO()
                     csv_file.write(csv_data.encode())
                     csv_file.seek(0)
-                    task = CopyDataTask(csv_file, count_rows, table, schema, select_columns,
-                                          len(csv_results), task_slice)
+                    task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, len(csv_results),
+                                        task_slice)
                 self.write_task_queue.put(task, block=True)
                 task_slice += 1
                 self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, task_slice, total_slices))
@@ -1297,6 +1298,7 @@ class mysql_source(object):
         avg_row_length = int(count_rows["avg_row_length"])
         loading_schema = self.schema_loading[schema]["loading"]
         column_list = select_columns["column_list"]
+        column_list_select = select_columns["column_list_select"]
         if copy_limit == 0:
             copy_limit = DATA_NUM_FOR_A_SLICE_CSV
         num_slices = int(total_rows // copy_limit)
@@ -1334,7 +1336,7 @@ class mysql_source(object):
         if len(slice_insert) > 0:
             ins_arg = {"slice_insert": slice_insert, "table": table, "schema": schema,
                        "select_stat": select_columns["select_stat"], "column_list": column_list,
-                       "copy_limit": copy_limit}
+                       "column_list_select": column_list_select, "copy_limit": copy_limit}
             self.insert_table_data(ins_arg)
 
     def insert_table_data(self, ins_arg):
@@ -1351,6 +1353,7 @@ class mysql_source(object):
         schema = ins_arg["schema"]
         select_stat = ins_arg["select_stat"]
         column_list = ins_arg["column_list"]
+        column_list_select = ins_arg["column_list_select"]
         copy_limit = ins_arg["copy_limit"]
         loading_schema = self.schema_loading[schema]["loading"]
         conn_unbuffered = self.get_connect(False)
@@ -1364,7 +1367,7 @@ class mysql_source(object):
             select_stat, schema, table, offset, copy_limit)
             cursor_unbuffered.execute(sql_fallback)
             insert_data = cursor_unbuffered.fetchall()
-            self.pg_engine.insert_data(loading_schema, table, insert_data, column_list)
+            self.pg_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
             num_insert += 1
         cursor_unbuffered.close()
         conn_unbuffered.close()
