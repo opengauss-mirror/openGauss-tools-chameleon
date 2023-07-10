@@ -39,6 +39,7 @@ sources:
   mysql:
     readers: 4
     writers: 4
+    retry: 3
     db_conn:
       host: "localhost"
       port: "3306"

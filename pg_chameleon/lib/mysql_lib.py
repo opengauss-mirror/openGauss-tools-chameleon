@@ -59,6 +59,9 @@ CSV_FILE_SUB_DIR = "chameleon"
 DATA_NUM_FOR_PARALLEL_INDEX = 100000
 DATA_NUM_FOR_A_SLICE_CSV = 1000000
 
+# retry count for migration error tables
+RETRY_COUNT = 3
+
 
 class process_state():
     PRECISION_START = 0
@@ -125,11 +128,11 @@ class mysql_source(object):
         self.__init_decode_map()
         self.enable_compress = False
         self.sql_translator = SqlTranslator()
- 
+
     @classmethod
     def initJson(cls):
         manager = multiprocessing.Manager()
-        global managerJson 
+        global managerJson
         managerJson = manager.dict({"total": {}})
         global totalRecord
         totalRecord = manager.dict({"totalRecord": 0})
@@ -1051,19 +1054,22 @@ class mysql_source(object):
             if self.index_waiting_queue.qsize() > readers:
                 self.write_task_queue.put(self.index_waiting_queue.get(block=True))
             self.index_waiting_queue.put(index_write_task, block=True)
-        except Exception as exp:
+        except BaseException as exp:
             self.logger.error(exp)
             self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
-            raise
+            self.read_retry_queue.put(task, block=True)
         finally:
-            try:
-                cursor_manager.close()
-                conn_buffered.close()
-                conn_unbuffered.close()
-            except Exception as exp:
-                self.logger.warning("catch exception in cursor and conn close and exp is %s" % exp)
-            finally:
-                self.logger.warning("close connection for table %s.%s" % (schema, table))
+            self.__safe_close(cursor_manager, 'cursor_manager')
+            self.__safe_close(conn_buffered, 'conn_buffered')
+            self.__safe_close(conn_unbuffered, 'conn_unbuffered')
+            self.logger.warning("close connection for table %s.%s" % (schema, table))
+
+    def __safe_close(self, resource, desc='', func_name='close'):
+        try:
+            if resource is not None and hasattr(resource, func_name):
+                getattr(resource, func_name)()
+        except Exception as exp:
+            self.logger.warning("safe_close %s get exption: %s" % (desc, exp))
 
     def write_metadata_file(self, task, is_table_task):
         """
@@ -1169,6 +1175,7 @@ class mysql_source(object):
                              % (schema, table, index+1, len(file_list)))
         self.logger.info("Table %s.%s generated %s slices" % (schema, table, len(file_list)))
         return [master_status, is_parallel_create_index]
+    
 
     def read_data_from_table(self, schema, table, cursor_manager):
         """
@@ -1249,9 +1256,9 @@ class mysql_source(object):
                 out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_FILE_SUB_DIR, schema, table, task_slice + 1)
                 try:
                     csv_results = cursor_unbuffered.fetchmany(copy_limit)
-                except Exception as exp:
+                except BaseException as exp:
                     self.logger.error("catch exception in fetch many and exp is %s" % exp)
-                    break
+                    raise
                 if len(csv_results) == 0:
                     break
                 # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
@@ -1422,7 +1429,7 @@ class mysql_source(object):
             self.logger.info("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
-    
+
     def __copied_progress_json(self, type_val, name, value, error=""):
         if managerJson[name]["percent"] < value:
             if process_state.is_precision_success(value):
@@ -1513,6 +1520,37 @@ class mysql_source(object):
             pool.append(process)
             process.start()
 
+    def __before_copy_tables(self):
+        size = int(int(self.copy_max_memory) / DEFAULT_MAX_SIZE_OF_CSV)
+        self.write_task_queue = multiprocessing.Manager().Queue(size if size > MINIUM_QUEUE_SIZE else MINIUM_QUEUE_SIZE)
+        self.read_task_queue = multiprocessing.Manager().Queue()
+        self.read_retry_queue = multiprocessing.Manager().Queue()
+        self.index_waiting_queue = multiprocessing.Manager().Queue()
+        self.table_metadata_queue = multiprocessing.Manager().Queue()
+        self.column_metadata_queue = multiprocessing.Manager().Queue()
+
+    def __exec_copy_tables_tasks(self, tasks_lists):
+        self.logger.info('begin to exec copy table tasks')
+        readers = self.__get_count("readers", 8)
+        writers = self.__get_count("writers", 8)
+        writer_pool = []
+        reader_pool = []
+        self.init_workers(readers, self.data_reader, reader_pool, "reader-")
+        self.init_workers(writers, self.data_writer, writer_pool, "writer-")
+        tasks_lists.append(None)
+        for task in tasks_lists:
+            self.read_task_queue.put(task, block=True)
+        self.wait_for_finish(reader_pool)
+        reader_pool.clear()
+
+        meta_queues = [self.index_waiting_queue, self.table_metadata_queue, self.column_metadata_queue]
+        for meta_queue in meta_queues:
+            while not meta_queue.empty():
+                self.write_task_queue.put(meta_queue.get(block=True), block=True)
+        self.write_task_queue.put(None, block=True)
+        self.wait_for_finish(writer_pool)
+        writer_pool.clear()
+
     def __copy_tables(self):
         """
             The method copies the data between tables, from the mysql schema to the corresponding
@@ -1521,50 +1559,100 @@ class mysql_source(object):
             the indices are left in place and a REINDEX TABLE is executed after the copy.
         """
         self.delete_csv_file()
-        readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
-        writers = self.source_config["writers"] if self.source_config["writers"] > 0 else 1
-        size = int(int(self.copy_max_memory) / DEFAULT_MAX_SIZE_OF_CSV)
-        self.write_task_queue = multiprocessing.Manager().Queue(size if size > MINIUM_QUEUE_SIZE else MINIUM_QUEUE_SIZE)
-        self.read_task_queue = multiprocessing.Manager().Queue()
-        self.index_waiting_queue = multiprocessing.Manager().Queue()
-        self.table_metadata_queue = multiprocessing.Manager().Queue()
-        self.column_metadata_queue = multiprocessing.Manager().Queue()
-        writer_pool = []
-        reader_pool = []
+        # get retry count, default is 3
+        retry = self.__get_count("retry", RETRY_COUNT, True)
+        self.__before_copy_tables()
+        self.__exec_copy_tables_tasks(self.__build_all_tasks())
+        self.__retry_tasks(retry, self.read_retry_queue)
 
-        self.init_workers(readers, self.data_reader, reader_pool, "reader-")
-        self.init_workers(writers, self.data_writer, writer_pool, "writer-")
+    # NOTICE: retry less than 0 will not exit if table transfer failed!
+    def __retry_tasks(self, retry, tasks_queue):
+        if tasks_queue.empty() or retry == 0:
+            self.logger.info("[RETRY] no need enter retry now: retry=%d, tasks: %s" % (
+                retry,
+                "empty" if tasks_queue.empty() else "not_empty"))
+            return
+        tasks_list = []
+        while not tasks_queue.empty():
+            tasks_list.append(tasks_queue.get(block=True))
 
+        self.logger.info("[RETRY] failed table tasks received, retry count is %d. task:%s" % (retry, len(tasks_list)))
+        self.truncate_table_and_delete_csv(tasks_list)
+        self.__before_copy_tables()
+        self.__exec_copy_tables_tasks(tasks_list)
+        tasks_queue = self.read_retry_queue
+        if retry < 0:
+            self.__retry_tasks(retry, tasks_queue)
+        else:
+            self.__retry_tasks(retry - 1, tasks_queue)
+
+    def __get_count(self, key, default_val, enable_less_than_zero=False):
+        if key not in self.source_config:
+            return default_val
+        val = int(self.source_config[key])
+        if enable_less_than_zero:
+            return val
+        return default_val if (val < 0) else val
+
+    # build task by schema_tables
+    def __build_all_tasks(self):
+        tasks = []
         for schema in self.schema_tables:
             loading_schema = self.schema_loading[schema]["loading"]
             destination_schema = self.schema_loading[schema]["destination"]
             table_list = self.schema_tables[schema]
             for table in table_list:
-                self.connect_db_buffered()
                 task = ReadDataTask(destination_schema=destination_schema, loading_schema=loading_schema,
-                                      schema=schema, table=table)
-                self.read_task_queue.put(task, block=True)
-
-        self.read_task_queue.put(None, block=True)
-        self.wait_for_finish(reader_pool)
-        while not self.index_waiting_queue.empty():
-            task = self.index_waiting_queue.get(block=True)
-            self.write_task_queue.put(task, block=True)
-        while not self.table_metadata_queue.empty():
-            task = self.table_metadata_queue.get(block=True)
-            self.write_task_queue.put(task, block=True)
-        while not self.column_metadata_queue.empty():
-            task = self.column_metadata_queue.get(block=True)
-            self.write_task_queue.put(task, block=True)
-        self.write_task_queue.put(None, block=True)
-        self.wait_for_finish(writer_pool)
-        writer_pool.clear()
-        reader_pool.clear()
+                                    schema=schema, table=table)
+                tasks.append(task)
+        return tasks
 
     def wait_for_finish(self, processes):
         for process in processes:
             if process.is_alive():
                 process.join()
+
+    def truncate_table_and_delete_csv(self, retry_table_task_list):
+        """
+            Truncate table and delete csv file for error table in retry table list
+
+            :param retry_table_task_list: the try table task list
+        """
+        self.logger.info('[RETRY] begin to delete failed tables')
+        try:
+            self.pg_engine.connect_db()
+        except BaseException as exp:
+            self.logger.error('[RETRY] build new connect to og failed!')
+            raise
+        for a_read_data_task in retry_table_task_list:
+            table_name = a_read_data_task.table
+            loading_schema = a_read_data_task.loading_schema
+            schema = a_read_data_task.schema
+            self.logger.info('[RETRY] delete %s.%s'%(loading_schema, table_name))
+            try:
+                self.pg_engine.pgsql_conn.execute("truncate table %s.%s" % (loading_schema, table_name))
+            except Exception as exp:
+                self.logger.error("truncate table %s.%s failed and the error message is %s"
+                                  % (loading_schema, table_name, exp.message))
+            self.delete_table_csv_file(schema, table_name)
+        self.pg_engine.disconnect_db()
+        self.logger.info('[RETRY] end to delete failed tables')
+
+    def delete_table_csv_file(self, schema, table):
+        """
+            Delete csv file for error table
+
+            :param schema: the schema name
+            :param table: the table name
+        """
+        csv_file_dir = self.out_dir + os.sep + CSV_FILE_SUB_DIR
+        if os.path.exists(csv_file_dir):
+            file_list = os.listdir(csv_file_dir)
+            csv_prefix = "%s_%s_slice"
+            for file in file_list:
+                if file.startswith(csv_prefix):
+                    os.remove(csv_file_dir + os.sep + file)
+
 
     def delete_csv_file(self):
         """
@@ -2143,7 +2231,7 @@ class mysql_source(object):
         master_start = self.get_master_coordinates()
         self.pg_engine.set_source_status("initialising")
         self.pg_engine.clean_batch_data()
-        self.pg_engine.save_master_status(master_start)        
+        self.pg_engine.save_master_status(master_start)
         self.pg_engine.cleanup_source_tables()
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
@@ -2324,7 +2412,7 @@ class mysql_source(object):
         if db_object_type == DBObjectType.VIEW:
             create_object_statement = create_object_metadata["Create View"]
         elif db_object_type == DBObjectType.TRIGGER:
-            create_object_statement = create_object_metadata["SQL Original Statement"] + ";" 
+            create_object_statement = create_object_metadata["SQL Original Statement"] + ";"
         elif db_object_type == DBObjectType.PROC:
             create_object_statement = create_object_metadata["Create Procedure"]
         elif db_object_type == DBObjectType.FUNC:

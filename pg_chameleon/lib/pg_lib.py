@@ -865,6 +865,7 @@ class pg_engine(object):
                     sql_grant_usage = ("GRANT USAGE ON SCHEMA \"{}\" TO \"{}\";").format(schema_loading, db_role)
                     sql_alter_default_privs = ("ALTER DEFAULT PRIVILEGES IN SCHEMA \"{}\" GRANT SELECT ON TABLES TO \"{}\";").format(schema_loading, db_role)
                     try:
+                        self.connect_db()
                         self.pgsql_conn.execute(sql_grant_usage)
                         self.pgsql_conn.execute(sql_alter_default_privs)
                         for table in self.schema_tables[schema]:
