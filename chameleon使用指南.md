@@ -309,11 +309,13 @@ pg_conn:
 
 sources:
 
-mysql:
+  mysql:
 
      readers: 4
 
      writers: 4
+
+     retry: 3
 
      db_conn:
 
@@ -687,6 +689,11 @@ csv文件对应列的顺序应和表的所有列的自然顺序保持一致。�
 当启用行存表的压缩属性时，该参数用于指定用于压缩的表的白名单，支持表级和库级的表的白名单，默认对整个迁移的库按照参数compress_properties配置的
 属性进行压缩，也可指定具体的表按照参数compress_properties配置的属性进行压缩。
 
+### 3.4.33 retry
+
+对首次迁移失败的表，将加入迁移失败队列中，并增加重试机制，对失败的表重新进行迁移优先。该参数指定重试次数，取值为整数，默认值为3，可自定义。
+若设置为正数，则表示进行有限次重试，当失败队列为空或者重试次数已达到上限，迁移进程将自行退出；若设置为0，则表示不重试；若设置为负数，将无限尝试直至所有表迁移成功，否则迁移进程不会退出。
+
 ## **3.5.** 压缩参数配置
 
 compress_properties用于配置行存表压缩相关的参数，详情请参考[create table压缩参数](https://docs.opengauss.org/zh/docs/latest/docs/SQLReference/CREATE-TABLE.html)。
@@ -909,6 +916,8 @@ sources:
     readers: 4
 
     writers: 4
+
+    retry: 3
 
     db_conn:
 

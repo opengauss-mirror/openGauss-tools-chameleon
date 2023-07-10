@@ -215,6 +215,7 @@ class replica_engine(object):
                               "Yes or No, but current setting is %s" % mysql_restart_config)
             sys.exit()
 
+
     def initialize_pg_engine(self):
         # pg_engine instance initialisation
         self.pg_engine = pg_engine()
