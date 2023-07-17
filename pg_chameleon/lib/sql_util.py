@@ -9,125 +9,129 @@ from enum import Enum, unique
 DEFAULT_NUMERIC_PRECISION = 10
 DEFAULT_NUMERIC_SCALE = 0
 
+
 class ColumnType(Enum):
-    """
-        Some speical column type, pay attention to the enum prefix
-    """
+
     # mysql data type
+    M_INT_INT = 'int'
+    M_INT_TINT = 'tinyint'
+    M_INT_SINT = 'smallint'
+    M_INT_MINT = 'mediumint'
+    M_INT_BINT = 'bigint'
+    M_CHAR_CHAR = 'char'
+    M_CHAR_VARCHAR = 'varchar'
+    M_DATE = 'date'
+    M_TIME = 'time'
+    M_DATATIME = 'datetime'
+    M_TIMESTAMP = 'timestamp'
+    M_YEAR = 'year'
+    M_CHAR_TEXT = 'text'
+    M_CHAR_TTEXT = 'tinytext'
+    M_CHAR_MTEXT = 'mediumtext'
+    M_CHAR_LTEXT = 'longtext'
     M_HEX_BLOB = 'blob'
     M_HEX_T_BLOB = 'tinyblob'
     M_HEX_M_BLOB = 'mediumblob'
     M_HEX_L_BLOB = 'longblob'
-    M_S_GIS_MUL_POINT = 'multipoint'
-    M_S_GIS_MUL_LINESTR = 'multilinestring'
-    M_S_GIS_MUL_POLYGON = 'multipolygon'
-    M_S_GIS_GEOCOL = 'geometrycollection'
-    M_S_GIS_GEOCOL2 = 'geomcollection'
-    M_C_GIS_POINT = 'point'
-    M_C_GIS_GEO = 'geometry'
-    M_C_GIS_LINESTR = 'linestring'
-    M_C_GIS_POLYGON = 'polygon'
-    M_JSON = 'json'
     M_BINARY = 'binary'
     M_VARBINARY = 'varbinary'
-    M_BIT = 'bit'
-    M_DATATIME = 'datetime'
-    M_TIMESTAMP = 'timestamp'
-    M_DATE = 'date'
-    M_INTEGER = 'integer'
-    M_MINT = 'mediumint'
-    M_TINT = 'tinyint'
-    M_SINT = 'smallint'
-    M_INT = 'int'
-    M_BINT = 'bigint'
-    M_VARCHAR = 'varchar'
-    M_CHAR_VAR = 'character varying'
-    M_TEXT = 'text'
-    M_CHAR = 'char'
-    M_TIME = 'time'
-    M_TTEXT = 'tinytext'
-    M_MTEXT = 'mediumtext'
-    M_LTEXT = 'longtext'
     M_DECIMAL = 'decimal'
-    M_DEC = 'dec'
-    M_NUM = 'numeric'
     M_DOUBLE = 'double'
-    M_DOUBLE_P = 'double precision'
     M_FLOAT = 'float'
-    M_FLOAT4 = 'float4'
-    M_FLOAT8 = 'float8'
-    M_REAL = 'real'
-    M_FIXED = 'fixed'
-    M_YEAR = 'year'
+    M_BIT = 'bit'
     M_ENUM = 'enum'
     M_SET = 'set'
-    M_BOOL = 'bool'
-    M_BOOLEAN = 'boolean'
-    #opengauss data type
+    M_JSON = 'json'
+    M_C_GIS_GEO = 'geometry'
+    M_C_GIS_POINT = 'point'
+    M_C_GIS_LINESTR = 'linestring'
+    M_C_GIS_POLYGON = 'polygon'
+    M_S_GIS_MUL_POINT = 'multipoint'
+    M_S_GIS_GEOCOL = 'geometrycollection'
+    M_S_GIS_GEOCOL2 = 'geomcollection'
+    M_S_GIS_MUL_LINESTR = 'multilinestring'
+    M_S_GIS_MUL_POLYGON = 'multipolygon'
+
+    # opengauss data type
     O_INTEGER = 'integer'
+    O_INT = 'int'
+    O_TINT = 'tinyint'
+    O_SINT = 'smallint'
+    O_MINT = 'mediumint'
     O_BINT = 'bigint'
-    O_TIMESTAP = 'timestamp'
-    O_TIMESTAP_NO_TZ = 'timestamp without time zone'
+    O_C_CHARACTER = 'character'
+    O_C_CHAR_VAR = 'character varying'
+    O_C_CHAR = 'char'
+    O_C_VARCHAR = 'varchar'
     O_DATE = 'date'
     O_TIME = 'time'
-    O_TIME_NO_TZ = 'time without time zone'
+    O_DATATIME = 'datetime'
+    O_TIMESTAMP = 'timestamp'
+    O_YEAR = 'year'
+    O_C_TEXT = 'text'
     O_BLOB = 'blob'
-    O_BYTEA = 'bytea'
-    O_BIT = 'bit'
-    O_NUM = 'numeric'
+    O_TBLOB = 'tinyblob'
+    O_MBLOB = 'mediumblob'
+    O_LBLOB = 'longblob'
+    O_BINARY = 'binary'
+    O_VARBINARY = 'varbinary'
     O_NUMBER = 'number'
-    O_FLOAT = 'float'
-    O_BIGSERIAL = 'bigserial'
-    O_SERIAL = 'serial'
+    O_NUMERIC = 'numeric'
     O_DOUBLE_P = 'double precision'
-    O_DEC = 'decimal'
+    O_REAL = 'real'
+    O_BIT = 'bit'
     O_ENUM = 'enum'
+    O_SET = 'set'
     O_JSON = 'json'
-    O_BOOLEAN = 'boolean'
     O_POINT = 'point'
     O_PATH = 'path'
     O_POLYGON = 'polygon'
-    O_GEO = 'geometry'
-    O_C_BPCHAR = 'bpchar'
-    O_C_NCHAR = 'nchar'
-    O_C_VARCHAR = 'varchar'
-    O_C_VARCHAR2 = 'varchar2'
-    O_C_NVCHAR2 = 'nvarchar2'
-    O_C_CLOB = 'clob'
-    O_C_CHAR = 'char'
-    O_C_CHARACTER = 'character'
-    O_C_CHAR_VAR = 'character varying'
-    O_C_TEXT = 'text'
-    O_SET = 'set'
+    O_BYTEA = 'bytea'
 
-    def __name_start_with(s):
+    @staticmethod
+    def __name_start_with(prefix_name):
         results = set()
         for k, v in ColumnType.__members__.items():
-            if k.startswith(s):
+            if k.startswith(prefix_name):
                 results.add(v.value)
         return results
 
+    @staticmethod
     def get_mysql_hexify_always_type():
         return ColumnType.__name_start_with('M_HEX_')
 
+    @staticmethod
     def get_mysql_postgis_spatial_type():
         return ColumnType.__name_start_with('M_S_GIS_')
 
+    @staticmethod
     def get_mysql_common_spatial_type():
         return ColumnType.__name_start_with('M_C_GIS_')
 
-    def get_opengauss_char_type():
-        return ColumnType.__name_start_with('O_C_')
+    @staticmethod
+    def get_mysql_spatial_type():
+        return ColumnType.get_mysql_postgis_spatial_type().union(ColumnType.get_mysql_common_spatial_type())
 
+    @staticmethod
+    def get_mysql_char_type():
+        return ColumnType.__name_start_with('M_CHAR_')
+
+    @staticmethod
+    def get_mysql_float_type():
+        return {ColumnType.M_DECIMAL.value, ColumnType.M_DOUBLE.value, ColumnType.M_FLOAT.value}
+
+    @staticmethod
     def get_opengauss_date_type():
-        return {ColumnType.O_TIMESTAP.value, ColumnType.O_TIMESTAP_NO_TZ.value, ColumnType.O_DATE.value,
-                ColumnType.O_TIME.value, ColumnType.O_TIME_NO_TZ.value}
+        return {ColumnType.O_TIMESTAMP.value, ColumnType.O_DATATIME.value,
+                ColumnType.O_DATE.value, ColumnType.O_TIME.value}
 
+    @staticmethod
     def get_opengauss_hash_part_key_type():
-        return {ColumnType.O_INTEGER.value, ColumnType.O_BINT.value, ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_TEXT.value,
-            ColumnType.O_C_CHAR.value, ColumnType.O_NUM.value, ColumnType.O_NUMBER.value, ColumnType.O_DATE.value, ColumnType.O_TIME_NO_TZ.value,
-            ColumnType.O_TIMESTAP_NO_TZ.value, ColumnType.O_TIME.value, ColumnType.O_TIMESTAP.value, ColumnType.O_C_BPCHAR.value,
-            ColumnType.O_C_NCHAR.value, ColumnType.O_DEC.value}
+        return {ColumnType.O_INTEGER.value, ColumnType.O_INT.value, ColumnType.O_C_CHAR_VAR.value,
+                ColumnType.O_C_CHAR.value, ColumnType.O_C_CHAR_VAR.value, ColumnType.O_C_CHARACTER.value,
+                ColumnType.O_C_TEXT.value, ColumnType.O_NUMERIC.value, ColumnType.O_REAL.value,
+                ColumnType.O_DOUBLE_P.value, ColumnType.O_DATE.value, ColumnType.O_TIME.value,
+                ColumnType.O_TIMESTAMP.value, ColumnType.O_DATATIME.value}
 
 class sql_token(object):
     """
@@ -1676,7 +1680,7 @@ class SqlTranslator():
         """
         self.lib_dir = os.path.dirname(os.path.realpath(__file__))
 
-    def mysql_to_opengauss(self, raw_sql, column_case_sensitive):
+    def mysql_to_opengauss(self, raw_sql):
         """
         Translate sql dialect in mysql format to opengauss format.
         Implement the power of translating sql statements with calling java subproject og-translator through CMD.
@@ -1687,10 +1691,8 @@ class SqlTranslator():
         # use base64 to encode raw sql, avoiding the impact of special symbols on bash
         sql_encoded = str(base64.b64encode(raw_sql.encode("utf-8")), "utf-8")
         # chameleon calling the java subproject og-translator to implement the power of translating sql statements
-        if column_case_sensitive:
-            cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
-        else:
-            cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s' --column_case_sensitive_no" % (self.lib_dir, sql_encoded)
+
+        cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
         
         communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 

@@ -13,6 +13,8 @@ import py_opengauss
 
 from pg_chameleon import sql_token, ColumnType
 from pg_chameleon.lib.task_lib import KeyWords
+from py_opengauss import sys as pg_sys
+from py_opengauss.lib import Element
 
 # from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
@@ -20,6 +22,26 @@ COLUMNDEFAULT_INCLUDE_QUOTE_VER = 7 + sql_token.VERSION_SCALE * 2 + \
                                   (sql_token.VERSION_SCALE * sql_token.VERSION_SCALE) * 10
 
 ON_UPDATE_CURRENT_TIMESTAMP = "on update current_timestamp"
+UNSUPPORT_CHARACTER_SET = "latin1"
+UNSUPPORT_COLLATE = "latin1_swedish_ci"
+
+
+def format_error(val):
+    return f"[{val.code}] {val.details.get('severity')} {val.message}"
+
+
+def msg_hook(val):
+    def _str(val):
+        if not isinstance(val, Element):
+            if val is None:
+                return 'None'
+            return str(val)
+        return format_error(val)
+    print(_str(val))
+
+
+pg_sys.reset_msghook(msg_hook)
+
 
 class pg_encoder(json.JSONEncoder):
     def default(self, obj):
@@ -34,6 +56,7 @@ class pg_encoder(json.JSONEncoder):
 
             return str(obj)
         return json.JSONEncoder.default(self, obj)
+
 
 class pgsql_source(object):
     def __init__(self):
@@ -528,7 +551,7 @@ class pgsql_source(object):
 
 class pg_engine(object):
     def __init__(self):
-        python_lib=python_lib=os.path.dirname(os.path.realpath(__file__))
+        python_lib = os.path.dirname(os.path.realpath(__file__))
         self.sql_dir = "%s/../sql/" % python_lib
         self.sql_upgrade_dir = "%s/upgrade/" % self.sql_dir
         self.table_ddl={}
@@ -536,48 +559,7 @@ class pg_engine(object):
         self.type_ddl={}
         self.idx_sequence=0
         self.enable_compress = False
-        self.type_dictionary = {
-            ColumnType.M_INTEGER.value:ColumnType.O_INTEGER.value,
-            ColumnType.M_MINT.value:ColumnType.O_INTEGER.value,
-            ColumnType.M_TINT.value:ColumnType.O_INTEGER.value,
-            ColumnType.M_SINT.value:ColumnType.O_INTEGER.value,
-            ColumnType.M_INT.value:ColumnType.O_INTEGER.value,
-            ColumnType.M_BINT.value:ColumnType.O_BINT.value,
-            ColumnType.M_VARCHAR.value:ColumnType.O_C_CHAR_VAR.value,
-            ColumnType.M_CHAR_VAR.value:ColumnType.O_C_CHAR_VAR.value,
-            ColumnType.M_TEXT.value:ColumnType.O_C_TEXT.value,
-            ColumnType.M_CHAR.value:ColumnType.O_C_CHARACTER.value,
-            ColumnType.M_DATATIME.value:ColumnType.O_TIMESTAP_NO_TZ.value,
-            ColumnType.M_DATE.value:ColumnType.O_DATE.value,
-            ColumnType.M_TIME.value:ColumnType.O_TIME_NO_TZ.value,
-            ColumnType.M_TIMESTAMP.value:ColumnType.O_TIMESTAP_NO_TZ.value,
-            ColumnType.M_TTEXT.value:ColumnType.O_C_TEXT.value,
-            ColumnType.M_MTEXT.value:ColumnType.O_C_TEXT.value,
-            ColumnType.M_LTEXT.value:ColumnType.O_C_TEXT.value,
-            ColumnType.M_HEX_T_BLOB.value:ColumnType.O_BLOB.value,
-            ColumnType.M_HEX_M_BLOB.value:ColumnType.O_BLOB.value,
-            ColumnType.M_HEX_L_BLOB.value:ColumnType.O_BLOB.value,
-            ColumnType.M_HEX_BLOB.value:ColumnType.O_BLOB.value,
-            ColumnType.M_BINARY.value:ColumnType.O_BYTEA.value,
-            ColumnType.M_VARBINARY.value:ColumnType.O_BYTEA.value,
-            ColumnType.M_DECIMAL.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_DEC.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_NUM.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_DOUBLE.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_DOUBLE_P.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_FLOAT.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_FLOAT4.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_FLOAT8.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_REAL.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_FIXED.value:ColumnType.O_NUMBER.value,
-            ColumnType.M_BIT.value:ColumnType.O_INTEGER.value,
-            ColumnType.M_YEAR.value:ColumnType.O_INTEGER.value,
-            ColumnType.M_ENUM.value:ColumnType.O_ENUM.value,
-            ColumnType.M_SET.value:ColumnType.O_SET.value,
-            ColumnType.M_JSON.value:ColumnType.O_JSON.value,
-            ColumnType.M_BOOL.value:ColumnType.O_BOOLEAN.value,
-            ColumnType.M_BOOLEAN.value:ColumnType.O_BOOLEAN.value,
-        }
+        self.type_dictionary = {}
         self.dest_conn = None
         self.pgsql_conn = None
         self.logger = None
@@ -586,9 +568,10 @@ class pg_engine(object):
         self.max_range_column = 4
         self.mysql_version = 0
         self.hash_part_key_type = ColumnType.get_opengauss_hash_part_key_type()
-        self.character_type = ColumnType.get_opengauss_char_type()
+        self.character_type = ColumnType.get_mysql_char_type()
         self.date_type = ColumnType.get_opengauss_date_type()
-        self.index_parallel_workers = 16
+        self.index_parallel_workers = 2
+        self.migration_collate = True
         self.default_value_map = {
             # without time zone
             'curdate()': "CURRENT_DATE",
@@ -611,6 +594,22 @@ class pg_engine(object):
             {'version': '2.0.6',  'script': '205_to_206.sql'},
             {'version': '2.0.7',  'script': '206_to_207.sql'},
         ]
+
+    def check_migration_collate(self):
+        if not self.migration_collate:
+            return
+        sql_check = """show sql_compatibility"""
+        self.connect_db()
+        stmt = self.pgsql_conn.prepare(sql_check)
+        b_database_check = stmt.first()
+
+        sql_check = """select encoding from pg_database where datname = '%s'"""
+        stmt = self.pgsql_conn.prepare(sql_check % self.dest_conn["database"])
+        encoding = stmt.first()
+
+        # not b database or encoding id 0(SQL_ASCII), we will not migrate character set and collate
+        if b_database_check != 'B' or encoding == 0:
+            self.migration_collate = False
 
     def check_postgis(self):
         """
@@ -654,18 +653,21 @@ class pg_engine(object):
             }
         self.type_dictionary.update(spatial_data.items())
         return postgis_check
+
+
     def __del__(self):
         """
             Class destructor, tries to disconnect the postgresql connection.
         """
         self.disconnect_db()
 
+
     def connect_db(self):
         """
             Connects to PostgreSQL using the parameters stored in self.dest_conn. The dictionary is built using the parameters set via adding the key dbname to the self.pg_conn dictionary.
             This method's connection and cursors are widely used in the procedure except for the replay process which uses a
             dedicated connection and cursor.
-        """
+        """  
         if self.dest_conn and not self.pgsql_conn:
             strconn = "opengauss://%(host)s:%(port)s/%(database)s" % self.dest_conn
             self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"], sslmode="disable")
@@ -768,7 +770,7 @@ class pg_engine(object):
             for foreign_key in self.fk_metadata:
                 table_name = foreign_key["table_name"]
                 table_schema = schema_mappings[foreign_key["table_schema"]]
-                fk_name = ("%s_%s") % (foreign_key["constraint_name"][0:20] ,  str(fk_counter))
+                fk_name = ("%s_%s") % (foreign_key["constraint_name"][0:20], str(fk_counter))
                 fk_cols = foreign_key["fk_cols"]
                 referenced_table_name = foreign_key["referenced_table_name"]
                 referenced_table_schema = schema_mappings[foreign_key["referenced_table_schema"]]
@@ -777,7 +779,7 @@ class pg_engine(object):
                 delete_rule = foreign_key["delete_rule"]
                 fk_list.append({'fkey_name':fk_name, 'table_name':table_name, 'table_schema':table_schema})
                 sql_fkey = ("""
-                    ALTER TABLE "%s"."%s" ADD CONSTRAINT "%s" FOREIGN KEY (%s) REFERENCES "%s"."%s" (%s)
+                    ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` FOREIGN KEY (%s) REFERENCES `%s`.`%s` (%s)
                     ON UPDATE %s ON DELETE %s NOT VALID;
                     """ %
                         (
@@ -804,7 +806,7 @@ class pg_engine(object):
 
             for fkey in fk_list:
                 self.logger.info("validating %s on table %s.%s"  % (fkey["fkey_name"], fkey["table_schema"], fkey["table_name"]))
-                sql_validate = 'ALTER TABLE "%s"."%s" VALIDATE CONSTRAINT "%s";' % (fkey["table_schema"], fkey["table_name"], fkey["fkey_name"])
+                sql_validate = 'ALTER TABLE `%s`.`%s` VALIDATE CONSTRAINT `%s`;' % (fkey["table_schema"], fkey["table_name"], fkey["fkey_name"])
                 try:
                     self.pgsql_conn.execute(sql_validate)
                 except Exception as e:
@@ -1323,14 +1325,13 @@ class pg_engine(object):
             table_ddl = self.__build_create_table_mysql(table_metadata, partition_metadata, table_name, destination_schema, temporary_schema=False)
             if table_ddl == "":
                 return ""
-            table_enum = ''.join(table_ddl["enum"])
             table_statement = table_ddl["table"]
             index_ddl = self.build_create_index( destination_schema, table_name, index_data)
             table_pkey = index_ddl[0]
             table_indices = ''.join([val for key ,val in index_ddl[1].items()])
             self.store_table(destination_schema, table_name, table_pkey, None)
             table_comment = self.build_table_comment(destination_schema, table_name, token["comment"])
-            query = "%s %s %s %s" % (table_enum, table_statement,  table_indices, table_comment)
+            query = "%s %s %s" % (table_statement,  table_indices, table_comment)
         else:
             if count_table == 1:
                 if token["command"] == "RENAME TABLE":
@@ -1516,8 +1517,8 @@ class pg_engine(object):
             elif alter_dic["command"] == 'CHANGE':
                 sql_rename = ""
                 sql_type = ""
-                old_column = self.column_case_sen(alter_dic["old"])
-                new_column = self.column_case_sen(alter_dic["new"])
+                old_column = "`" + alter_dic["old"] + "`"
+                new_column = "`" + alter_dic["new"] + "`"
                 column_name = old_column
                 enum_list = str(alter_dic["dimension"]).replace("'", "").split(",")
 
@@ -1530,15 +1531,15 @@ class pg_engine(object):
                 ddl_pre_alter.append(default_sql["drop"])
                 ddl_post_alter.append(enm_alter["post_alter"])
                 ddl_post_alter.append(default_sql["create"])
-                column_type= enm_alter["column_type"]
+                column_type = enm_alter["column_type"]
 
-                if column_type==ColumnType.O_C_CHAR_VAR.value or column_type==ColumnType.O_C_CHARACTER.value or\
-                    column_type==ColumnType.O_NUM.value or column_type==ColumnType.O_BIT.value or\
-                    column_type==ColumnType.O_NUMBER.value or column_type==ColumnType.O_FLOAT.value:
+                if column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value or\
+                    column_type == ColumnType.O_NUMERIC.value or column_type == ColumnType.O_BIT.value or\
+                    column_type == ColumnType.O_DOUBLE_P.value or column_type == ColumnType.O_REAL.value:
                         column_type=column_type+"("+str(alter_dic["dimension"])+")"
                 sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN %s SET DATA TYPE %s  USING %s::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
                 if old_column != new_column:
-                    sql_rename="""ALTER TABLE "%s"."%s" RENAME COLUMN %s TO %s ;""" % (schema, table_name, old_column, new_column)
+                    sql_rename = """ALTER TABLE "%s"."%s" RENAME COLUMN %s TO %s ;""" % (schema, table_name, old_column, new_column)
 
                 query = ' '.join(ddl_pre_alter)
                 query += sql_type+sql_rename
@@ -1558,13 +1559,13 @@ class pg_engine(object):
                 ddl_pre_alter.append(default_sql["drop"])
                 ddl_post_alter.append(enm_alter["post_alter"])
                 ddl_post_alter.append(default_sql["create"])
-                column_type= enm_alter["column_type"]
-                if column_type==ColumnType.O_C_CHAR_VAR.value or column_type==ColumnType.O_C_CHARACTER.value or\
-                    column_type==ColumnType.O_NUM.value or column_type==ColumnType.O_BIT.value or\
-                    column_type==ColumnType.O_FLOAT.value:
-                        column_type=column_type+"("+str(alter_dic["dimension"])+")"
+                column_type = enm_alter["column_type"]
+                if column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value or\
+                    column_type == ColumnType.O_NUMERIC.value or column_type == ColumnType.O_BIT.value or\
+                    column_type == ColumnType.O_DOUBLE_P.value or column_type == ColumnType.O_REAL.value:
+                        column_type = column_type+"("+str(alter_dic["dimension"])+")"
                 query = ' '.join(ddl_pre_alter)
-                query +=  """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s USING "%s"::%s ;""" % (schema, table_name, column_name, column_type, column_name, column_type)
+                query += """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s USING "%s"::%s ;""" % (schema, table_name, column_name, column_type, column_name, column_type)
                 query += ' '.join(ddl_post_alter)
                 return query
         query = ' '.join(ddl_pre_alter)
@@ -3088,9 +3089,13 @@ class pg_engine(object):
     def __check_part_key_datatype(self, table_metadata, part_key, table_name, schema):
         for key in part_key:
             for column in table_metadata:
-                if (key.lower() == column["column_name"].lower()):
+                if key.lower() == column["column_name"].lower():
                     column_type = self.get_data_type(column, schema, table_name)
-                    if column_type not in self.hash_part_key_type:
+                    flag = False
+                    for key_type in self.hash_part_key_type:
+                        if str(key_type) in column_type:
+                            flag = True
+                    if not flag:
                         self.logger.warning("%s.%s.%s can't be used as a partition key, column type: %s"\
                             % (schema, table_name, key, column_type))
                         return False
@@ -3136,7 +3141,7 @@ class pg_engine(object):
         else:
             return False
 
-    def __build_create_table_mysql(self, table_metadata, partition_metadata, table_name,  schema, temporary_schema=True):
+    def __build_create_table_mysql(self, table_metadata, partition_metadata, table_name, schema, temporary_schema=True):
         """
             The method builds the create table statement with any enumeration associated using the mysql's metadata.
             The returned value is a dictionary with the optional enumeration's ddl and the create table without indices or primary keys.
@@ -3158,71 +3163,35 @@ class pg_engine(object):
         ddl_head = 'CREATE TABLE `%s`.`%s` (' % (destination_schema, table_name)
         ddl_tail = ")"
         ddl_columns = []
-        ddl_enum=[]
         table_ddl = {}
         for column in table_metadata:
             if column["is_nullable"] == "NO":
-                    col_is_null = "NOT NULL"
+                col_is_null = "NOT NULL"
             else:
                 col_is_null = "NULL"
             column_type = self.get_data_type(column, schema, table_name)
-            default_value = self.__trans_default_value(column.get("column_default"), column_type)
-            if 'default' in column.keys():
-                if default_value == "" and column["default"] is not None and column["default"] != "":
-                    default_value = " default %s " % (column["default"])
+            default_value = self.__trans_default_value(column.get("column_default"), column["data_type"])
 
-            if column_type == "enum":
-                enum_type = '`%s`.`enum_%s_%s`' % (destination_schema, table_name, column["column_name"][0:20])
-                sql_drop_enum = 'DROP TYPE IF EXISTS %s CASCADE;' % enum_type
-                sql_create_enum = 'CREATE TYPE %s AS ENUM %s;' % ( enum_type,  column["enum_list"])
-                ddl_enum.append(sql_drop_enum)
-                ddl_enum.append(sql_create_enum)
-                column_type=enum_type
-            if column_type == "set":
-                column_type = column["column_type"]
-            if (column_type == ColumnType.O_C_CHAR_VAR.value or column_type == ColumnType.O_C_CHARACTER.value) and\
-                int(column["character_maximum_length"]) > 0:
-                column_type="%s (%s)" % (column_type, str(column["character_maximum_length"]))
-            if column_type == ColumnType.O_NUM.value and ('numeric_scale' in column.keys()) and str(column["numeric_scale"]) != "None":
-                column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
-            if column_type == ColumnType.O_NUMBER.value and ('numeric_scale' in column.keys()) and str(column["numeric_scale"]) != "None":
-                            column_type="%s (%s,%s)" % (column_type, str(column["numeric_precision"]), str(column["numeric_scale"]))
-            if column["extra"] == "auto_increment":
-                if (column_type == ColumnType.O_INTEGER.value):
-                    column_type = ColumnType.O_SERIAL.value
-                else:
-                    column_type = ColumnType.O_BIGSERIAL.value
             extra = ""
             if column["extra"].lower().startswith(ON_UPDATE_CURRENT_TIMESTAMP):
                 extra = column["extra"].lower()
 
-            if self.column_case_sensitive:
-                ddl_columns.append(  ' `%s` %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
-            elif column["column_name"].lower() in KeyWords.keyword_set:
-                ddl_columns.append(  ' `%s` %s %s %s %s  ' % (column["column_name"].lower(), column_type, default_value, col_is_null, extra))
-            else:
-                ddl_columns.append(  ' %s %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
+            character_and_collate = self.get_character_set_collate(column)
+
+            ddl_columns.append(' `%s` %s %s %s %s %s' % (column["column_name"], column_type,
+                                                         character_and_collate, default_value,
+                                                         col_is_null, extra))
 
             if "column_comment" in column and column["column_comment"] != "":
                 single_quote = "\'"
-                column["column_comment"] = single_quote + str(column["column_comment"]).replace(single_quote, single_quote + single_quote) + single_quote
-                if self.column_case_sensitive:
-                    column_comments = column_comments + ('comment on column `%s`.`%s`.`%s` is %s;\n'
-                                                         % (destination_schema, table_name, column["column_name"],
-                                                            column["column_comment"]))
-                elif column["column_name"].lower() in KeyWords.keyword_set:
-                    column_comments = column_comments + ('comment on column `%s`.`%s`.`%s` is %s;\n'
-                                                         % (destination_schema, table_name, column["column_name"].lower(),
-                                                            column["column_comment"]))
-                else:
-                    column_comments = column_comments + ('comment on column `%s`.`%s`.%s is %s;\n'
+                column["column_comment"] = single_quote + str(column["column_comment"])\
+                    .replace(single_quote, single_quote + single_quote) + single_quote
+                column_comments = column_comments + ('comment on column `%s`.`%s`.`%s` is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
                                                             column["column_comment"]))
 
         table_ddl["column_comments"] = column_comments
-        def_columns=str(',').join(ddl_columns)
-        table_ddl["enum"] = ddl_enum
-        table_ddl["composite"] = []
+        def_columns = str(',').join(ddl_columns)
 
         # non partition table or subpartition table, ignore partition_metadata
         if partition_metadata is None or len(partition_metadata) == 0 or partition_metadata[0]["partition_method"] is None:
@@ -3232,8 +3201,8 @@ class pg_engine(object):
         if partition_metadata[0]["subpartition_method"] is not None:
             if partition_metadata[0]["subpartition_method"] == "":
                 self.logger.warning("%s.%s is a composite partition table, ignore subpartition" % (schema, table_name))
-        #now we get the subpartition part
             else:
+                # now we get the subpartition part
                 subpartition_method = self.build_sub_partition(schema, table_name, table_metadata, partition_metadata)
                 if subpartition_method == "":
                     return ""
@@ -3242,7 +3211,6 @@ class pg_engine(object):
 
         # get partition key num
         part_key = partition_metadata[0]["partition_expression"].replace('`', '')
-        part_key = self.column_case_sen(part_key)
         part_key_split = part_key.split(',')
 
         if len(part_key_split) > self.max_range_column or\
@@ -3291,16 +3259,23 @@ class pg_engine(object):
         table_ddl["table"] = (ddl_head+def_columns+partition_method+def_part+ddl_tail)
         return table_ddl
 
-    def column_case_sen(self, column_name):
-        """
-        This function switches the case of column_name based on sensitivity
-        """
-        if self.column_case_sensitive:
-            return column_name
-        elif column_name.lower() in KeyWords.keyword_set:
-            return '"%s"' % column_name.lower()
-        else:
-            return column_name
+    def get_character_set_collate(self, column):
+        if not self.migration_collate:
+            return ""
+        try:
+            character_set = column["character_set_name"]
+        except KeyError:
+            character_set = ""
+        try:
+            collate = column["collation_name"]
+        except KeyError:
+            collate = ""
+        character_and_collate = ''
+        if character_set and len(character_set) > 0 and character_set != UNSUPPORT_CHARACTER_SET:
+            character_and_collate += " character set " + character_set
+        if column["data_type"] != "enum" and collate and len(collate) > 0 and collate != UNSUPPORT_COLLATE:
+            character_and_collate += " collate " + collate
+        return character_and_collate
 
     def build_sub_partition(self, schema, table_name, sub_table_metadata, sub_partition_metadata):
         """
@@ -3310,10 +3285,8 @@ class pg_engine(object):
         Hash-Range, Hash-List, Hash-Hash
         """
         part_key = sub_partition_metadata[0]["partition_expression"].replace('`', '')
-        part_key = self.column_case_sen(part_key)
         part_key_split = part_key.split(',')
         sub_part_key = sub_partition_metadata[0]["subpartition_expression"].replace('`', '')
-        sub_part_key = self.column_case_sen(sub_part_key)
         if part_key == sub_part_key:
             print("OpenGauss databases don't support that the partition and subpartition have the same partition key for the level-two partition tables, online migration won't migrate this scenario.")
             return ""
@@ -3736,8 +3709,7 @@ class pg_engine(object):
 
         return {'drop':query_drop_default, 'create':query_add_default}
 
-
-    def get_data_type(self, column, schema,  table):
+    def get_data_type(self, column, schema, table):
         """
             The method determines whether the specified type has to be overridden or not.
 
@@ -3747,21 +3719,34 @@ class pg_engine(object):
             :return: the postgresql converted column type
             :rtype: string
         """
-        if self.type_override:
-            try:
-
+        try:
+            if self.type_override:
                 table_full = "%s.%s" % (schema, table)
                 type_override = self.type_override[column["column_type"]]
                 override_to = type_override["override_to"]
                 override_tables = type_override["override_tables"]
                 if override_tables[0] == '*' or table_full in override_tables:
                     column_type = override_to
-                else:
-                    column_type = self.type_dictionary[column["data_type"]]
-            except KeyError:
-                column_type = self.type_dictionary[column["data_type"]]
-        else:
+                    return column_type
+        except KeyError:
+            column_type = column["column_type"]
+
+        if column["data_type"] in ColumnType.get_mysql_spatial_type():
             column_type = self.type_dictionary[column["data_type"]]
+        elif column["data_type"] in ColumnType.get_mysql_float_type():
+            column_type = self.__get_float_type(column)
+        else:
+            column_type = column["column_type"]
+        return column_type
+
+    def __get_float_type(self, column):
+        if 'numeric_scale' in column.keys() and column["numeric_scale"] is not None:
+            column_type = "%s (%s,%s)" % (ColumnType.O_NUMERIC.value,
+                                          str(column["numeric_precision"]), str(column["numeric_scale"]))
+        elif column["data_type"] == ColumnType.M_DOUBLE.value:
+            column_type = ColumnType.O_NUMBER.value
+        else:
+            column_type = column["data_type"]
         return column_type
 
     def set_application_name(self, action=""):
@@ -3969,46 +3954,43 @@ class pg_engine(object):
         stmt = self.pgsql_conn.prepare(sql_save)
         stmt(batch_id, schema, table,hex_row)
 
-
-    def create_table(self,  table_metadata, partition_metadata, table_name,  schema, metadata_type, enable_compress=False):
+    def create_table(self, table_metadata, table_info, partition_metadata, table_name, schema,
+                     metadata_type, enable_compress=False):
         """
             Executes the create table returned by __build_create_table (mysql or pgsql) on the destination_schema.
 
-            :param table_metadata: the column dictionary extracted from the source's information_schema or builty by the sql_parser class
+            :param table_metadata: the column dictionary extracted from the source's information_schema or builty
+                   by the sql_parser class
+            :param table_info: table info, including table comment and collate
+            :param partition_metadata: partition metadata for partition tables
             :param table_name: the table name
-            :param destination_schema: the schema where the table belongs
+            :param schema: the schema where the table belongs
             :param metadata_type: the metadata type, currently supported mysql and pgsql
+            :param enable_compress: true if enabled compress
         """
         if metadata_type == 'mysql':
-            table_ddl = self.__build_create_table_mysql( table_metadata, partition_metadata, table_name,  schema)
+            table_ddl = self.__build_create_table_mysql(table_metadata, partition_metadata, table_name, schema)
         elif metadata_type == 'pgsql':
-            table_ddl = self.__build_create_table_pgsql( table_metadata,table_name,  schema)
-        enum_ddl = table_ddl["enum"]
-        composite_ddl = table_ddl["composite"]
-        column_comments_ddl = ( table_ddl["column_comments"] if "column_comments" in table_ddl else '' )
+            table_ddl = self.__build_create_table_pgsql(table_metadata, table_name, schema)
+
+        column_comments_ddl = (table_ddl["column_comments"] if "column_comments" in table_ddl else '')
         table_ddl = table_ddl["table"]
+
 
         if enable_compress and len(self.compress_param_map) > 0:
             print(self.compress_param_map)
             compress_sql = [(key + " = " + str(self.compress_param_map[key])) for key in self.compress_param_map]
-            table_ddl += " with (" + ', '.join(compress_sql) + ");"
+            table_ddl += " with (" + ', '.join(compress_sql) + ")"
 
-        for enum_statement in enum_ddl:
-            try:
-            	self.pgsql_conn.execute(enum_statement)
-            except Exception as exp:
-                self.logger.error("Execute create enum type failed, the error sql is %s, sql code is %s, and " 
-                                  "error message is %s" % (enum_statement, exp.code, exp.message))
+        if self.migration_collate:
+            table_collation = table_info["table_collation"]
+            if table_collation and len(table_collation) > 0 and table_collation != UNSUPPORT_COLLATE:
+                table_ddl += " COLLATE = " + table_collation + ";"
 
-        for composite_statement in composite_ddl:
-            try:
-                self.pgsql_conn.execute(composite_statement)
-            except Exception as exp:
-                self.logger.error("Execute create composite statement failed, the error sql is %s, sql code "
-                                  "is %s, and error message is %s" % (composite_statement, exp.code, exp.message))
         try:
             self.pgsql_conn.execute(table_ddl)
         except Exception as exp:
+            self.logger.error(exp)
             self.logger.error("Execute create table failed, the error sql is %s, sql code is %s, and error"
                               " message is %s" % (table_ddl, exp.code, exp.message))
 
@@ -4018,6 +4000,16 @@ class pg_engine(object):
             except Exception as exp:
                 self.logger.error("Execute create column comment ddl failed, the error sql is %s, sql code "
                                   "is %s, and error message is %s" % (column_comments_ddl, exp.code, exp.message))
+
+        table_comment = table_info["table_comment"]
+        if len(table_comment) > 0:
+            destination_schema = self.schema_loading[schema]["loading"]
+            table_comment_ddl = """COMMENT ON TABLE `%s`.`%s` IS '%s'""" % (destination_schema, table_name, table_comment)
+            try:
+                self.pgsql_conn.execute(table_comment_ddl)
+            except Exception as exp:
+                self.logger.error("create table comment failed, the error sql is %s, error code is %s and"
+                                  " error message is %s" % (table_comment_ddl, exp.code, exp.message))
 
     def update_schema_mappings(self):
         """
@@ -4957,6 +4949,7 @@ class pg_engine(object):
             :param schema: the schema name where table belongs
             :param table: the table name where the data should be inserted
             :param index_data: a list of dictionaries with the index metadata for the given table.
+            :param is_parallel_create_index: true if creating index parallel
             :return: a list with the eventual column(s) used as primary key
             :rtype: list
         """
@@ -4965,22 +4958,26 @@ class pg_engine(object):
         for index in index_data:
                 table_timestamp = str(int(time.time()))
                 indx = index["index_name"]
-                self.logger.debug("Building DDL for index %s" % (indx))
+                self.logger.debug("Building DDL for index %s" % indx)
                 idx_col = [column.strip() for column in index["index_columns"].split(',')]
-                if self.column_case_sensitive:
-                    index_columns = ['`%s`' % column.strip() for column in idx_col]
-                else:
-                    index_columns = []
-                    for column in idx_col:
-                        if column.strip().lower() in KeyWords.keyword_set:
-                            index_columns.append("`" + column.strip.lower() + "`")
-                        else:
-                            index_columns.append(column.strip())
+                idx_sub_part = index["sub_part"].split(',')
+                index_columns = []
+                for idx in range(len(idx_sub_part)):
+                    if int(idx_sub_part[idx]) == 0:
+                        index_columns.append("`%s`" % idx_col[idx])
+                    else:
+                        index_columns.append("`" + idx_col[idx] + "`(" + idx_sub_part[idx] + ")")
                 non_unique = index["non_unique"]
                 index_type = index["index_type"]
-                if indx =='PRIMARY':
-                    pkey_name = format("pk_%s_%s_%s" % (table[0:100],table_timestamp,  self.idx_sequence))
-                    pkey_def = 'ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s) ;' % (schema, table, pkey_name, ','.join(index_columns))
+                if indx == 'PRIMARY':
+                    pkey_name = format("pk_%s_%s_%s" % (table[0:100], table_timestamp, self.idx_sequence))
+                    comment = index["index_comment"]
+                    if len(comment) == 0:
+                        pkey_def = """ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s);""" \
+                                   % (schema, table, pkey_name, ','.join(index_columns))
+                    else:
+                        pkey_def = """ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s) comment '%s';"""\
+                               % (schema, table, pkey_name, ','.join(index_columns), index["index_comment"])
                     idx_ddl[pkey_name] = pkey_def
                     table_primary = idx_col
                 else:
@@ -4995,11 +4992,18 @@ class pg_engine(object):
                         using = 'USING BTREE(%s)' % (','.join(index_columns))
                     else:
                         using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
-                    index_name='idx_%s_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp,
+                    index_name = 'idx_%s_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp,
                                                        random.randint(0, 10000), self.idx_sequence)
-                    idx_def='CREATE %s INDEX `%s` ON `%s`.`%s` %s;' % (unique_key, index_name, schema, table, using)
+
+                    comment = index["index_comment"]
+                    if len(comment) == 0:
+                        idx_def = 'CREATE %s INDEX `%s` ON `%s`.`%s` %s ;'\
+                                  % (unique_key, index_name, schema, table, using)
+                    else:
+                        idx_def = """CREATE %s INDEX `%s` ON `%s`.`%s` %s comment '%s';"""\
+                                  % (unique_key, index_name, schema, table, using, comment)
                     idx_ddl[index_name] = idx_def
-                self.idx_sequence+=1
+                self.idx_sequence += 1
 
         if is_parallel_create_index:
             if self.index_parallel_workers == 0:
@@ -5039,6 +5043,23 @@ class pg_engine(object):
                              % (self.index_parallel_workers, schema, table))
 
         return table_primary
+
+    def create_auto_increment_column(self, schema, table, auto_increment_column):
+        """
+            The method adds auto_increment property for the column
+            :param schema: the schema name
+            :param table: the table name
+            :auto_increment_column: the auto_increment column
+        """
+        for column in auto_increment_column:
+            data_type = column["data_type"]
+            column_name = column["column_name"]
+            ddl = "alter table `%s`.`%s` modify `%s` %s auto_increment;" % (schema, table, column_name, data_type)
+            try:
+                self.pgsql_conn.execute(ddl)
+            except Exception as exp:
+                self.logger.error("alter table adding auto_increment failed, error code is %s and error message is %s"
+                                  % (exp.code, exp.message))
 
     def swap_schemas(self):
         """

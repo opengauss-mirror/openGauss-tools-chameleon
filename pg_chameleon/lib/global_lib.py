@@ -41,7 +41,7 @@ NUM_PACKET = 1000
 NUM_TRX = 500
 
 MYSQL_PACKET_HAED_LENGTH = 20
-INDEX_PARALLEL_WORKERS = 16
+INDEX_PARALLEL_WORKERS = 2
 
 
 class rollbar_notifier(object):
@@ -203,7 +203,6 @@ class replica_engine(object):
         self.mysql_source.sources = self.config["sources"]
         self.mysql_source.type_override = self.config["type_override"]
         self.mysql_source.notifier = self.notifier
-        self.mysql_source.column_case_sensitive = self.pg_engine.column_case_sensitive
         try:
             mysql_restart_config = self.config["sources"][self.source]["mysql_restart_config"]
         except KeyError:
@@ -232,16 +231,6 @@ class replica_engine(object):
             self.pg_engine.migrate_default_value = self.config["sources"][self.source]["migrate_default_value"]
         except KeyError:
             self.pg_engine.migrate_default_value = True
-        try:
-            column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
-        except KeyError:
-            column_case_sensitive = True
-        if self.__check_param_valid(column_case_sensitive):
-            self.pg_engine.column_case_sensitive = column_case_sensitive
-        else:
-            self.logger.error("FATAL, the parameter column_case_sensitive setting is improper, it should be set to "
-                              "Yes or No, but current setting is %s" % column_case_sensitive)
-            sys.exit()
         try:
             index_parallel_workers = self.config["sources"][self.source]["index_parallel_workers"]
         except KeyError:

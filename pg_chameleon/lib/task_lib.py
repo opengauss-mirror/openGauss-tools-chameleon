@@ -13,13 +13,15 @@ class CopyDataTask:
 
 
 class CreateIndexTask:
-    def __init__(self, table, schema, indices, destination_schema, master_status, is_parallel_create_index):
+    def __init__(self, table, schema, indices, destination_schema, master_status, is_parallel_create_index,
+                 auto_increment_column):
         self.table = table
         self.schema = schema
         self.indices = indices
         self.destination_schema = destination_schema
         self.master_status = master_status
         self.is_parallel_create_index = is_parallel_create_index
+        self.auto_increment_column = auto_increment_column
 
 
 class ReadDataTask:
