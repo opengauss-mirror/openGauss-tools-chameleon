@@ -363,7 +363,7 @@ sources:
  
      csv_dir: /tmp
  
-     contain_columns: Yes
+     contain_columns: No
 
      column_split: ','
 
@@ -669,6 +669,22 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 其中一个表对应一个CSV文件，CSV文件命名规则为schema_table.csv。针对一个schema，若csv_dir为非法路径，或者该路径下未包含该schema对应表的CSV文件，该schema的表
 数据将通过方式一从MySQL库查询数据导入openGauss；若该路径下包含部分表的CSV文件，将只迁移该部分表的结构及数据。
 
+MySQL端将表数据导出至CSV文件，可通过如下命令实现：
+```
+select * from table_name into outfile '/path/schema_table.csv' fields enclosed by '"' terminated by ',' escaped by '"' lines terminated by '\n';
+```
+CSV格式要点：
+
+（1）fields enclosed by '"'表示字段用双引号包围；
+
+（2）terminated by ','表示字段之间用逗号分隔，与配置项默认值column_split=','对应，可自定义；
+
+（3）escaped by '"'表示转义字符，字符串本身包含双引号时用两个双引号表示；
+
+（4）lines terminated by '\n'表示数据行之间以'\n'分隔；
+
+（5）CSV文件首行未包含列名信息，与配置项默认值contain_columns=No对应，可自定义。
+
 ### 3.4.29. contain_columns
 
 对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件首行是否包含表的列名信息，默认值为No，表示不包含，此时将对表的所有列进行copy数据，
@@ -967,7 +983,7 @@ sources:
 
   csv_dir: /tmp
 
-  contain_columns: Yes
+  contain_columns: No
 
   column_split: ','
 
