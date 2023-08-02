@@ -137,7 +137,7 @@ ALTER TABLE tbl_name REORGANIZE PARTITION partition_names INTO (partition_defini
 
 # **2.** chameleon安装方法
 
-可直接下载whl安装包或者通过源码安装。
+可直接下载whl安装包、tar.gz安装包或者通过源码安装。
 
 ## **2.1.** whl安装
 
@@ -205,8 +205,38 @@ fatal error: Python.h: No such file or directory
 yum install python3-devel
 ```
 
+## **2.2.** tar.gz包安装
 
-## **2.2.** 源码安装
+安装包下载地址：
+
+| 系统名称       | 系统架构 | 下载链接                                                     |
+| :------------- | -------- | ------------------------------------------------------------ |
+| centos7        | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/centos7/chameleon-5.0.0-x86_64.tar.gz |
+| openEuler20.03 | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.0.0-x86_64.tar.gz |
+| openEuler20.03 | aarch64  | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.0.0-aarch64.tar.gz |
+
+下载完成后，使用tar -zxvf 命令进行解压
+
+```
+tar -zxvf chameleon-5.0.0-x86_64.tar.gz
+```
+
+解压完成后，须在脚本所在目录执行初始化脚本build.sh
+
+```
+cd chameleon-5.0.0
+sh build.sh
+```
+
+执行完毕后通过加载虚拟环境变量即可调用chameleon命令：
+
+```
+source venv/bin/activate
+```
+
+注意：tar.gz包支持内网状态下安装，如果tar.gz包安装失败，用户除了尝试解决问题外，也可以通过安装whl包的方式构建新的虚拟环境重新安装。
+
+## **2.3.** 源码安装
 
 通过git下载源码： **git clone git@gitee.com:opengauss/openGauss-tools-chameleon.git**
 
@@ -221,8 +251,6 @@ yum install python3-devel
 **cd openGauss-tools-chameleon**
 
 **python3 setup.py install**
-
- 
 
 安装完成后，不要退出python虚拟环境，可以开始使用chameleon工具。
 
