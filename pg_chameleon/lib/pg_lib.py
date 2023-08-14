@@ -3193,8 +3193,8 @@ class pg_engine(object):
                 else:
                     column_type = ColumnType.O_BIGSERIAL.value
             extra = ""
-            if column["extra"].lower() == ON_UPDATE_CURRENT_TIMESTAMP:
-                extra = ON_UPDATE_CURRENT_TIMESTAMP
+            if column["extra"].lower().startswith(ON_UPDATE_CURRENT_TIMESTAMP):
+                extra = column["extra"].lower()
 
             if self.column_case_sensitive:
                 ddl_columns.append(  ' "%s" %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
