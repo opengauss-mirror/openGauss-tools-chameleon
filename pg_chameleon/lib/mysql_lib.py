@@ -901,12 +901,12 @@ class mysql_source(object):
         select_csv = [select_csv % statement["select_csv"] for statement in select_data]
         select_stat = [statement["select_csv"] for statement in select_data]
         if self.column_case_sensitive:
-            column_list = ['"%s"' % statement["column_name"] for statement in select_data]
+            column_list = ['`%s`' % statement["column_name"] for statement in select_data]
         else:
             column_list = []
             for statement in select_data:
                 if statement["column_name"].lower() in KeyWords.keyword_set:
-                    column_list.append("\"" + statement["column_name"].lower() + "\"")
+                    column_list.append("`" + statement["column_name"].lower() + "`")
                 else:
                     column_list.append(statement["column_name"])
 

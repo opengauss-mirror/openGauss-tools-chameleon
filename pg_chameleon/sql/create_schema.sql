@@ -326,9 +326,9 @@ LANGUAGE plpgsql
 
 CREATE OR REPLACE FUNCTION sch_chameleon.fn_get_event_datatime(bigint)
 RETURNS TABLE (
-    "i_id_batch" bigint,
-    "i_id_event" bigint,
-    "ts_event_datetime" timestamp without time zone) as
+    i_id_batch bigint,
+    i_id_event bigint,
+    ts_event_datetime timestamp without time zone) as
 $BODY$
 DECLARE
     p_i_id_batch ALIAS FOR $1;
@@ -1060,7 +1060,7 @@ FROM
                 INNER JOIN pg_class tab
                 ON tab.oid= con.conrelid
                 INNER JOIN pg_namespace sch
-                ON sch."oid" = tab.relnamespace
+                ON sch.oid = tab.relnamespace
             WHERE con.contype='p'
         ) con
         ON
