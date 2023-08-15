@@ -143,7 +143,7 @@ ALTER TABLE tbl_name REORGANIZE PARTITION partition_names INTO (partition_defini
 
 安装包下载地址：
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/chameleon/chameleon-5.0.0-py3-none-any.whl
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/chameleon-5.0.0-py3-none-any.whl
 
 其中5.0.0表示当前版本号，其可以通过chameleon --version命令查询。
 
@@ -259,7 +259,7 @@ type_override:
 
      override_tables:
 
-       \- "*"
+       - "*"
 
   "float(5,2)":
 
@@ -267,11 +267,29 @@ type_override:
 
      override_tables:
 
-       \- "*"
+       - "*"
 
- 
 
-\# postgres destination connection
+
+# specify the compress properties when creating tables
+
+compress_properties:
+
+  compresstype: 0
+
+  compress_level: 0
+
+  compress_chunk_size: 4096
+
+  compress_prealloc_chunks: 0
+
+  compress_byte_convert: false
+
+  compress_diff_convert: false
+
+
+
+# postgres destination connection
 
 pg_conn:
 
@@ -291,11 +309,13 @@ pg_conn:
 
 sources:
 
-mysql:
+  mysql:
 
      readers: 4
 
      writers: 4
+
+     retry: 3
 
      db_conn:
 
@@ -319,6 +339,10 @@ mysql:
 
      skip_tables:
 
+     enable_compress: No
+
+     compress_tables:
+
      grant_select_to:
 
      lock_timeout: "120s"
@@ -336,8 +360,16 @@ mysql:
      copy_mode: 'file'
 
      out_dir: /tmp
+ 
+     csv_dir: /tmp
+ 
+     contain_columns: No
+
+     column_split: ','
 
      sleep_loop: 1
+
+     index_parallel_workers: 16
 
      type: mysql
 
@@ -388,18 +420,30 @@ log文件保留时间，单位为天。
 
 1.在迁移开始阶段，获取到源端的表的列表，存储到全局变量中，初始化完成。对象迁移会获取全部的对象名称，并保存到全局变量进行初始化。
 
-2.全量迁移多进程在回放端，回放成功后，将回放进度信息刷新到全局变量内,每一个回放进程都可以刷新全局变量的内容，在主进程开启一个独立的进程进行定时写任务，把全局变量写入到本地的Data_xxx.json。
+2.全量迁移多进程在回放端，回放成功后，将回放进度信息刷新到全局变量内,每一个回放进程都可以刷新全局变量的内容，在主进程开启一个独立的进程进行定时写任务，把全局变量写入到本地的data_$1_$2.json。
+其中$1对应配置文件名称，例如default，$2对应执行的命令名称，例如init_replica。
 
-json结构：{"table": [], "view": [], "function": [], "trigger": [], "procedure": []}
+json结构：{"total": {}, "table": [], "view": [], "function": [], "trigger": [], "procedure": []}
 
-状态说明：
+total字段中包含如下信息：
+
+record：所有表的总记录数，预估值
+
+data：所有表的数据总量，预估值
+
+time：迁移总耗时
+
+speed：迁移速率
+
+table, view, function, trigger, procedure字段中包含如下信息：
 
 name：对象名称
 
-status：状态（1：待迁移，2：迁移中，3迁移完成，6迁移失败）
+status：状态（1：待迁移，2：迁移中，3：迁移完成，6：迁移失败）
 
 percent：迁移进度（小于1时处于正常范围，status为6时可以是大于1的值）
 
+error: 错误信息，如果对象迁移失败，会输出错误信息，默认为""
 
 ## **3.2.** 类型重载规则
 
@@ -416,7 +460,7 @@ type_override:
 
      override_tables:
 
-       \- "*"
+       - "*"
 
   "float(5,2)":
 
@@ -424,7 +468,7 @@ type_override:
 
      override_tables:
 
-       \- schema.table
+       - schema.table
 ```
 
 
@@ -615,6 +659,93 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 用于指定是否允许重启Mysql数据库。默认值为Yes。由于在线迁移需要开启binlog，并设置如下参数：log_bin=on，binlog_format=row，binlog_row_image=full，gtid_mode=on, 若Mysql初始配置与上述参数不一致，则需要修改参数并重启Mysql数据库，方可使用离线和在线功能。当该参数为No时，则表示不允许重启数据库，若在线迁移参数不符合要求，则不允许使用在线迁移功能，仅能在停止业务前提下使用离线迁移功能。
 
+### 3.4.27. index_parallel_workers
+
+用于指定并发创建索引时bgworker的线程数，取值范围：[0, 32]，其中0表示关闭并发，默认值为16。当表数据量大于100000时，创建索引将通过该参数显式指定并发线程数。
+
+### 3.4.28. csv_dir
+
+全量数据导入支持两种方式：(1)从MySQL库查询数据导入openGauss；(2)从指定CSV文件导入特定表的数据。该参数用于指定方式二从CSV文件直接进行全量数据导入的CSV文件目录。
+其中一个表对应一个CSV文件，CSV文件命名规则为schema_table.csv。针对一个schema，若csv_dir为非法路径，或者该路径下未包含该schema对应表的CSV文件，该schema的表
+数据将通过方式一从MySQL库查询数据导入openGauss；若该路径下包含部分表的CSV文件，将只迁移该部分表的结构及数据。
+
+MySQL端将表数据导出至CSV文件，可通过如下命令实现：
+```
+select * from table_name into outfile '/path/schema_table.csv' fields enclosed by '"' terminated by ',' escaped by '"' lines terminated by '\n';
+```
+CSV格式要点：
+
+（1）fields enclosed by '"'表示字段用双引号包围；
+
+（2）terminated by ','表示字段之间用逗号分隔，与配置项默认值column_split=','对应，可自定义；
+
+（3）escaped by '"'表示转义字符，字符串本身包含双引号时用两个双引号表示；
+
+（4）lines terminated by '\n'表示数据行之间以'\n'分隔；
+
+（5）CSV文件首行未包含列名信息，与配置项默认值contain_columns=No对应，可自定义。
+
+### 3.4.29. contain_columns
+
+对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件首行是否包含表的列名信息，默认值为No，表示不包含，此时将对表的所有列进行copy数据，
+csv文件对应列的顺序应和表的所有列的自然顺序保持一致。若取值为Yes，则表示文件首行为表的列名信息，copy数据时将跳过首行，对于多列信息，列名之间应按照','分隔，此时将对首行指定
+的列进行copy数据。
+
+### 3.4.30. column_split
+
+对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件多列之间的分隔符，默认值为','，可自定义。
+
+### 3.4.31. enable_compress
+
+用于指定是否启用行存表的压缩属性。默认为No，表示不启用。当设置为Yes时，表示启用压缩相关属性。压缩相关参数由compress_properties参数配置。
+启用压缩属性的表由compress_tables参数配置。
+
+### 3.4.32. compress_tables
+
+当启用行存表的压缩属性时，该参数用于指定用于压缩的表的白名单，支持表级和库级的表的白名单，默认对整个迁移的库按照参数compress_properties配置的
+属性进行压缩，也可指定具体的表按照参数compress_properties配置的属性进行压缩。
+
+### 3.4.33 retry
+
+对首次迁移失败的表，将加入迁移失败队列中，并增加重试机制，对失败的表重新进行迁移优先。该参数指定重试次数，取值为整数，默认值为3，可自定义。
+若设置为正数，则表示进行有限次重试，当失败队列为空或者重试次数已达到上限，迁移进程将自行退出；若设置为0，则表示不重试；若设置为负数，将无限尝试直至所有表迁移成功，否则迁移进程不会退出。
+
+## **3.5.** 压缩参数配置
+
+compress_properties用于配置行存表压缩相关的参数，详情请参考[create table压缩参数](https://docs.opengauss.org/zh/docs/latest/docs/SQLReference/CREATE-TABLE.html)。
+
+### 3.5.1. compresstype
+
+行存表参数，设置行存表压缩算法。1代表pglz算法（不推荐使用），2代表zstd算法，默认不压缩。该参数生效后不允许修改。（仅支持ASTORE下的普通表）。
+取值范围：0~2，默认值为0。
+
+### 3.5.2. compress_level
+
+行存表参数，设置行存表压缩算法等级，仅当compresstype为2时生效。压缩等级越高，表的压缩效果越好，表的访问速度越慢。该参数允许修改，
+修改后影响变更数据、新增数据的压缩等级。（仅支持ASTORE下的普通表）。取值范围：-31~31，默认值为0。
+
+### 3.5.3. compress_chunk_size
+
+行存表参数，设置行存表压缩chunk块大小。chunk数据块越小，预期能达到的压缩效果越好，同时数据越离散，影响表的访问速度。该参数生效后不允许修改。
+（仅支持ASTORE下的普通表）。取值范围：与页面大小有关。在页面大小为8k场景，取值范围为：512、1024、2048、4096。 默认值：4096。
+
+### 3.5.4. compress_prealloc_chunks
+
+行存表参数，设置行存表压缩chunk块预分配数量。预分配数量越大，表的压缩率相对越差，离散度越小，访问性能越好。该参数允许修改，
+修改后影响变更数据、新增数据的预分配数量。（仅支持ASTORE下的普通表）。取值范围：0~7，默认值为0。
+当COMPRESS_CHUNK_SIZE为512和1024时，支持预分配设置最大为7；当COMPRESS_CHUNK_SIZE为2048时，支持预分配设置最大为3；
+当COMPRESS_CHUNK_SIZE为4096时，支持预分配设置最大为1。
+
+### 3.5.5. compress_byte_convert
+
+行存表参数，设置行存表压缩字节转换预处理。在一些场景下可以提升压缩效果，同时会导致一定性能劣化。该参数允许修改，修改后决定变更数据、
+新增数据是否进行字节转换预处理。当COMPRESS_DIFF_CONVERT为真时，该值不允许修改为假。取值范围：布尔值，默认关闭，设置为false。
+
+### 3.5.6. compress_diff_convert
+
+行存表参数，设置行存表压缩字节差分预处理。只能与compress_byte_convert一起使用。在一些场景下可以提升压缩效果，同时会导致一定性能劣化。
+该参数允许修改，修改后决定变更数据、新增数据是否进行字节差分预处理。取值范围：布尔值，默认关闭，设置为false。
+
 # **4.** 分区表迁移规则
 
 分区表迁移的基本思想是对于openGauss支持的分区类型，迁移成对应的分区表即可。对于openGauss支持的分区表类型详见以下表格，其中不支持的分区表将暂不迁移。
@@ -738,77 +869,101 @@ rollbar_key: ''
 
 rollbar_env: ''
 
-dump_json： No
+dump_json: No
 
  
 
-\# type_override allows the user to override the default type conversion
+# type_override allows the user to override the default type conversion
 
-\# into a different one.
+# into a different one.
 
 type_override:
 
-"tinyint(1)":
+  "tinyint(1)":
 
-  override_to: boolean
+    override_to: boolean
 
-  override_tables:
+    override_tables:
 
-  \- "*"
+      - "*"
 
- 
 
-\# postgres destination connection
+
+# specify the compress properties when creating tables
+
+compress_properties:
+
+  compresstype: 0
+
+  compress_level: 0
+
+  compress_chunk_size: 4096
+
+  compress_prealloc_chunks: 0
+
+  compress_byte_convert: false
+
+  compress_diff_convert: false
+
+
+
+# postgres destination connection
 
 pg_conn:
 
- host: "1.1.1.1"
+  host: "127.0.0.1"
 
- port: "5432"
+  port: "5432"
 
- user: "opengauss_test"
+  user: "opengauss_test"
 
- password: "password_123"
+  password: "password123"
 
- database: "opengauss_database"
+  database: "opengauss_database"
 
- charset: "utf8"
+  charset: "utf8"
 
  
 
 sources:
 
- mysql:
+  mysql:
 
-readers: 4
+    readers: 4
 
-writers: 4
+    writers: 4
 
-  db_conn:
+    retry: 3
 
-   host: "1.1.1.1"  
+    db_conn:
 
-   port: "3306"
+      host: "127.0.0.1"  
 
-   user: "mysql_test"
+      port: "3306"
 
-   password: "password123"
+      user: "mysql_test"
 
-   charset: 'utf8'
+      password: "password123"
 
-   connect_timeout: 10
+      charset: 'utf8'
+
+      connect_timeout: 10
 
   schema_mappings:
 
-   mysql_database:sch_mysql_database
+    mysql_database: sch_mysql_database
 
   limit_tables:
 
   skip_tables:
 
+  enable_compress: No
+
+  comporess_tables:
+
   grant_select_to:
 
-   \- usr_migration
+    - usr_migration
 
   lock_timeout: "120s"
 
@@ -826,6 +981,12 @@ writers: 4
 
   out_dir: /tmp
 
+  csv_dir: /tmp
+
+  contain_columns: No
+
+  column_split: ','
+
   sleep_loop: 1
 
   on_error_replay: continue
@@ -833,6 +994,8 @@ writers: 4
   on_error_read: continue
 
   auto_maintenance: "disabled"
+
+  index_parallel_workers: 16
 
   gtid_enable: false
 
@@ -847,9 +1010,9 @@ column_case_sensitive: Yes
 mysql_restart_config: Yes
 ```
 
-以上配置文件的含义是，迁移数据时，MySQL侧使用的用户名密码分别是 **mysql_test** 和 **password123**。MySQL服务器的IP和port分别是**1.1.1.1**和**3306**，待迁移的数据库是**mysql_database**。
+以上配置文件的含义是，迁移数据时，MySQL侧使用的用户名密码分别是 **mysql_test** 和 **password123**。MySQL服务器的IP和port分别是**127.0.0.1**和**3306**，待迁移的数据库是**mysql_database**。
 
-openGauss侧使用的用户名密码分别是 **opengauss_test**和 **password_123**。openGauss服务器的IP和port分别是**1.1.1.1**和**5432**，目标数据库是**opengauss_database**，同时会在**opengauss_database**下创建**sch_mysql_database** schema，迁移的表都将位于该schema下。
+openGauss侧使用的用户名密码分别是 **opengauss_test**和 **password123**。openGauss服务器的IP和port分别是**127.0.0.1**和**5432**，目标数据库是**opengauss_database**，同时会在**opengauss_database**下创建**sch_mysql_database** schema，迁移的表都将位于该schema下。
 
 需要注意的是，这里使用的用户需要有远程连接MySQL和openGauss的权限，以及对对应数据库的读写权限。同时对于openGauss，运行chameleon所在的机器需要在openGauss的远程访问白名单中。对于MySQL，用户还需要有RELOAD、REPLICATION CLIENT、REPLICATION SLAVE的权限。
 
@@ -955,7 +1118,7 @@ chameleon支持将视图、触发器、自定义函数、存储过程从MySQL迁
 
 | 字段             | 类型                     | 描述                                                                             |
 | ---------------- | ------------------------ | -------------------------------------------------------------------------------- |
-| i_id_object      | bigint                | id                                                                               |
+| i_id_object      | bigint                | id，该列为主键列                                                                               |
 | i_id_source      | bigint                   | 与sch_schema.t_sources的id相对应                                                 |
 | en_object_type   | 枚举类型                 | 迁移对象所属类型（VIEW/TRIGGER/FUNC/PROC)                                        |
 | ts_created       | timestamp with time zone | 迁移时间                                                                         |
@@ -1004,7 +1167,7 @@ END;**
 
 ![img](./images/wps2.jpg) 
 
-​	在openGauss侧查看 test_decimal 表的数据：
+在openGauss侧查看 test_decimal 表的数据：
 
 ![img](./images/wps3.jpg) 
 

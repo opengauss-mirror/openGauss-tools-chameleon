@@ -1125,5 +1125,6 @@ CREATE TABLE sch_chameleon.t_replica_object
     -- raw sql from mysql
     t_src_object_sql TEXT                         NOT NULL,
     -- translated sql statement, it is null in case of failure to execute or error in translation
-    t_dst_object_sql TEXT                         NULL
+    t_dst_object_sql TEXT                         NULL,
+    primary key(i_id_object)
 );

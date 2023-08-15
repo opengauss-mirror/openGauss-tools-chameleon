@@ -41,6 +41,7 @@ NUM_PACKET = 1000
 NUM_TRX = 500
 
 MYSQL_PACKET_HAED_LENGTH = 20
+INDEX_PARALLEL_WORKERS = 16
 
 
 class rollbar_notifier(object):
@@ -105,34 +106,12 @@ class replica_engine(object):
         self.catalog_version = '2.0.7'
         self.upgradable_version = '1.7'
         self.lst_yes = ['yes', 'Yes', 'y', 'Y']
-        python_lib = os.path.dirname(os.path.realpath(__file__))
-
-        cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')
-
-        local_conf = "%s/configuration/" % cham_dir
-        self.global_conf_example = '%s/../configuration/config-example.yml' % python_lib
-        self.local_conf_example = '%s/config-example.yml' % local_conf
-
-        local_logs = "%s/logs/" % cham_dir
-        local_pid = "%s/pid/" % cham_dir
-
-        pid_file_name = local_pid + "replica.pid"
-        self.pid_file = pid_file_name
-
-        self.conf_dirs = [
-            cham_dir,
-            local_conf,
-            local_logs,
-            local_pid,
-
-        ]
+        self.initial_global_setting()
         self.args = args
         self.source = self.args.source
         if self.args.command == 'set_configuration_files':
             self.set_configuration_files()
             sys.exit()
-
-        self.__set_conf_permissions(cham_dir)
 
         self.load_config()
         self.is_debug_or_dump_json = self.args.debug or self.config['dump_json']
@@ -144,9 +123,103 @@ class replica_engine(object):
         self.notifier = rollbar_notifier(self.config["rollbar_key"], self.config["rollbar_env"],
                                          self.args.rollbar_level, self.logger)
 
+        self.initialize_pg_engine()
+        self.initialize_mysql_source()
+        self.check_compress_param()
+        self.initialize_pgsql_source()
+
+        self.check_catalog_version()
+
+        if self.args.source != '*' and self.args.command != 'add_source':
+            self.pg_engine.connect_db()
+            source_count = self.pg_engine.check_source()
+            self.pg_engine.disconnect_db()
+            if source_count == 0:
+                print("FATAL, The source %s is not registered. Please add it add_source" % (self.args.source))
+                sys.exit()
+
+    def initial_global_setting(self):
+        python_lib = os.path.dirname(os.path.realpath(__file__))
+        cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')
+        local_conf = "%s/configuration/" % cham_dir
+        self.global_conf_example = '%s/../configuration/config-example.yml' % python_lib
+        self.local_conf_example = '%s/config-example.yml' % local_conf
+        local_logs = "%s/logs/" % cham_dir
+        local_pid = "%s/pid/" % cham_dir
+        pid_file_name = local_pid + "replica.pid"
+        self.pid_file = pid_file_name
+        self.conf_dirs = [
+            cham_dir,
+            local_conf,
+            local_logs,
+            local_pid,
+
+        ]
+        self.__set_conf_permissions(cham_dir)
+
+    def check_catalog_version(self):
+        catalog_version = self.pg_engine.get_catalog_version()
+        # safety checks
+        if self.args.command == 'upgrade_replica_schema':
+            self.pg_engine.sources = self.config["sources"]
+            print("WARNING, entering upgrade mode. Disabling the catalogue version's check. Expected version %s,"
+                  " installed version %s" % (self.catalog_version, catalog_version))
+        elif self.args.command == 'enable_replica' and self.catalog_version != catalog_version:
+            print("WARNING, catalogue mismatch. Expected version %s, installed version %s" %
+                  (self.catalog_version, catalog_version))
+        else:
+            if catalog_version:
+                if self.catalog_version != catalog_version:
+                    print("FATAL, replica catalogue version mismatch. Expected %s, got %s" % (
+                        self.catalog_version, catalog_version))
+                    sys.exit()
+
+    def initialize_pgsql_source(self):
+        # pgsql_source instance initialisation
+        self.pgsql_source = pgsql_source()
+        self.pgsql_source.source = self.args.source
+        self.pgsql_source.tables = self.args.tables
+        self.pgsql_source.schema = self.args.schema.strip()
+        self.pgsql_source.pg_engine = self.pg_engine
+        self.pgsql_source.logger = self.logger
+        self.pgsql_source.sources = self.config["sources"]
+        self.pgsql_source.type_override = self.config["type_override"]
+        self.pgsql_source.notifier = self.notifier
+
+    def initialize_mysql_source(self):
+        # mysql_source instance initialisation
+        self.mysql_source = mysql_source()
+        if self.config['dump_json']:
+            self.mysql_source.initJson()
+        try:
+            self.mysql_source.dump_json = self.config["dump_json"]
+        except KeyError:
+            self.mysql_source.dump_json = False
+        self.mysql_source.source = self.args.source
+        self.mysql_source.tables = self.args.tables
+        self.mysql_source.schema = self.args.schema.strip()
+        self.mysql_source.pg_engine = self.pg_engine
+        self.mysql_source.logger = self.logger
+        self.mysql_source.sources = self.config["sources"]
+        self.mysql_source.type_override = self.config["type_override"]
+        self.mysql_source.notifier = self.notifier
+        self.mysql_source.column_case_sensitive = self.pg_engine.column_case_sensitive
+        try:
+            mysql_restart_config = self.config["sources"][self.source]["mysql_restart_config"]
+        except KeyError:
+            mysql_restart_config = True
+        if self.__check_param_valid(mysql_restart_config):
+            self.mysql_source.mysql_restart_config = mysql_restart_config
+        else:
+            self.logger.error("FATAL, the parameter mysql_restart_config setting is improper, it should be set to "
+                              "Yes or No, but current setting is %s" % mysql_restart_config)
+            sys.exit()
+
+
+    def initialize_pg_engine(self):
         # pg_engine instance initialisation
         self.pg_engine = pg_engine()
-        self.pg_engine.pid_file = pid_file_name
+        self.pg_engine.pid_file = self.pid_file
         self.pg_engine.dest_conn = self.config["pg_conn"]
         self.pg_engine.logger = self.logger
         self.pg_engine.source = self.args.source
@@ -163,94 +236,139 @@ class replica_engine(object):
             column_case_sensitive = self.config["sources"][self.source]["column_case_sensitive"]
         except KeyError:
             column_case_sensitive = True
-
         if self.__check_param_valid(column_case_sensitive):
             self.pg_engine.column_case_sensitive = column_case_sensitive
         else:
             self.logger.error("FATAL, the parameter column_case_sensitive setting is improper, it should be set to "
                               "Yes or No, but current setting is %s" % column_case_sensitive)
             sys.exit()
-
-        # mysql_source instance initialisation
-        self.mysql_source = mysql_source()
-        if self.config['dump_json']:
-            self.mysql_source.initJson()
-        try:        
-            self.mysql_source.dump_json = self.config["dump_json"]
-        except KeyError:
-            self.mysql_source.dump_json = False
-        self.mysql_source.source = self.args.source
-        self.mysql_source.tables = self.args.tables
-        self.mysql_source.schema = self.args.schema.strip()
-        self.mysql_source.pg_engine = self.pg_engine
-        self.mysql_source.logger = self.logger
-        self.mysql_source.sources = self.config["sources"]
-        self.mysql_source.type_override = self.config["type_override"]
-        self.mysql_source.notifier = self.notifier
-        self.mysql_source.column_case_sensitive = column_case_sensitive
         try:
-            mysql_restart_config = self.config["sources"][self.source]["mysql_restart_config"]
+            index_parallel_workers = self.config["sources"][self.source]["index_parallel_workers"]
         except KeyError:
-            mysql_restart_config = True
-        if self.__check_param_valid(mysql_restart_config):
-            self.mysql_source.mysql_restart_config = mysql_restart_config
-        else:
-            self.logger.error("FATAL, the parameter mysql_restart_config setting is improper, it should be set to "
-                              "Yes or No, but current setting is %s" % mysql_restart_config)
-            sys.exit()
+            index_parallel_workers = INDEX_PARALLEL_WORKERS
+        if not self.__check_parallel_workers(index_parallel_workers):
+            self.logger.warning("WARNING, the param index_parallel_workers is in [0, 32], but the current setting is "
+                                "%s, so we use the default value %s" % (index_parallel_workers, INDEX_PARALLEL_WORKERS))
+            index_parallel_workers = INDEX_PARALLEL_WORKERS
+        self.pg_engine.index_parallel_workers = index_parallel_workers
 
-        # pgsql_source instance initialisation
-        self.pgsql_source = pgsql_source()
-        self.pgsql_source.source = self.args.source
-        self.pgsql_source.tables = self.args.tables
-        self.pgsql_source.schema = self.args.schema.strip()
-        self.pgsql_source.pg_engine = self.pg_engine
-        self.pgsql_source.logger = self.logger
-        self.pgsql_source.sources = self.config["sources"]
-        self.pgsql_source.type_override = self.config["type_override"]
-        self.pgsql_source.notifier = self.notifier
+    def check_compress_param(self):
+        try:
+            enable_compress = self.config["sources"][self.source]["enable_compress"]
+        except KeyError:
+            enable_compress = False
+        if enable_compress:
+            self.pg_engine.enable_compress = True
+            self.pg_engine.compress_param_map = {}
+            self.mysql_source.enable_compress = True
+            self.__get_compresstype_param()
+            self.__get_compress_level_param()
+            self.__get_compress_chunk_size()
+            self.__get_compress_prealloc_chunks()
+            self.__get_compress_byte_convert()
+            self.__get_compress_diff_convert()
 
-        catalog_version = self.pg_engine.get_catalog_version()
-        # safety checks
-        if self.args.command == 'upgrade_replica_schema':
-            self.pg_engine.sources = self.config["sources"]
-            print("WARNING, entering upgrade mode. Disabling the catalogue version's check. Expected version %s,"
-                  " installed version %s" % (self.catalog_version, catalog_version))
-        elif self.args.command == 'enable_replica' and self.catalog_version != catalog_version:
-            print("WARNING, catalogue mismatch. Expected version %s, installed version %s" %
-                  (self.catalog_version, catalog_version))
-        else:
-            if catalog_version:
-                if self.catalog_version != catalog_version:
-                    print("FATAL, replica catalogue version mismatch. Expected %s, got %s" % (
-                    self.catalog_version, catalog_version))
-                    sys.exit()
+    def __get_compresstype_param(self):
+        try:
+            compresstype = self.config["compress_properties"]["compresstype"]
+        except KeyError:
+            compresstype = 0
+        if not type(compresstype) == int and 0 <= compresstype <= 2:
+            self.logger.warning(
+                "WARNING, the param compresstype is in [0, 2], but the current setting is "
+                "%s, so we use the default value %s" % (compresstype, 0))
+            compresstype = 0
+        if compresstype != 0:
+            self.pg_engine.compress_param_map["compresstype"] = compresstype
 
-        if self.args.source != '*' and self.args.command != 'add_source':
-            self.pg_engine.connect_db()
-            source_count = self.pg_engine.check_source()
-            self.pg_engine.disconnect_db()
-            if source_count == 0:
-                print("FATAL, The source %s is not registered. Please add it add_source" % (self.args.source))
-                sys.exit()
+    def __get_compress_level_param(self):
+        try:
+            compress_level = self.config["compress_properties"]["compress_level"]
+        except KeyError:
+            compress_level = 0
+        if not type(compress_level) == int and -31 <= compress_level <= 31:
+            self.logger.warning(
+                "WARNING, the param compress_level is in [0, 2], but the current setting is "
+                "%s, so we use the default value %s" % (compress_level, 0))
+            compress_level = 0
+        if compress_level != 0:
+            self.pg_engine.compress_param_map["compress_level"] = compress_level
+
+    def __get_compress_chunk_size(self):
+        try:
+            compress_chunk_size = self.config["compress_properties"]["compress_chunk_size"]
+        except KeyError:
+            compress_chunk_size = 4096
+        if not type(compress_chunk_size) == int and compress_chunk_size in [512, 1024, 2048, 4096]:
+            self.logger.warning(
+                "WARNING, the param compress_chunk_size is in list [512, 1024, 2048, 4096] for default 8k page, "
+                "but the current setting is %s, so we use the default value %s" % (compress_chunk_size, 4096))
+            compress_chunk_size = 4096
+        if compress_chunk_size != 4096:
+            self.pg_engine.compress_param_map["compress_chunk_size"] = compress_chunk_size
+
+    def __get_compress_prealloc_chunks(self):
+        try:
+            compress_prealloc_chunks = self.config["compress_properties"]["compress_prealloc_chunks"]
+        except KeyError:
+            compress_prealloc_chunks = 0
+        if not type(compress_prealloc_chunks) == int and 0 <= compress_prealloc_chunks <= 7:
+            self.logger.warning(
+                "WARNING, the param compress_prealloc_chunks is [0, 7], but the current setting is "
+                "%s, so we use the default value %s" % (compress_prealloc_chunks, 0))
+            compress_prealloc_chunks = 0
+        if compress_prealloc_chunks != 0:
+            try:
+                compress_chunk_size = self.pg_engine.compress_param_map["compress_chunk_size"]
+            except KeyError:
+                compress_chunk_size = 4096
+            if compress_chunk_size == 2048 and compress_prealloc_chunks > 3:
+                self.logger.warning("WARNING, the param compress_prealloc_chunks max value is 3 when the param "
+                                    "compress_chunk_size is 2048, but the the current setting is %s, so we use "
+                                    "the default value %s" % (compress_chunk_size, 0))
+            elif compress_chunk_size == 4096 and compress_prealloc_chunks > 1:
+                self.logger.warning("WARNING, the param compress_prealloc_chunks max value is 1 when the param "
+                                    "compress_chunk_size is 4096, but the the current setting is %s, so we use "
+                                    "the default value %s" % (compress_chunk_size, 0))
+            else:
+                self.pg_engine.compress_param_map["compress_chunk_size"] = compress_chunk_size
+
+    def __get_compress_byte_convert(self):
+        try:
+            compress_byte_convert = self.config["compress_properties"]["compress_byte_convert"]
+        except KeyError:
+            compress_byte_convert = False
+        if type(compress_byte_convert) == bool and compress_byte_convert:
+            self.pg_engine.compress_param_map["compress_byte_convert"] = compress_byte_convert
+
+    def __get_compress_diff_convert(self):
+        try:
+            compress_diff_convert = self.config["compress_properties"]["compress_diff_convert"]
+        except KeyError:
+            compress_diff_convert = False
+        if type(compress_diff_convert) == bool and compress_diff_convert:
+            self.pg_engine.compress_param_map["compress_diff_convert"] = compress_diff_convert
 
     def write_Json(self):
-        dump_jsons = {"table": [], "view": [], "function": [], "trigger": [], "procedure": []}
+        dump_jsons = {"total": [], "table": [], "view": [], "function": [], "trigger": [], "procedure": []}
         dump_object = self.mysql_source.getmanagerJson().copy()
-        dump_object_name=''
-        if(self.args.command =='init_replica'):
-            dump_object_name='table'
-        elif(self.args.command =='start_view_replica'):
-            dump_object_name='view'
-        elif(self.args.command =='start_trigger_replica'):
-            dump_object_name='trigger'
-        elif(self.args.command =='start_func_replica'):
-            dump_object_name='function'
-        elif(self.args.command =='start_proc_replica'):
-            dump_object_name='procedure'
+        dump_object_name = ''
+        if self.args.command == 'init_replica':
+            dump_object_name = 'table'
+        elif self.args.command == 'start_view_replica':
+            dump_object_name = 'view'
+        elif self.args.command == 'start_trigger_replica':
+            dump_object_name = 'trigger'
+        elif self.args.command == 'start_func_replica':
+            dump_object_name = 'function'
+        elif self.args.command == 'start_proc_replica':
+            dump_object_name = 'procedure'
 
         for key in dump_object:
-                dump_jsons[dump_object_name].append(dump_object[key])
+            if key == "total":
+                dump_jsons["total"] = dump_object[key]
+            else:
+            	dump_jsons[dump_object_name].append(dump_object[key])
         with open('data_'+self.args.config+'_'+self.args.command+'.json', 'w', encoding='utf8') as f:
             f.seek(0)
             json.dump(dump_jsons,f)
@@ -259,6 +377,7 @@ class replica_engine(object):
         while True:
             self.write_Json()
             time.sleep(2)
+
     def __check_param_valid(self, param):
         """
             The method is used to check whether the param is valid.
@@ -268,6 +387,9 @@ class replica_engine(object):
         elif str(param).lower() == "yes" or str(param).lower() == "no":
             return True
         return False
+
+    def __check_parallel_workers(self, param):
+        return type(param) == int and 0 <= param <= 32
 
     def terminate_replica(self, signal, frame):
         """
@@ -1294,7 +1416,7 @@ class replica_engine(object):
         logger.setLevel(logging.DEBUG)
         logger.propagate = False
         if debug_mode:
-            str_format = "%(asctime)s %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
+            str_format = "%(asctime)s.%(msecs)03d %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
         else:
             str_format = "%(asctime)s %(processName)s %(levelname)s: %(message)s"
         formatter = logging.Formatter(str_format, "%Y-%m-%d %H:%M:%S")

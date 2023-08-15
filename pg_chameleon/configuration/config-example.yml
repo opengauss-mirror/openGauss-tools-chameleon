@@ -1,4 +1,3 @@
----
 # global settings
 pid_dir: '~/.pg_chameleon/pid/'
 log_dir: '~/.pg_chameleon/logs/'
@@ -13,18 +12,26 @@ dump_json: No
 # into a different one.
 
 type_override:
-  "tinyint(1)":
-    override_to: boolean
-    override_tables:
-      - "*"
+#  "tinyint(1)":
+#    override_to: boolean
+#    override_tables:
+#      - "*"
 
+# specify the compress properties when creating tables
+compress_properties:
+  compresstype: 0
+  compress_level: 0
+  compress_chunk_size: 4096
+  compress_prealloc_chunks: 0
+  compress_byte_convert: false
+  compress_diff_convert: false
 
-# postgres  destination connection
+# postgres destination connection
 pg_conn:
   host: "localhost"
   port: "5432"
   user: "usr_replica"
-  password: "never_commit_password"
+  password: "never_commit_passwords"
   database: "db_replica"
   charset: "utf8"
 
@@ -32,6 +39,7 @@ sources:
   mysql:
     readers: 4
     writers: 4
+    retry: 3
     db_conn:
       host: "localhost"
       port: "3306"
@@ -45,6 +53,9 @@ sources:
       - delphis_mediterranea.foo
     skip_tables:
       - delphis_mediterranea.bar
+    enable_compress: No
+    compress_tables:
+      - delphis_mediterranea.foo
     grant_select_to:
       - usr_readonly
     lock_timeout: "120s"
@@ -55,10 +66,14 @@ sources:
     copy_max_memory: "300M"
     copy_mode: 'file'
     out_dir: /tmp
+    csv_dir: /tmp
+    contain_columns: No
+    column_split: ','
     sleep_loop: 1
     on_error_replay: continue
     on_error_read: continue
     auto_maintenance: "disabled"
+    index_parallel_workers: 16
     gtid_enable: false
     type: mysql
     skip_events:
