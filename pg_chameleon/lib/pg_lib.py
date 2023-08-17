@@ -862,15 +862,15 @@ class pg_engine(object):
                 schema_loading = self.schema_loading[schema]["loading"]
                 self.logger.info("Granting select on tables in schema %s to the role(s) %s." % (schema_loading,','.join(self.grant_select_to)))
                 for db_role in self.grant_select_to:
-                    sql_grant_usage = ("GRANT USAGE ON SCHEMA \"{}\" TO \"{}\";").format(schema_loading, db_role)
-                    sql_alter_default_privs = ("ALTER DEFAULT PRIVILEGES IN SCHEMA \"{}\" GRANT SELECT ON TABLES TO \"{}\";").format(schema_loading, db_role)
+                    sql_grant_usage = ("GRANT USAGE ON SCHEMA `{}` TO `{}`;").format(schema_loading, db_role)
+                    sql_alter_default_privs = ("ALTER DEFAULT PRIVILEGES IN SCHEMA `{}` GRANT SELECT ON TABLES TO `{}`;").format(schema_loading, db_role)
                     try:
                         self.connect_db()
                         self.pgsql_conn.execute(sql_grant_usage)
                         self.pgsql_conn.execute(sql_alter_default_privs)
                         for table in self.schema_tables[schema]:
                             self.logger.info("Granting select on table %s.%s to the role %s." % (schema_loading, table,db_role))
-                            sql_grant_select = ("GRANT SELECT ON TABLE \"{}\".\"{}\" TO \"{}\";").format(schema_loading, table, db_role)
+                            sql_grant_select = ("GRANT SELECT ON TABLE `{}`.`{}` TO `{}`;").format(schema_loading, table, db_role)
                             try:
                                 self.pgsql_conn.execute(sql_grant_select)
                             except Exception as er:
@@ -2992,7 +2992,7 @@ class pg_engine(object):
             stmt = self.pgsql_conn.prepare(sql_delete% (self.source, ))
             source_drop = stmt.first()
             for log_table in source_drop:
-                sql_drop = """DROP TABLE sch_chameleon."%s"; """ % (log_table)
+                sql_drop = """DROP TABLE sch_chameleon.`%s`; """ % (log_table)
                 try:
                     self.pgsql_conn.execute(sql_drop)
                 except:
@@ -3155,7 +3155,7 @@ class pg_engine(object):
             destination_schema = schema
 
         column_comments = ''
-        ddl_head = 'CREATE TABLE "%s"."%s" (' % (destination_schema, table_name)
+        ddl_head = 'CREATE TABLE `%s`.`%s` (' % (destination_schema, table_name)
         ddl_tail = ")"
         ddl_columns = []
         ddl_enum=[]
@@ -3172,7 +3172,7 @@ class pg_engine(object):
                     default_value = " default %s " % (column["default"])
 
             if column_type == "enum":
-                enum_type = '"%s"."enum_%s_%s"' % (destination_schema, table_name, column["column_name"][0:20])
+                enum_type = '`%s`.`enum_%s_%s`' % (destination_schema, table_name, column["column_name"][0:20])
                 sql_drop_enum = 'DROP TYPE IF EXISTS %s CASCADE;' % enum_type
                 sql_create_enum = 'CREATE TYPE %s AS ENUM %s;' % ( enum_type,  column["enum_list"])
                 ddl_enum.append(sql_drop_enum)
@@ -3197,9 +3197,9 @@ class pg_engine(object):
                 extra = column["extra"].lower()
 
             if self.column_case_sensitive:
-                ddl_columns.append(  ' "%s" %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
+                ddl_columns.append(  ' `%s` %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
             elif column["column_name"].lower() in KeyWords.keyword_set:
-                ddl_columns.append(  ' "%s" %s %s %s %s  ' % (column["column_name"].lower(), column_type, default_value, col_is_null, extra))
+                ddl_columns.append(  ' `%s` %s %s %s %s  ' % (column["column_name"].lower(), column_type, default_value, col_is_null, extra))
             else:
                 ddl_columns.append(  ' %s %s %s %s %s  ' % (column["column_name"], column_type, default_value, col_is_null, extra))
 
@@ -3207,15 +3207,15 @@ class pg_engine(object):
                 single_quote = "\'"
                 column["column_comment"] = single_quote + str(column["column_comment"]).replace(single_quote, single_quote + single_quote) + single_quote
                 if self.column_case_sensitive:
-                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is %s;\n'
+                    column_comments = column_comments + ('comment on column `%s`.`%s`.`%s` is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
                                                             column["column_comment"]))
                 elif column["column_name"].lower() in KeyWords.keyword_set:
-                    column_comments = column_comments + ('comment on column "%s"."%s"."%s" is %s;\n'
+                    column_comments = column_comments + ('comment on column `%s`.`%s`.`%s` is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"].lower(),
                                                             column["column_comment"]))
                 else:
-                    column_comments = column_comments + ('comment on column "%s"."%s".%s is %s;\n'
+                    column_comments = column_comments + ('comment on column `%s`.`%s`.%s is %s;\n'
                                                          % (destination_schema, table_name, column["column_name"],
                                                             column["column_comment"]))
 
@@ -4216,7 +4216,7 @@ class pg_engine(object):
         for log_table in log_tables:
 
             sql_cleanup = ("""
-                DELETE FROM sch_chameleon.\"{}\"
+                DELETE FROM sch_chameleon.`{}`
                 WHERE
                     i_id_batch IN (
                         SELECT
@@ -4846,7 +4846,7 @@ class pg_engine(object):
             :param column_list: A string with the list of columns to use in the COPY FROM command already quoted and comma separated
         """
         header = "HEADER" if contain_columns else ""
-        sql_copy = 'COPY "%s"."%s" (%s) FROM STDIN WITH NULL \'NULL\' CSV QUOTE \'"\' DELIMITER \'%s\' ESCAPE \'"\' %s'\
+        sql_copy = 'COPY `%s`.`%s` (%s) FROM STDIN WITH NULL \'NULL\' CSV QUOTE \'"\' DELIMITER \'%s\' ESCAPE \'"\' %s'\
                    % (schema, table, column_list, column_split, header)
         receive_stmt = self.pgsql_conn.prepare(sql_copy)
         receive_stmt.load_rows(csv_file)
@@ -4864,7 +4864,7 @@ class pg_engine(object):
         sample_row = insert_data[0]
         column_marker = ','.join(['%s' for column in sample_row])
 
-        sql_head = 'INSERT INTO "%s"."%s"(%s) VALUES (%s);' % (schema, table, column_list, column_marker)
+        sql_head = 'INSERT INTO `%s`.`%s`(%s) VALUES (%s);' % (schema, table, column_list, column_marker)
         self.logger.info(sql_head)
         for data_row in insert_data:
             try:
@@ -4968,19 +4968,19 @@ class pg_engine(object):
                 self.logger.debug("Building DDL for index %s" % (indx))
                 idx_col = [column.strip() for column in index["index_columns"].split(',')]
                 if self.column_case_sensitive:
-                    index_columns = ['"%s"' % column.strip() for column in idx_col]
+                    index_columns = ['`%s`' % column.strip() for column in idx_col]
                 else:
                     index_columns = []
                     for column in idx_col:
                         if column.strip().lower() in KeyWords.keyword_set:
-                            index_columns.append("\"" + column.strip.lower() + "\"")
+                            index_columns.append("`" + column.strip.lower() + "`")
                         else:
                             index_columns.append(column.strip())
                 non_unique = index["non_unique"]
                 index_type = index["index_type"]
                 if indx =='PRIMARY':
                     pkey_name = format("pk_%s_%s_%s" % (table[0:100],table_timestamp,  self.idx_sequence))
-                    pkey_def = 'ALTER TABLE "%s"."%s" ADD CONSTRAINT "%s" PRIMARY KEY (%s) ;' % (schema, table, pkey_name, ','.join(index_columns))
+                    pkey_def = 'ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s) ;' % (schema, table, pkey_name, ','.join(index_columns))
                     idx_ddl[pkey_name] = pkey_def
                     table_primary = idx_col
                 else:
@@ -4997,7 +4997,7 @@ class pg_engine(object):
                         using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
                     index_name='idx_%s_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp,
                                                        random.randint(0, 10000), self.idx_sequence)
-                    idx_def='CREATE %s INDEX "%s" ON "%s"."%s" %s;' % (unique_key, index_name, schema, table, using)
+                    idx_def='CREATE %s INDEX `%s` ON `%s`.`%s` %s;' % (unique_key, index_name, schema, table, using)
                     idx_ddl[index_name] = idx_def
                 self.idx_sequence+=1
 
@@ -5005,7 +5005,7 @@ class pg_engine(object):
             if self.index_parallel_workers == 0:
                 self.logger.warning("param index_parallel_workers = 0, so disable parallel create index")
             else:
-                set_parallel_index = 'alter table "%s"."%s" set (parallel_workers = %s);' \
+                set_parallel_index = 'alter table `%s`.`%s` set (parallel_workers = %s);' \
                              % (schema, table, self.index_parallel_workers)
                 self.logger.info("ready to set parallel index workers %s for table %s.%s"
                          % (self.index_parallel_workers, schema, table))
@@ -5027,7 +5027,7 @@ class pg_engine(object):
             self.logger.info("Finish Building index %s on %s.%s" % (index, schema, table))
 
         if is_parallel_create_index and self.index_parallel_workers != 0:
-            reset_parallel_index = 'alter table "%s"."%s" reset (parallel_workers);' % (schema, table)
+            reset_parallel_index = 'alter table `%s`.`%s` reset (parallel_workers);' % (schema, table)
             self.logger.info("ready to reset parallel index workers %s for table %s.%s"
                          % (self.index_parallel_workers, schema, table))
             try:
@@ -5050,9 +5050,9 @@ class pg_engine(object):
             schema_loading = self.schema_loading[schema]["loading"]
             schema_destination = self.schema_loading[schema]["destination"]
             schema_temporary = "_rename_%s" % self.schema_loading[schema]["destination"]
-            sql_dest_to_tmp = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((schema_destination), (schema_temporary))
-            sql_load_to_dest = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((schema_loading), (schema_destination))
-            sql_tmp_to_load = ("ALTER SCHEMA \"{}\" RENAME TO \"{}\";").format((schema_temporary), (schema_loading))
+            sql_dest_to_tmp = ("ALTER SCHEMA `{}` RENAME TO `{}`;").format((schema_destination), (schema_temporary))
+            sql_load_to_dest = ("ALTER SCHEMA `{}` RENAME TO `{}`;").format((schema_loading), (schema_destination))
+            sql_tmp_to_load = ("ALTER SCHEMA `{}` RENAME TO `{}`;").format((schema_temporary), (schema_loading))
             x = self.pgsql_conn.xact()
             x.start()
             self.logger.info("Swapping schema %s with %s" % (schema_destination, schema_loading))
@@ -5171,7 +5171,7 @@ class pg_engine(object):
         sql = 'select * from pg_namespace where nspname=$1'
         result = self.pgsql_conn.query.first(sql, schema_name)
         if not result:
-            sql_create = ("CREATE SCHEMA \"{}\";").format((schema_name))
+            sql_create = ("CREATE SCHEMA {};").format((schema_name))
             self.pgsql_conn.execute(sql_create)
 
     def drop_database_schema(self, schema_name, cascade):
@@ -5187,7 +5187,7 @@ class pg_engine(object):
             cascade_clause = "CASCADE"
         else:
             cascade_clause = ""
-        sql_drop = "DROP SCHEMA IF EXISTS \"{}\" %s;" % cascade_clause
+        sql_drop = "DROP SCHEMA IF EXISTS `{}` %s;" % cascade_clause
         sql_drop = (sql_drop).format((schema_name))
         self.set_lock_timeout()
         try:

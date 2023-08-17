@@ -359,7 +359,7 @@ def dqstr(obj) -> str:
     """
         The method formats the string with the double quote.
     """
-    return "\"{}\"".format(str(obj))
+    return "`{}`".format(str(obj))
 
 
 def column_name_case_sensitive(obj, case_sensitive) -> str:
