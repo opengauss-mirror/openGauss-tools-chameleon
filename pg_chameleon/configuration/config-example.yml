@@ -73,7 +73,7 @@ sources:
     on_error_replay: continue
     on_error_read: continue
     auto_maintenance: "disabled"
-    index_parallel_workers: 16
+    index_parallel_workers: 2
     gtid_enable: false
     type: mysql
     skip_events:
@@ -84,7 +84,6 @@ sources:
       update:
     keep_existing_schema: No
     migrate_default_value: Yes
-    column_case_sensitive: Yes
     mysql_restart_config: Yes
 
   pgsql:

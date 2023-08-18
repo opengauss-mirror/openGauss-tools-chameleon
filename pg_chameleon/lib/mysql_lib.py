@@ -189,7 +189,7 @@ class mysql_source(object):
 
     @classmethod
     def __decode_bit_value(cls, origin_value, numeric_scale):
-        return int(origin_value, BINARY_BASE)
+        return origin_value
 
     @classmethod
     def __decode_set_value(cls, origin_value, numeric_scale):
@@ -217,7 +217,6 @@ class mysql_source(object):
             ColumnType.M_VARBINARY.value: self.__decode_binary_value,
             ColumnType.M_FLOAT.value: self.__decode_float_value(ColumnType.M_FLOAT.value),
             ColumnType.M_DOUBLE.value: self.__decode_float_value(ColumnType.M_DOUBLE.value),
-            ColumnType.M_DOUBLE_P.value: self.__decode_float_value(ColumnType.M_DOUBLE.value),
             ColumnType.M_SET.value: self.__decode_set_value,
             ColumnType.M_BIT.value: self.__decode_bit_value
         }
@@ -342,7 +341,6 @@ class mysql_source(object):
         new_engine.notifier = self.pg_engine.notifier
         new_engine.migrate_default_value = self.pg_engine.migrate_default_value
         new_engine.mysql_version = -1 if self.is_mariadb == False else self.version
-        new_engine.column_case_sensitive = self.pg_engine.column_case_sensitive
         new_engine.index_parallel_workers = self.pg_engine.index_parallel_workers
         return new_engine
 
@@ -678,7 +676,7 @@ class mysql_source(object):
             :return: table's metadata as a cursor dictionary
             :rtype: dictionary
         """
-        sql_metadata="""
+        sql_metadata = """
             SELECT
                 column_name as column_name,
                 column_default as column_default,
@@ -691,12 +689,9 @@ class mysql_source(object):
                 is_nullable as is_nullable,
                 numeric_precision as numeric_precision,
                 numeric_scale as numeric_scale,
-                CASE
-                    WHEN data_type="enum"
-                THEN
-                    SUBSTRING(COLUMN_TYPE,5)
-                END AS enum_list,
-                column_comment AS column_comment
+                column_comment AS column_comment,
+                character_set_name as character_set_name,
+                collation_name as collation_name
             FROM
                 information_schema.COLUMNS
             WHERE
@@ -707,8 +702,30 @@ class mysql_source(object):
             ;
         """
         self.cursor_buffered.execute(sql_metadata, (schema, table))
-        table_metadata=self.cursor_buffered.fetchall()
+        table_metadata = self.cursor_buffered.fetchall()
         return table_metadata
+
+    def get_table_info(self, table, schema):
+        """
+            The method gets the comment of the table.
+
+            :param table: the table name
+            :param schema: the table schema
+            :return: the table's comment
+        """
+        sql = """
+            SELECT
+                table_comment as table_comment,
+                table_collation as table_collation
+            FROM
+                information_schema.TABLES
+            WHERE
+                    table_schema = %s
+                AND table_name = %s;
+        """
+        self.cursor_buffered.execute(sql, (schema, table))
+        table_info = self.cursor_buffered.fetchone()
+        return table_info
 
     def get_foreign_keys_metadata(self):
         """
@@ -734,8 +751,8 @@ class mysql_source(object):
                     constraint_name as constraint_name,
                     referenced_table_name as referenced_table_name,
                     referenced_table_schema as referenced_table_schema,
-                    GROUP_CONCAT(concat('"',column_name,'"') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as fk_cols,
-                    GROUP_CONCAT(concat('"',REFERENCED_COLUMN_NAME,'"') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as ref_columns
+                    GROUP_CONCAT(concat('`',column_name,'`') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as fk_cols,
+                    GROUP_CONCAT(concat('`',REFERENCED_COLUMN_NAME,'`') ORDER BY POSITION_IN_UNIQUE_CONSTRAINT) as ref_columns
                 FROM
                     information_schema.key_column_usage
                 WHERE
@@ -768,6 +785,7 @@ class mysql_source(object):
             The tables names are looped using the values stored in the class dictionary schema_tables.
         """
         self.logger.info("Start to create tables")
+        self.pg_engine.check_migration_collate()
         for schema in self.schema_tables:
             table_list = self.schema_tables[schema]
             try:
@@ -777,11 +795,14 @@ class mysql_source(object):
                 enable_compress = False
             for table in table_list:
                 table_metadata = self.get_table_metadata(table, schema)
+                table_info = self.get_table_info(table, schema)
                 partition_metadata = self.get_partition_metadata(table, schema)
                 if enable_compress and table in compress_tables:
-                    self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql', True)
+                    self.pg_engine.create_table(table_metadata, table_info, partition_metadata,
+                                                table, schema, 'mysql', True)
                 else:
-                    self.pg_engine.create_table(table_metadata, partition_metadata, table, schema, 'mysql')
+                    self.pg_engine.create_table(table_metadata, table_info, partition_metadata,
+                                                table, schema, 'mysql')
         self.logger.info("Finish creating all the tables")
 
     def generate_table_metadata_statement(self, schema, table, table_count, cursor=None):
@@ -851,11 +872,11 @@ class mysql_source(object):
                     WHEN
                         data_type IN ('"""+ColumnType.M_BINARY.value+"""')
                     THEN
-                        concat('concat(\\'\\\\\\\\x\\', trim(trailing \\'00\\' from hex(',column_name,')))')
+                        concat('concat(\\'\\\\\\\\x\\', hex(',column_name,'))')
                     WHEN
                         data_type IN ('"""+ColumnType.M_BIT.value+"""')
                     THEN
-                        concat('cast(`',column_name,'` AS unsigned)')
+                        concat('LPAD(bin(', column_name, '),', numeric_precision, ',\\'0\\')')
                     WHEN
                         data_type IN ('"""+"','".join(self.postgis_spatial_datatypes)+"""')
                     THEN
@@ -900,15 +921,7 @@ class mysql_source(object):
         select_csv = "COALESCE(REPLACE(%s, '\"', '\"\"'),'{}') ".format(random)
         select_csv = [select_csv % statement["select_csv"] for statement in select_data]
         select_stat = [statement["select_csv"] for statement in select_data]
-        if self.column_case_sensitive:
-            column_list = ['`%s`' % statement["column_name"] for statement in select_data]
-        else:
-            column_list = []
-            for statement in select_data:
-                if statement["column_name"].lower() in KeyWords.keyword_set:
-                    column_list.append("`" + statement["column_name"].lower() + "`")
-                else:
-                    column_list.append(statement["column_name"])
+        column_list = ['`%s`' % statement["column_name"] for statement in select_data]
 
         select_columns["select_csv"] = "REPLACE(CONCAT('\"',CONCAT_WS('\",\"',%s),'\"'),'\"%s\"','NULL')" % (','.join(select_csv), random)
         select_columns["select_stat"] = ','.join(select_stat)
@@ -1048,8 +1061,9 @@ class mysql_source(object):
             else:
                 master_status, is_parallel_create_index = self.read_data_from_table(schema, table, cursor_manager)
             indices = self.__get_index_data(schema=schema, table=table, cursor_buffered=cursor_manager.cursor_buffered)
+            auto_increment_column = self.__get_auto_increment_column(schema, table, cursor_manager.cursor_buffered)
             index_write_task = CreateIndexTask(table, schema, indices, destination_schema, master_status,
-                                                 is_parallel_create_index)
+                                               is_parallel_create_index, auto_increment_column)
             readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
             if self.index_waiting_queue.qsize() > readers:
                 self.write_task_queue.put(self.index_waiting_queue.get(block=True))
@@ -1243,7 +1257,6 @@ class mysql_source(object):
         sql_csv = "SELECT /*+ MAX_EXECUTION_TIME(%d) */ %s as data FROM `%s`.`%s`;" %\
             (MAX_EXECUTION_TIME, select_columns["select_csv"], schema, table)
         self.logger.debug("Executing query for table %s.%s" % (schema, table))
-
         with self.reader_xact(self, cursor_buffered, table_txs):
             cursor_unbuffered.execute(sql_csv)
             self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
@@ -1405,6 +1418,8 @@ class mysql_source(object):
             else:
                 table_pkey = writer_engine.create_indices(loading_schema, table, task.indices,
                                                           task.is_parallel_create_index)
+                writer_engine.create_auto_increment_column(loading_schema, table, task.auto_increment_column)
+
             writer_engine.store_table(destination_schema, table, table_pkey, master_status)
             if self.keep_existing_schema:
                 self.logger.info(
@@ -1488,29 +1503,60 @@ class mysql_source(object):
         table_pkey = pg_engine.create_indices(loading_schema, table, index_data)
         return table_pkey
 
+    def __get_auto_increment_column(self, schema, table, cursor_buffered):
+        sql_column = """
+                SELECT
+                    table_schema as table_schema,
+                    table_name as table_name,
+                    column_name as column_name,
+                    data_type as data_type
+                FROM
+                    information_schema.columns
+                WHERE
+                        table_schema = %s
+                    AND table_name = %s
+                    AND extra = "auto_increment"
+                    ;
+                """
+        cursor_buffered.execute(sql_column, (schema, table))
+        auto_increment_column = cursor_buffered.fetchall()
+        return auto_increment_column
+
     def __get_index_data(self, schema, table, cursor_buffered):
         sql_index = """
                     SELECT
                         index_name as index_name,
                         index_type as index_type,
                         non_unique as non_unique,
-                        GROUP_CONCAT(column_name ORDER BY seq_in_index) as index_columns
+                        index_comment as index_comment,
+                        GROUP_CONCAT(column_name ORDER BY seq_in_index) as index_columns,
+                        GROUP_CONCAT(
+                            (
+                                CASE
+                                WHEN sub_part IS NULL THEN 0
+                                ELSE sub_part
+                                END
+                            )
+                            ORDER BY seq_in_index
+                        ) as sub_part
                     FROM
                         information_schema.statistics
                     WHERE
                             table_schema=%s
-                        AND 	table_name=%s
+                        AND table_name=%s
                         AND	(index_type = 'BTREE' OR index_type = 'FULLTEXT')
                     GROUP BY
                         table_name,
                         non_unique,
                         index_name,
-                        index_type
+                        index_type,
+                        index_comment
                     ;
                 """
         cursor_buffered.execute(sql_index, (schema, table))
         index_data = cursor_buffered.fetchall()
         return index_data
+
 
     def init_workers(self, count, target_func, pool, worker_prefix):
         for x in range(count):
@@ -2309,8 +2355,7 @@ class mysql_source(object):
                 create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
 
                 # translate sql dialect in mysql format to opengauss format.
-                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement,
-                                                                        self.pg_engine.column_case_sensitive)
+                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
                 tran_create_view_statement = self.__get_tran_create_view_statement(db_object_type, schema, stdout)
                 has_error, error_message = self.__unified_log(stderr)
                 if has_error:

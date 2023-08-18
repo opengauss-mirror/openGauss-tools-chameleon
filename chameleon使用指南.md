@@ -397,15 +397,13 @@ sources:
 
      sleep_loop: 1
 
-     index_parallel_workers: 16
+     index_parallel_workers: 2
 
      type: mysql
 
      keep_existing_schema: No
 
      migrate_default_value: Yes
-
-     column_case_sensitive: Yes
 
      mysql_restart_config: Yes
 ```
@@ -679,19 +677,15 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 是否迁移MySQL的默认值到openGauss。默认为Yes。由于列的默认值可以是表达式，部分MySQL的表达式若openGauss不支持的话，离线迁移过程中会报错，导致迁移失败。可通过将本值设置为No临时规避此类问题。
 
-### 3.4.25. column_case_sensitive
-
-用于指定迁移过程是否区分列名大小写。默认为Yes。由于MySQL中不区分列名大小写，而openGauss中通过添加双引号可区分列名大小写。当该参数为Yes时，MySQL中查询到的含大写的列名会原样迁移至openGauss，即openGauss为含大写的列名；当该参数为No时，Mysql中的列名均以小写形式迁移至openGauss，若列名不符合标识符命名规范，例如列名为'idAA哈12&3'，迁移会失败。
-
-### 3.4.26. mysql_restart_config
+### 3.4.25. mysql_restart_config
 
 用于指定是否允许重启Mysql数据库。默认值为Yes。由于在线迁移需要开启binlog，并设置如下参数：log_bin=on，binlog_format=row，binlog_row_image=full，gtid_mode=on, 若Mysql初始配置与上述参数不一致，则需要修改参数并重启Mysql数据库，方可使用离线和在线功能。当该参数为No时，则表示不允许重启数据库，若在线迁移参数不符合要求，则不允许使用在线迁移功能，仅能在停止业务前提下使用离线迁移功能。
 
-### 3.4.27. index_parallel_workers
+### 3.4.26. index_parallel_workers
 
-用于指定并发创建索引时bgworker的线程数，取值范围：[0, 32]，其中0表示关闭并发，默认值为16。当表数据量大于100000时，创建索引将通过该参数显式指定并发线程数。
+用于指定并发创建索引时bgworker的线程数，取值范围：[0, 32]，其中0表示关闭并发，默认值为2。当表数据量大于100000时，创建索引将通过该参数显式指定并发线程数。
 
-### 3.4.28. csv_dir
+### 3.4.27. csv_dir
 
 全量数据导入支持两种方式：(1)从MySQL库查询数据导入openGauss；(2)从指定CSV文件导入特定表的数据。该参数用于指定方式二从CSV文件直接进行全量数据导入的CSV文件目录。
 其中一个表对应一个CSV文件，CSV文件命名规则为schema_table.csv。针对一个schema，若csv_dir为非法路径，或者该路径下未包含该schema对应表的CSV文件，该schema的表
@@ -713,27 +707,27 @@ CSV格式要点：
 
 （5）CSV文件首行未包含列名信息，与配置项默认值contain_columns=No对应，可自定义。
 
-### 3.4.29. contain_columns
+### 3.4.28. contain_columns
 
 对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件首行是否包含表的列名信息，默认值为No，表示不包含，此时将对表的所有列进行copy数据，
 csv文件对应列的顺序应和表的所有列的自然顺序保持一致。若取值为Yes，则表示文件首行为表的列名信息，copy数据时将跳过首行，对于多列信息，列名之间应按照','分隔，此时将对首行指定
 的列进行copy数据。
 
-### 3.4.30. column_split
+### 3.4.29. column_split
 
 对于全量数据导入方式二，从指定CSV文件导入特定表的数据，该参数指定schema_table.csv文件多列之间的分隔符，默认值为','，可自定义。
 
-### 3.4.31. enable_compress
+### 3.4.30. enable_compress
 
 用于指定是否启用行存表的压缩属性。默认为No，表示不启用。当设置为Yes时，表示启用压缩相关属性。压缩相关参数由compress_properties参数配置。
 启用压缩属性的表由compress_tables参数配置。
 
-### 3.4.32. compress_tables
+### 3.4.31. compress_tables
 
 当启用行存表的压缩属性时，该参数用于指定用于压缩的表的白名单，支持表级和库级的表的白名单，默认对整个迁移的库按照参数compress_properties配置的
 属性进行压缩，也可指定具体的表按照参数compress_properties配置的属性进行压缩。
 
-### 3.4.33 retry
+### 3.4.32 retry
 
 对首次迁移失败的表，将加入迁移失败队列中，并增加重试机制，对失败的表重新进行迁移优先。该参数指定重试次数，取值为整数，默认值为3，可自定义。
 若设置为正数，则表示进行有限次重试，当失败队列为空或者重试次数已达到上限，迁移进程将自行退出；若设置为0，则表示不重试；若设置为负数，将无限尝试直至所有表迁移成功，否则迁移进程不会退出。
@@ -813,52 +807,45 @@ REORGANIZE PARTITION 中，openGauss侧采用MERGE和SPLIT实现分区的MySQL�
 
 char(1)类型能够正常插入汉字跟数据库的编码有关。当数据库是B模式，且编码是UTF-8时，char(1)可成功插入1个汉字；当数据库是B模式，且编码是SQL_ASCII时，插入1个汉字会失败。当数据库是A模式时，插入1个汉字也会失败。
 
-| MySQL              | openGauss                   | 备注                                                                                                                              |
-| ------------------ |-----------------------------|---------------------------------------------------------------------------------------------------------------------------------|
-| integer            | integer                     |                                                                                                                                 |
-| mediumint          | integer                     |                                                                                                                                 |
-| tinyint            | integer                     |                                                                                                                                 |
-| smallint           | integer                     |                                                                                                                                 |
-| int                | integer                     |                                                                                                                                 |
-| bigint             | bigint                      |                                                                                                                                 |
-| varchar            | character varying           | 支持迁移最大存储长度（character_maximum_length）                                                                                            |
-| character varying  | character varying           | 支持迁移最大存储长度（character_maximum_length）                                                                                            |
-| text               | text                        |                                                                                                                                 |
-| char               | character                   | 支持迁移最大存储长度（character_maximum_length）                                                                                            |
-| datetime           | timestamp without time zone |                                                                                                                                 |
-| date               | date                        |                                                                                                                                 |
-| time               | time without time zone      |                                                                                                                                 |
-| timestamp          | timestamp without time zone |                                                                                                                                 |
-| tinytext           | text                        |                                                                                                                                 |
-| mediumtext         | text                        |                                                                                                                                 |
-| longtext           | text                        |                                                                                                                                 |
-| tinyblob           | blob                        |                                                                                                                                 |
-| mediumblob         | blob                        |                                                                                                                                 |
-| longblob           | blob                        |                                                                                                                                 |
-| blob               | blob                        |                                                                                                                                 |
-| binary             | bytea                       |                                                                                                                                 |
-| varbinary          | bytea                       |                                                                                                                                 |
-| decimal            | number                      | 支持迁移精度（numeric_precision和numeric_scale）,number[p,s]等价于numeric[p,s]                                                                                         |
-| dec                | number                      | 支持迁移精度（numeric_precision和numeric_scale）,number[p,s]等价于numeric[p,s]                                                                                         |
-| numeric            | number                      | 支持迁移精度（numeric_precision和numeric_scale）,number[p,s]等价于numeric[p,s]                                                                                         |
-| double             | number                      | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧number[p,s],number[p,s]等价于numeric[p,s];当mysql端未指定精度时，转化为openGauss侧number,number等价于numeric      |
-| double precision   | number                      | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧number[p,s],number[p,s]等价于numeric[p,s];当mysql端未指定精度时，转化为openGauss侧number,number等价于numeric                       |
-| float              | number                      | 当MySQL端指定精度时，支持迁移精度，转化为openGauss侧number[p,s],number[p,s]等价于numeric[p,s];当mysql端未指定精度时，转化为openGauss侧number,number等价于numeric                       |
-| bit                | integer                     |                                                                                                                                 |
-| year               | integer                     |                                                                                                                                 |
-| enum               | enum                        | openGauss不直接支持enum类型。对于MySQL的enum类型，openGauss将通过自定义类型创建枚举类型，例如CREATE TYPE enumtype AS ENUM('a','b')创建ENUM类型，然后使用enumtype去定义列类型。 |
-| set                | set                         |                                                                                                                                 |
-| json               | json                        |                                                                                                                                 |
-| bool               | boolean                     |                                                                                                                                 |
-| boolean            | boolean                     |                                                                                                                                 |
-| geometry           | point                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
-| point              | point                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
-| linestring         | path                        | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
-| polygon            | polygon                     | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
-| multipoint         | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
-| geometrycollection | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
-| multilinestring    | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
-| multipolygon       | bytea                       | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                            |
+| MySQL              | openGauss | 备注                                                                                                                                                                                                                                         |
+|--------------------|--|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| int                | integer | 若column_type包含unsigned或者zerofill属性，则类型映射转化为openGauss侧的uint4                                                                                                                                                                                |
+| tinyint            | tinyint | 若column_type包含unsigned或者zerofill属性，则类型映射转化为openGauss侧的uint1                                                                                                                                                                                |
+| smallint           | smallint | 若column_type包含unsigned或者zerofill属性，则类型映射转化为openGauss侧的uint2                                                                                                                                                                                |
+| mediumint          | integer | openGauss侧mediumint与integer等价，存储空间为4字节，mysql侧的mediumint存储空间为3字节，因此openGauss对应的数值范围更大；若column_type包含unsigned或者zerofill属性，则类型映射转化为openGauss侧的uint4                                                                                           |
+| bigint             | bigint | 若column_type包含unsigned或者zerofill属性，则类型映射转化为openGauss侧的uint8                                                                                                                                                                                |
+| char               | character | 支持迁移最大存储长度（character_maximum_length），默认长度为1                                                                                                                                                                                                |
+| varchar            | character varying | 支持迁移最大存储长度（character_maximum_length）                                                                                                                                                                                                       |
+| date               | date |                                                                                                                                                                                                                                            |
+| time               | time without time zone | MySQL的time类型对应openGauss的time类型，对应的data_type类型为time without time zone                                                                                                                                                                                                                                         |
+| datetime           | timestamp without time zone | MySQL的datetime类型对应openGauss的datetime类型，对应的data_type类型为timestamp without time zone                                                                                                                                                                                                                                            |
+| timestamp          | timestamp with time zone | MySQL的timestamp类型对应openGauss的timestamp类型，对应的data_type类型为timestamp with time zone                                                                                                                                                                                                                                           |
+| year               | year | 支持设置宽度，year(w)，w表示宽度，year(4)输出'YYYY'，year(2)输出'YY'                                                                                                                                                                                         |
+| text               | text |                                                                                                                                                                                                                                            |
+| tinytext           | text | openGauss侧tinytext、mediumtext和longtext均是text的别名，与text等价                                                                                                                                                                                    |
+| mediumtext         | text | openGauss侧tinytext、mediumtext和longtext均是text的别名，与text等价                                                                                                                                                                                    |
+| longtext           | text | openGauss侧tinytext、mediumtext和longtext均是text的别名，与text等价                                                                                                                                                                                    |
+| blob               | blob |                                                                                                                                                                                                                                            |
+| tinyblob           | tinyblob |                                                                                                                                                                                                                                            |
+| mediumblob         | mediumblob |                                                                                                                                                                                                                                            |
+| longblob           | longblob |                                                                                                                                                                                                                                            |
+| binary             | binary |                                                                                                                                                                                                                                            |
+| varbinary          | varbinary |                                                                                                                                                                                                                                            |
+| decimal            | numeric | 当mysql侧column_type为decimal, dec, numeric和fixed类型时，data_type均对应decimal类型；这些类型均有type, type(p)和type(p,s)三种格式，若未指定精度(p,s)，形如type，则为默认精度type(10,0)；若未指定s，形如type(p)，则默认s=0，即type(p,0);支持迁移精度numeric_precision和numeric_scale，迁移后的类型为numeric(p,s)。 |
+| double             | numeric | 当mysql侧column_type为double，double precision和real类型时，data_type均对应double类型；这些类型均有type和type(p,s)两种格式；若指定精度（p和s），则类型映射转化为numeric(p,s)；若未指定精度，则类型映射转换为number，即无默认(10,0)精度的numeric类型。                                                        |
+| float              | real | 当mysql侧column_type为float类型时，data_type对应float类型；float类型有type, type(p)和type(p,s)三种格式，若指定精度（p和s），则类型映射转化为numeric(p,s)；否则，类型映射转换为real。                                                                                            |
+| bit                | bit | 支持迁移最大存储长度（character_maximum_length），默认长度为1                                                                                                                                                                                                |
+| enum               | enum |                                                                                                                                                                                                                                            |
+| set                | set |                                                                                                                                                                                                                                            |
+| json               | json |                                                                                                                                                                                                                                            |
+| geometry           | point | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
+| point              | point | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
+| linestring         | path | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
+| polygon            | polygon | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
+| multipoint         | bytea | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
+| geometrycollection | bytea | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
+| multilinestring    | bytea | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
+| multipolygon       | bytea | 若openGauss侧安装有postgis，将迁移成geometry类型                                                                                                                                                                                                       |
 
 # **6.** 实例
 
@@ -1023,7 +1010,7 @@ sources:
 
   auto_maintenance: "disabled"
 
-  index_parallel_workers: 16
+  index_parallel_workers: 2
 
   gtid_enable: false
 
@@ -1032,8 +1019,6 @@ sources:
 keep_existing_schema: No
 
 migrate_default_value: Yes
-
-column_case_sensitive: Yes
 
 mysql_restart_config: Yes
 ```

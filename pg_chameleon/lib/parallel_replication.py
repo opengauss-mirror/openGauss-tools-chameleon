@@ -300,14 +300,14 @@ class Transaction:
                 table = "%s.%s" % (dqstr(event.schema), dqstr(event.table))
                 if isinstance(event, DeleteRowsEvent):
                     for row in event.rows:
-                        sql_list.append(sql_delete(table, self.decode_value(mysql_source, table, column_map_list[i], row['values']), mysql_source.column_case_sensitive))
+                        sql_list.append(sql_delete(table, self.decode_value(mysql_source, table, column_map_list[i], row['values'])))
                 elif isinstance(event, UpdateRowsEvent):
                     for row in event.rows:
                         sql_list.append(sql_update(table, self.decode_value(mysql_source, table, column_map_list[i], row["before_values"]),
-                                               self.decode_value(mysql_source, table, column_map_list[i], row["after_values"]), mysql_source.column_case_sensitive))
+                                               self.decode_value(mysql_source, table, column_map_list[i], row["after_values"])))
                 elif isinstance(event, WriteRowsEvent):
                     for row in event.rows:
-                        sql_list.append(sql_insert(table, self.decode_value(mysql_source, table, column_map_list[i], row['values']), mysql_source.column_case_sensitive))
+                        sql_list.append(sql_insert(table, self.decode_value(mysql_source, table, column_map_list[i], row['values'])))
         return sql_list
 
     def decode_value(self, mysql_source, table_name, column_map, row_value):
@@ -362,19 +362,7 @@ def dqstr(obj) -> str:
     return "`{}`".format(str(obj))
 
 
-def column_name_case_sensitive(obj, case_sensitive) -> str:
-    """
-        The method determines whether to formats the column name string with the double quote based on case sensitive param.
-    """
-    if case_sensitive:
-        return dqstr(str(obj))
-    elif str(obj).lower() in KeyWords.keyword_set:
-        return dqstr(str(obj).lower())
-    else:
-        return str(obj)
-
-
-def sql_delete(table, row, column_case_sensitive) -> str:
+def sql_delete(table, row) -> str:
     """
         The method gets the sql delete statement.
     """
@@ -384,22 +372,22 @@ def sql_delete(table, row, column_case_sensitive) -> str:
     for k, v in row.items():
         ct += 1
         if v is None:
-            sql += (column_name_case_sensitive(k, column_case_sensitive) + " is NULL")
+            sql += (dqstr(k) + " is NULL")
         else:
             if k.endswith("::jsonb"):
                 column_name = k[0:len(k) - 7]
-                sql += (column_name_case_sensitive(column_name, column_case_sensitive) + "::jsonb" + '=' + qstr(v))
+                sql += (dqstr(column_name) + "::jsonb" + '=' + qstr(v))
             elif k.endswith("~"):
                 column_name = k[0:len(k) - 1]
-                sql += (column_name_case_sensitive(column_name, column_case_sensitive) + "~" + '=' + qstr(v))
+                sql += (dqstr(column_name) + "~" + '=' + qstr(v))
             else:
-                sql += (column_name_case_sensitive(k, column_case_sensitive) + '=' + qstr(v))
+                sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
             sql += ' and '
     return sql
 
 
-def sql_update(table, before_row, after_row, column_case_sensitive) -> str:
+def sql_update(table, before_row, after_row) -> str:
     """
         The method gets the sql update statement.
     """
@@ -409,13 +397,13 @@ def sql_update(table, before_row, after_row, column_case_sensitive) -> str:
     for k, v in after_row.items():
         ct += 1
         if v is None:
-            sql += (column_name_case_sensitive(k, column_case_sensitive) + '=' + 'NULL')
+            sql += (dqstr(k) + '=' + 'NULL')
         else:
             if k.endswith("::jsonb"):
                 k = k[0:len(k) - 7]
             if k.endswith("~"):
                 k = k[0:len(k) - 1]
-            sql += (column_name_case_sensitive(k, column_case_sensitive) + '=' + qstr(v))
+            sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
             sql += ','
     sql += ' where '
@@ -423,22 +411,22 @@ def sql_update(table, before_row, after_row, column_case_sensitive) -> str:
     for k, v in before_row.items():
         ct += 1
         if v is None:
-            sql += (column_name_case_sensitive(k, column_case_sensitive) + " is NULL")
+            sql += (dqstr(k) + " is NULL")
         else:
             if k.endswith("::jsonb"):
                 column_name = k[0:len(k) - 7]
-                sql += (column_name_case_sensitive(column_name, column_case_sensitive) + "::jsonb" + '=' + qstr(v))
+                sql += (dqstr(column_name) + "::jsonb" + '=' + qstr(v))
             elif k.endswith("~"):
                 column_name = k[0:len(k) - 1]
-                sql += (column_name_case_sensitive(column_name, column_case_sensitive) + "~" + "=" + qstr(v))
+                sql += (dqstr(column_name) + "~" + "=" + qstr(v))
             else:
-                sql += (column_name_case_sensitive(k, column_case_sensitive) + '=' + qstr(v))
+                sql += (dqstr(k) + '=' + qstr(v))
         if ct != l:
             sql += ' and '
     return sql
 
 
-def sql_insert(table, row, column_case_sensitive) -> str:
+def sql_insert(table, row) -> str:
     """
         The method gets the sql insert statement.
     """
@@ -447,11 +435,11 @@ def sql_insert(table, row, column_case_sensitive) -> str:
     column_name = []
     for k in keys:
         if k.endswith("::jsonb"):
-            column_name.append(column_name_case_sensitive(k[0:len(k) - 7], column_case_sensitive))
+            column_name.append(dqstr(k[0:len(k) - 7]))
         elif k.endswith("~"):
-            column_name.append(column_name_case_sensitive(k[0:len(k) - 1], column_case_sensitive))
+            column_name.append(dqstr(k[0:len(k) - 1]))
         else:
-            column_name.append(column_name_case_sensitive(k, column_case_sensitive))
+            column_name.append(dqstr(k))
     sql += ','.join(column_name)
     sql += ') values('
     ct = 0
