@@ -33,7 +33,8 @@ commands = [
     'start_view_replica',
     'start_trigger_replica',
     'start_proc_replica',
-    'start_func_replica'
+    'start_func_replica',
+    'start_index_replica'
 ]
 
 command_help = ','.join(commands)

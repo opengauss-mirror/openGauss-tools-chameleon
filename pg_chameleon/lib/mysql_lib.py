@@ -62,6 +62,15 @@ DATA_NUM_FOR_A_SLICE_CSV = 1000000
 # retry count for migration error tables
 RETRY_COUNT = 3
 
+#migration progress file
+TABLE_PROGRESS_FILE = "tables.progress"
+#index task file
+INDEX_FILE = "tables.index"
+#cursor type index
+DICTCURSOR_INDEX = 0
+SSCURSOR_INDEX = 1
+SSDICTCURSOR_INDEX = 2
+
 
 class process_state():
     PRECISION_START = 0
@@ -82,9 +91,10 @@ class process_state():
 
 
 class reader_cursor_manager(object):
-    def __init__(self, conn_buffered, conn_unbuffered):
-        self.cursor_buffered = conn_buffered.cursor()
-        self.cursor_unbuffered = conn_unbuffered.cursor()
+    def __init__(self, mysql_source_obj):
+        self.cursor_buffered = mysql_source_obj.get_connect(DICTCURSOR_INDEX).cursor()
+        self.cursor_unbuffered = mysql_source_obj.get_connect(SSCURSOR_INDEX).cursor()
+        self.cursor_dict_unbuffered = mysql_source_obj.get_connect(SSDICTCURSOR_INDEX).cursor()
 
     def __del__(self):
         self.close()
@@ -92,6 +102,7 @@ class reader_cursor_manager(object):
     def close(self):
         self.cursor_buffered.close()
         self.cursor_unbuffered.close()
+        self.cursor_dict_unbuffered.close()
 
 
 class mysql_source(object):
@@ -113,6 +124,7 @@ class mysql_source(object):
         self.gtid_mode = False
         self.gtid_enable = False
         self.decode_map = {}
+        self.convert_map = {}
         self.write_task_queue = None
         self.read_task_queue = None
         self.is_mariadb = False
@@ -128,6 +140,13 @@ class mysql_source(object):
         self.__init_decode_map()
         self.enable_compress = False
         self.sql_translator = SqlTranslator()
+        self.is_create_index = True
+        self.only_migration_index = False
+        self.migration_progress_dict = None
+        self.write_progress_file_lock = None
+        self.need_migration_tables_number = 0
+        self.complted_tables_number_before = 0
+        self.only_migration_index = False
 
     @classmethod
     def initJson(cls):
@@ -225,6 +244,41 @@ class mysql_source(object):
         for v in self.postgis_spatial_datatypes:
             self.decode_map[v] = self.__decode_postgis_spatial_value
 
+
+    @classmethod
+    def __convert_binary_value(cls, origin_value, numeric_precision):
+        return '\\x' + binascii.hexlify(origin_value).decode().upper()
+
+    @classmethod
+    def __lzeropad(cls, bits, numeric_precision):
+        if len(bits) < numeric_precision:
+            return '0'*(numeric_precision - len(bits)) + bits
+        else:
+            return bits[len(bits) - numeric_precision :]
+
+    @classmethod
+    def __convert_bit_value(cls, origin_value, numeric_precision):
+        return cls.__lzeropad(''.join(format(byte, '08b') for byte in origin_value), numeric_precision)
+
+    @classmethod
+    def __convert_default_value(cls, origin_value, numeric_precision):
+        return str(origin_value)
+
+    def __init_convert_map(self):
+        self.convert_map = {
+            ColumnType.M_BINARY.value: self.__convert_binary_value,
+            ColumnType.M_BIT.value: self.__convert_bit_value,
+            ColumnType.M_C_GIS_POINT.value: self.__decode_point_value,
+            ColumnType.M_C_GIS_GEO.value: self.__decode_point_value,
+            ColumnType.M_C_GIS_POLYGON.value: self.__decode_polygon_value,
+            ColumnType.M_C_GIS_LINESTR.value: self.__decode_linestr_value,
+        }
+        for v in self.hexify:
+            self.convert_map[v] = self.__decode_hexify_value
+        for v in self.postgis_spatial_datatypes:
+            self.convert_map[v] = self.__decode_postgis_spatial_value
+
+
     def __del__(self):
         """
             Class destructor, tries to disconnect the mysql connection.
@@ -313,7 +367,8 @@ class mysql_source(object):
             self.logger.warning("Mandatory settings for online migration - log_bin ON, binlog_format ROW,"
                                 " binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
 
-    def get_connect(self, is_buffered=True):
+    def get_connect(self, cursor_type=0):
+        cursor_lst = [MySQLdb.cursors.DictCursor, MySQLdb.cursors.SSCursor, MySQLdb.cursors.SSDictCursor]
         db_conn = self.source_config["db_conn"]
         db_conn = {key: str(value) for key, value in db_conn.items()}
         db_conn["port"] = int(db_conn["port"])
@@ -326,7 +381,7 @@ class mysql_source(object):
             charset=db_conn["charset"],
             connect_timeout=db_conn["connect_timeout"],
             autocommit=True,
-            cursorclass=MySQLdb.cursors.DictCursor if is_buffered else MySQLdb.cursors.SSCursor
+            cursorclass=cursor_lst[cursor_type]
         )
         return conn
 
@@ -545,6 +600,10 @@ class mysql_source(object):
 
             self.schema_tables[schema] = self.filter_table_list_from_csv_file(schema, table_list)
 
+            completed_schema_tables = self.get_completed_tables()
+            self.schema_tables[schema] = self.filter_table_list_from_progress(schema, table_list, completed_schema_tables) 
+            self.need_migration_tables_number += len(self.schema_tables[schema])
+
             if self.dump_json:
                 for index, key in enumerate(table_list):
                     managerJson.update({key: {
@@ -554,6 +613,23 @@ class mysql_source(object):
                         "percent": process_state.PRECISION_START,
                         "error": ""
                     }})
+
+    def init_migration_progress_var(self):
+        """
+            The method initialize progress-related global variables,
+            each table maintains a list of shards that have been migrated.
+        """
+        self.logger.info("start to init migration_progress_dict.")
+        self.migration_progress_dict = multiprocessing.Manager().dict()
+        self.write_progress_file_lock = multiprocessing.Manager().Lock()
+        self.tables_slices_lists = []
+        for schema in self.schema_list:
+            for table in self.schema_tables[schema]:
+                table_name = '`%s`.`%s`' % (schema, table)
+                table_slice_list = multiprocessing.Manager().list()
+                self.tables_slices_lists.append(table_slice_list)
+                self.migration_progress_dict[table_name] = table_slice_list
+        self.logger.info("Finish initing migration_progress_dict.")
 
     def get_compress_tables(self, schema, table_list):
         if self.enable_compress:
@@ -593,6 +669,43 @@ class mysql_source(object):
                 table_list = [table for table in table_list if table in csv_table_list]
         return table_list
 
+    def get_completed_tables(self):
+        """
+            The method get migration completed tables of each schema.
+
+            :return: the dict recording completed tables of each schema
+            :rtype: dictionary
+        """
+        completed_schema_tables = {}
+        with open(self.progress_file, 'r') as fr:
+            while True:
+                completed_line = fr.readline()[:-1]
+                if completed_line:
+                    completed_schema = completed_line.split('`.`')[0][1:]
+                    completed_table = completed_line.split('`.`')[1][:-1]
+                    if completed_schema in completed_schema_tables:
+                        completed_schema_tables[completed_schema].add(completed_table)
+                    else:
+                        completed_schema_tables[completed_schema] = {completed_table}
+                else:
+                    break
+        return completed_schema_tables
+
+    def filter_table_list_from_progress(self, schema, table_list, completed_schema_tables):
+        """
+            The method filters table list from progress file.
+
+            :param schema: the schema name
+            :param table_list: the table list
+            :param completed_schema_tables: dict record completed tables of each schema
+            :return: the table list filtered by progress file.
+            :rtype: list
+        """
+        if schema in completed_schema_tables:
+            self.complted_tables_number_before += len(completed_schema_tables[schema])
+            table_list = [table for table in table_list if table not in completed_schema_tables[schema]]
+        return table_list
+
     def create_destination_schemas(self):
         """
             Creates the loading schemas in the destination database and associated tables listed in the dictionary
@@ -630,6 +743,24 @@ class mysql_source(object):
             loading_schema = self.schema_loading[schema]["loading"]
             self.logger.debug("Dropping the schema %s." % loading_schema)
             self.pg_engine.drop_database_schema(loading_schema, True)
+
+    def is_migration_complete(self):
+        """
+            The method judge whether migration completed.
+
+            :return: true if completed else false.
+            :rtype: boolean
+        """
+        total_completed_tables_number = self.need_migration_tables_number + self.complted_tables_number_before
+        real_completed_tables_set = set()
+        with open(self.progress_file, 'r') as fr:
+            while True:
+                line = fr.readline()
+                if line:
+                    real_completed_tables_set.add(line)
+                else:
+                    break
+        return total_completed_tables_number == len(real_completed_tables_set)
 
     def get_partition_metadata(self, table, schema):
         """
@@ -784,7 +915,7 @@ class mysql_source(object):
             The method creates the destination tables in the loading schema.
             The tables names are looped using the values stored in the class dictionary schema_tables.
         """
-        self.logger.info("Start to create tables")
+        self.logger.info("Start to create tables.")
         self.pg_engine.check_migration_collate()
         for schema in self.schema_tables:
             table_list = self.schema_tables[schema]
@@ -804,6 +935,17 @@ class mysql_source(object):
                     self.pg_engine.create_table(table_metadata, table_info, partition_metadata,
                                                 table, schema, 'mysql')
         self.logger.info("Finish creating all the tables")
+
+    def drop_destination_tables(self):
+        """
+            The method drop not completed destination tables before migration.
+        """
+        self.logger.info("Start to drop failed tables before.")
+        for schema in self.schema_tables:
+            table_list = self.schema_tables[schema]
+            for table in table_list:
+                self.pg_engine.drop_failed_table(schema, table)
+        self.logger.info("Finish dropping failed tables before.")
 
     def generate_table_metadata_statement(self, schema, table, table_count, cursor=None):
         """
@@ -860,7 +1002,6 @@ class mysql_source(object):
             :return: the select list statements for the copy to csv and  the fallback to inserts.
             :rtype: dictionary
         """
-        random = secrets.token_hex(16) + RANDOM_STR
         select_columns = {}
         sql_select = """
             SELECT
@@ -914,20 +1055,96 @@ class mysql_source(object):
         else:
             cursor.execute(sql_select, (schema, table))
             select_data = cursor.fetchall()
-
-        # We use a random string here when the value is NULL, we can't use 'NULL' to represent a NULL value,
-        # cause we can store a string which is 'NULL'(4 byte length string). But a random string is also not
-        # a perfect method to slove this problem. We may need to find another method to slove this later.
-        select_csv = "COALESCE(REPLACE(%s, '\"', '\"\"'),'{}') ".format(random)
-        select_csv = [select_csv % statement["select_csv"] for statement in select_data]
         select_stat = [statement["select_csv"] for statement in select_data]
         column_list = ['`%s`' % statement["column_name"] for statement in select_data]
 
-        select_columns["select_csv"] = "REPLACE(CONCAT('\"',CONCAT_WS('\",\"',%s),'\"'),'\"%s\"','NULL')" % (','.join(select_csv), random)
         select_columns["select_stat"] = ','.join(select_stat)
         select_columns["column_list"] = ','.join(column_list)
         select_columns["column_list_select"] = select_columns["column_list"]
         return select_columns
+
+    def select_columns_datatype(self, schema, table, cursor=None):
+        """
+            The method generates the field-to-type mapping for the given schema and table.
+            The method assumes there is a buffered database connection active.
+
+            :param schema: the origin's schema
+            :param table: the table name
+            :param cursor: the cursor
+            :return: the dict for field-to-datatype mapping
+            :rtype: dictionary
+        """
+        sql_col_type = """
+                SELECT column_name, data_type
+                    FROM
+                        information_schema.COLUMNS
+                    WHERE
+                        table_schema=%s
+                        AND     table_name=%s
+                    ORDER BY
+                        ordinal_position
+                    ;"""
+        if cursor is None:
+            self.cursor_buffered.execute(sql_col_type, (schema, table))
+            select_data = self.cursor_buffered.fetchall()
+        else:
+            cursor.execute(sql_col_type, (schema, table))
+            select_data = cursor.fetchall()
+        col_type = {}
+        for line in select_data:
+            col_type[line["column_name"]] = line["data_type"]
+        return col_type
+
+    def get_bit_numericpercision(self, schema, table, cursor=None):
+        """
+            The method gets numeric_percision of bit type for the given schema and table.
+
+            :param schema: the origin's schema
+            :param table: the table name
+            :param cursor: the cursor
+            :return: the value of numeric_percision
+            :rtype: int
+        """
+        sql_numeric_percision = """
+                SELECT numeric_precision
+                    FROM 
+                        information_schema.COLUMNS
+                    WHERE 
+                        data_type IN ('""" + ColumnType.M_BIT.value + """') AND table_schema = %s AND table_name = %s  
+                    ORDER BY 
+                        ordinal_position
+                    ;"""
+        if cursor is None:
+            self.cursor_buffered.execute(sql_numeric_percision, (schema, table))
+            data = self.cursor_buffered.fetchall()
+        else:
+            cursor.execute(sql_numeric_percision, (schema, table))
+            data = cursor.fetchall()
+        return data[0]['numeric_precision'] if data else 0
+
+    def transform_data_to_csv(self, table_data, col_type, numeric_precision, random):
+        """
+            The method transform table data which from cursor to csv format. 
+
+            :param table_data: table data from cursor
+            :param col_type: field-to-datatype mapping
+            :param numeric_precision: numeric_precision for bit type
+            :param random: random string
+            :return: data in csv string format
+            :rtype: string
+        """
+        converted_data = []
+        for line in table_data:
+            converted_line = []
+            for key, value in line.items():
+                if value is None:
+                    converted_line.append(random)
+                else:
+                    converted_line.append(self.convert_map.get(col_type[key], self.__convert_default_value)(value, numeric_precision).replace('"', '""'))
+            line_str = '"' + '","'.join(converted_line) + '"'
+            converted_data.append(line_str.replace('"' + random + '"','NULL').replace('\x00', ''))
+        csv_data = '\n'.join(converted_data)
+        return csv_data
 
     # Use an inner class to represent transactions
     class reader_xact:
@@ -1045,9 +1262,7 @@ class mysql_source(object):
 
 
     def read_data_process(self, task):
-        conn_buffered = self.get_connect(True)
-        conn_unbuffered = self.get_connect(False)
-        cursor_manager = reader_cursor_manager(conn_buffered, conn_unbuffered)
+        cursor_manager = reader_cursor_manager(self)
         destination_schema = task.destination_schema
         loading_schema = task.loading_schema
         schema = task.schema
@@ -1060,23 +1275,97 @@ class mysql_source(object):
                 master_status, is_parallel_create_index = self.read_data_from_csv(schema, table, cursor_manager)
             else:
                 master_status, is_parallel_create_index = self.read_data_from_table(schema, table, cursor_manager)
+            
             indices = self.__get_index_data(schema=schema, table=table, cursor_buffered=cursor_manager.cursor_buffered)
             auto_increment_column = self.__get_auto_increment_column(schema, table, cursor_manager.cursor_buffered)
             index_write_task = CreateIndexTask(table, schema, indices, destination_schema, master_status,
-                                               is_parallel_create_index, auto_increment_column)
-            readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
-            if self.index_waiting_queue.qsize() > readers:
-                self.write_task_queue.put(self.index_waiting_queue.get(block=True))
-            self.index_waiting_queue.put(index_write_task, block=True)
+                                            is_parallel_create_index, auto_increment_column)
+            if not self.is_create_index:
+                self.write_indextask_to_file(index_write_task)
+            else:
+                readers = self.source_config["readers"] if self.source_config["readers"] > 0 else 1
+                if self.index_waiting_queue.qsize() > readers:
+                    self.write_task_queue.put(self.index_waiting_queue.get(block=True))
+                self.index_waiting_queue.put(index_write_task, block=True)
         except BaseException as exp:
             self.logger.error(exp)
             self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
             self.read_retry_queue.put(task, block=True)
         finally:
             self.__safe_close(cursor_manager, 'cursor_manager')
-            self.__safe_close(conn_buffered, 'conn_buffered')
-            self.__safe_close(conn_unbuffered, 'conn_unbuffered')
             self.logger.warning("close connection for table %s.%s" % (schema, table))
+
+    def init_indextask_queue(self):
+        """
+            The method initialize index task queue.
+        """
+        self.write_task_queue = multiprocessing.Manager().Queue()
+
+    def write_indextask_to_file(self, task):
+        schema = task.schema
+        table = task.table
+        index_line = {}
+        index_list = []
+        index_list.append(task.indices)
+        index_list.append(task.destination_schema)
+        index_list.append(task.master_status)
+        index_list.append(task.is_parallel_create_index)
+        index_list.append(task.auto_increment_column)
+        index_line['`%s`.`%s`' % (schema, table)] = index_list
+
+        with open(self.index_file, 'a') as fw_index:
+            fw_index.write(json.dumps(index_line) + '\n')
+
+    def read_indextask_from_file(self):
+        """
+            The method read index task from index_file and write to write_task_queue.
+        """
+        index_task_dict = {}
+        with open(self.index_file, 'r') as fr_index:
+            while True:
+                task_line = fr_index.readline()[:-1]
+                if task_line:
+                    single_task_dict = json.loads(task_line)
+                    for key, value in single_task_dict.items():
+                        index_task_dict[key] = value
+                else:
+                    break
+        for schema in self.schema_mappings:
+            for table in self.schema_tables[schema]:
+                index_infos = index_task_dict.get('`%s`.`%s`' % (schema, table))
+                if index_infos is None:
+                    self.logger.error('does not have indexinfo of `%s`.`%s` in index_file.' % (schema, table))
+                    continue
+                index_write_task = CreateIndexTask(table, schema, index_infos[0], index_infos[1],
+                                                    index_infos[2], index_infos[3], index_infos[4])
+                self.write_task_queue.put(index_write_task, block=True)
+        self.write_task_queue.put(None, block=True)
+            
+            
+    def start_index_replica(self):
+        """
+            The method migrate index only.
+        """
+        self.only_migration_index = True
+        self.__init_sync()
+        self.schema_list = [schema for schema in self.schema_mappings]
+        self.__build_table_exceptions()
+        self.get_table_list()
+        self.init_migration_progress_var()
+        self.init_indextask_queue()
+        self.read_indextask_from_file()
+
+        self.logger.info('begin to exec copy index tasks')
+        writers = self.__get_count("writers", 8)
+        writer_pool = []
+        self.init_workers(writers, self.data_writer, writer_pool, "writer-")
+        self.wait_for_finish(writer_pool)
+        writer_pool.clear()
+
+        if self.is_migration_complete():
+            open(self.index_file, 'w').close()
+            open(self.progress_file, 'w').close()
+
 
     def __safe_close(self, resource, desc='', func_name='close'):
         try:
@@ -1164,6 +1453,7 @@ class mysql_source(object):
         self.logger.info(split_cmd)
         file_list = os.popen(split_cmd).readlines()
         self.logger.info("finish splitting csv files")
+
         for file_name in file_list:
             split_file_name = file_name.strip()
             index = int(split_file_name[-1 * suffix_length:])
@@ -1187,6 +1477,8 @@ class mysql_source(object):
             self.write_task_queue.put(task, block=True)
             self.logger.info("Table %s.%s generated %s slices of total %s slices"
                              % (schema, table, index+1, len(file_list)))
+
+        self.handle_migration_progress(schema, table, len(file_list))
         self.logger.info("Table %s.%s generated %s slices" % (schema, table, len(file_list)))
         return [master_status, is_parallel_create_index]
     
@@ -1229,6 +1521,7 @@ class mysql_source(object):
         """
         cursor_buffered = cursor_manager.cursor_buffered
         cursor_unbuffered = cursor_manager.cursor_unbuffered
+        cursor_dict_unbuffered = cursor_manager.cursor_dict_unbuffered
         sql_rows = sql_rows.format(DEFAULT_MAX_SIZE_OF_CSV)
         cursor_buffered.execute(sql_rows, (schema, table))
         count_rows = cursor_buffered.fetchone()
@@ -1253,12 +1546,17 @@ class mysql_source(object):
         self.generate_table_metadata_statement(schema, table, total_rows, cursor_buffered)
         self.generate_column_metadata_statement(schema, table, cursor_buffered)
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
-
-        sql_csv = "SELECT /*+ MAX_EXECUTION_TIME(%d) */ %s as data FROM `%s`.`%s`;" %\
-            (MAX_EXECUTION_TIME, select_columns["select_csv"], schema, table)
+        col_type = self.select_columns_datatype(schema, table, cursor_buffered)
+        numeric_precision = self.get_bit_numericpercision(schema, table, cursor_buffered)
         self.logger.debug("Executing query for table %s.%s" % (schema, table))
+
+        # We use a random string here when the value is NULL, we can't use 'NULL' to represent a NULL value,
+        # cause we can store a string which is 'NULL'(4 byte length string). But a random string is also not
+        # a perfect method to slove this problem. We may need to find another method to slove this later.
+        random = secrets.token_hex(16) + RANDOM_STR
         with self.reader_xact(self, cursor_buffered, table_txs):
-            cursor_unbuffered.execute(sql_csv)
+            sql_getdata = 'select * from `%s`.`%s`' % (schema, table)
+            cursor_dict_unbuffered.execute(sql_getdata)
             self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
             # unlock tables
             if table_txs:
@@ -1268,20 +1566,20 @@ class mysql_source(object):
             while True:
                 out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_FILE_SUB_DIR, schema, table, task_slice + 1)
                 try:
-                    csv_results = cursor_unbuffered.fetchmany(copy_limit)
+                    table_data = cursor_dict_unbuffered.fetchmany(copy_limit)
                 except BaseException as exp:
                     self.logger.error("catch exception in fetch many and exp is %s" % exp)
                     raise
-                if len(csv_results) == 0:
+                if len(table_data) == 0:
                     break
                 # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
                 # will lead to different value stored in MySQL and openGauss, we have no choice...
-                csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
+                csv_data = self.transform_data_to_csv(table_data, col_type, numeric_precision, random)
                 if self.copy_mode == 'file':
                     csv_file = codecs.open(out_file, 'wb', self.charset, buffering=-1)
                     csv_file.write(csv_data)
                     csv_file.close()
-                    task = CopyDataTask(out_file, count_rows, table, schema, select_columns, len(csv_results),
+                    task = CopyDataTask(out_file, count_rows, table, schema, select_columns, len(table_data),
                                         task_slice)
                 else:
                     if self.copy_mode != 'direct':
@@ -1289,16 +1587,16 @@ class mysql_source(object):
                     csv_file = io.BytesIO()
                     csv_file.write(csv_data.encode())
                     csv_file.seek(0)
-                    task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, len(csv_results),
+                    task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, len(table_data),
                                         task_slice)
                 self.write_task_queue.put(task, block=True)
                 task_slice += 1
                 self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, task_slice, total_slices))
-
+            self.handle_migration_progress(schema, table, task_slice)
+                
         return [master_status, is_parallel_create_index]
 
     def copy_table_data(self, task, writer_engine):
-        slice_insert = []
         if self.copy_mode == "direct":
             csv_file = task.csv_file
         elif self.copy_mode == "file":
@@ -1327,6 +1625,7 @@ class mysql_source(object):
         task_slice = task.slice
         contain_columns = task.contain_columns
         column_split = task.column_split
+        copy_data_from_csv = True
         try:
             writer_engine.copy_data(csv_file, loading_schema, table, column_list, contain_columns, column_split)
             if self.dump_json:
@@ -1339,7 +1638,7 @@ class mysql_source(object):
             self.logger.error("SQLCODE: %s SQLERROR: %s" % (exp.code, exp.message))
             self.logger.info("Table %s.%s error in copy csv mode, saving slice number for the fallback to "
                              "insert statements" % (loading_schema, table))
-            slice_insert.append(task_slice)
+            copy_data_from_csv = False
         finally:
             csv_file.close()
             if self.copy_mode == "file":
@@ -1352,9 +1651,10 @@ class mysql_source(object):
             del task
             gc.collect()
         self.print_progress(task_slice + 1, total_slices, schema, table)
-        task_slice += 1
-        if len(slice_insert) > 0:
-            ins_arg = {"slice_insert": slice_insert, "table": table, "schema": schema,
+        if copy_data_from_csv:
+            self.handle_migration_progress(schema, table, task_slice)
+        else:
+            ins_arg = {"slice_insert": task_slice, "table": table, "schema": schema,
                        "select_stat": select_columns["select_stat"], "column_list": column_list,
                        "column_list_select": column_list_select, "copy_limit": copy_limit}
             self.insert_table_data(ins_arg)
@@ -1368,7 +1668,7 @@ class mysql_source(object):
 
             :param ins_arg: the list with the insert arguments (slice_insert, schema, table, select_stat,column_list, copy_limit)
         """
-        slice_insert= ins_arg["slice_insert"]
+        slice_insert = ins_arg["slice_insert"]
         table = ins_arg["table"]
         schema = ins_arg["schema"]
         select_stat = ins_arg["select_stat"]
@@ -1376,19 +1676,19 @@ class mysql_source(object):
         column_list_select = ins_arg["column_list_select"]
         copy_limit = ins_arg["copy_limit"]
         loading_schema = self.schema_loading[schema]["loading"]
-        conn_unbuffered = self.get_connect(False)
+        conn_unbuffered = self.get_connect(SSCURSOR_INDEX)
         cursor_unbuffered = conn_unbuffered.cursor()
-        num_insert = 1
-        for slice in slice_insert:
-            self.logger.info("Executing inserts in %s.%s. Slice %s. Rows per slice %s." % (
-            loading_schema, table, num_insert, copy_limit,))
-            offset = slice * copy_limit
-            sql_fallback = "SELECT %s FROM `%s`.`%s` LIMIT %s, %s;" % (
-            select_stat, schema, table, offset, copy_limit)
-            cursor_unbuffered.execute(sql_fallback)
-            insert_data = cursor_unbuffered.fetchall()
-            self.pg_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
-            num_insert += 1
+
+        self.logger.info("Executing inserts in %s.%s. Slice %s. Rows per slice %s." % (
+        loading_schema, table, slice_insert, copy_limit,))
+        offset = slice_insert * copy_limit
+        sql_fallback = "SELECT %s FROM `%s`.`%s` LIMIT %s, %s;" % (
+        select_stat, schema, table, offset, copy_limit)
+        cursor_unbuffered.execute(sql_fallback)
+        insert_data = cursor_unbuffered.fetchall()
+        self.pg_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
+        self.handle_migration_progress(schema, table, slice_insert)
+
         cursor_unbuffered.close()
         conn_unbuffered.close()
 
@@ -1397,13 +1697,18 @@ class mysql_source(object):
             self.logger.error("index data is None")
             return
         if len(task.indices) == 0:
-            self.logger.info("there are no indices be created, just store the table")
+            self.logger.info("there are no indices be created, just store the table, tablename: "
+                            + '`%s`.`%s`' % (task.schema, task.table))
             writer_engine.store_table(task.destination_schema, task.table, [], task.master_status)
+            self.handle_migration_progress(task.schema, task.table, -1)
             return
         table = task.table
         destination_schema = task.destination_schema
         schema = task.schema
-        loading_schema = self.schema_loading[schema]["loading"]
+        if self.only_migration_index:
+            loading_schema = destination_schema
+        else:
+            loading_schema = self.schema_loading[schema]["loading"]
         master_status = task.master_status
         try:
             if self.keep_existing_schema:
@@ -1425,6 +1730,8 @@ class mysql_source(object):
                 self.logger.info(
                     "Adding constraint and indices to the destination table  %s.%s" % (destination_schema, table))
                 writer_engine.create_idx_cons(destination_schema, table)
+            
+            self.handle_migration_progress(schema, table, -1)
         except:
             self.logger.error("create index or constraint error")
 
@@ -1444,6 +1751,56 @@ class mysql_source(object):
             self.logger.info("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
         else:
             self.logger.debug("Table %s.%s copied %s slice of %s" % (schema, table, iteration, total))
+
+    def create_file(self, filedir, filename):
+        """
+            The method create file if not exists.
+
+            :param filedir: filedir
+            :param filename: filename
+        """
+        if not os.path.exists(filedir):
+            os.makedirs(filedir)
+        if not os.path.isfile(filename):
+            open(filename, 'x').close()
+
+    def check_table_completed(self, schema, table):
+        """
+            The method check if the migration for table completed.
+
+            :param schema: schema
+            :param table: table
+        """
+        table_name = '`%s`.`%s`' % (schema, table)
+        if self.only_migration_index:
+            return len(self.migration_progress_dict[table_name]) > 0
+        if self.is_create_index:
+            return self.migration_progress_dict[table_name][0] == len(self.migration_progress_dict[table_name]) - 2
+        else:
+            return self.migration_progress_dict[table_name][0] == len(self.migration_progress_dict[table_name]) - 1
+
+    def flush_progress_file(self, schema, table):
+        """
+            The method write completed table to progress_file.
+
+            :param schema: schema
+            :param table: table
+        """
+        with self.write_progress_file_lock:
+            with open(self.progress_file, 'a') as fw:
+                fw.write('`%s`.`%s`' % (schema, table) + '\n')
+        
+    def handle_migration_progress(self, schema, table, slice):
+        """
+            The method append completed slice to progress dict and check whether migration of table completed.
+
+            :param schema: schema
+            :param table: table
+            :param slice: slice number
+        """
+        self.migration_progress_dict['`%s`.`%s`' % (schema, table)].append(slice)
+        if self.check_table_completed(schema, table):
+            self.flush_progress_file(schema, table)
 
     def __copied_progress_json(self, type_val, name, value, error=""):
         if managerJson[name]["percent"] < value:
@@ -1827,6 +2184,21 @@ class mysql_source(object):
         self.copy_mode = self.source_config["copy_mode"]
         self.pg_engine.lock_timeout = self.source_config["lock_timeout"]
         self.pg_engine.grant_select_to = self.source_config["grant_select_to"]
+
+        try:
+            self.index_dir = self.source_config["index_dir"]
+        except KeyError:
+            self.index_dir = None
+        if self.index_dir is None:
+            self.index_dir = os.path.expanduser('~/.pg_chameleon/index')
+        self.index_file = self.index_dir + os.sep + INDEX_FILE
+        if not self.only_migration_index and not self.is_create_index:
+            self.create_file(self.index_dir, self.index_file)
+        
+        self.progress_dir = os.path.expanduser('~/.pg_chameleon/progress')
+        self.progress_file = self.progress_dir + os.sep + TABLE_PROGRESS_FILE
+        self.create_file(self.progress_dir, self.progress_file)
+        
         if "keep_existing_schema" in self.sources[self.source]:
             self.keep_existing_schema = self.sources[self.source]["keep_existing_schema"]
         else:
@@ -1860,6 +2232,7 @@ class mysql_source(object):
                 self.disconnect_db_buffered()
                 self.__copy_tables()
             else:
+                self.drop_destination_tables()
                 self.create_destination_tables()
                 self.disconnect_db_buffered()
                 self.__copy_tables()
@@ -1914,6 +2287,7 @@ class mysql_source(object):
                 self.disconnect_db_buffered()
                 self.__copy_tables()
             else:
+                self.drop_destination_tables()
                 self.create_destination_tables()
                 self.disconnect_db_buffered()
                 self.__copy_tables()
@@ -2273,6 +2647,7 @@ class mysql_source(object):
         """
         self.logger.debug("starting init replica for source %s" % self.source)
         self.__init_sync()
+        self.__init_convert_map()
         self.check_mysql_config()
         master_start = self.get_master_coordinates()
         self.pg_engine.set_source_status("initialising")
@@ -2282,6 +2657,7 @@ class mysql_source(object):
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
         self.get_table_list()
+        self.init_migration_progress_var()
         self.create_destination_schemas()
         try:
             self.pg_engine.insert_source_timings()
@@ -2290,12 +2666,15 @@ class mysql_source(object):
                 self.disconnect_db_buffered()
                 self.__copy_tables()
             else:
+                self.drop_destination_tables()
                 self.create_destination_tables()
                 self.disconnect_db_buffered()
                 self.__copy_tables()
-                self.pg_engine.grant_select()
-                self.pg_engine.swap_schemas()
-                self.drop_loading_schemas()
+                if self.is_migration_complete():
+                    self.pg_engine.grant_select()
+                    self.pg_engine.swap_schemas()
+                    self.drop_loading_schemas()
+                    open(self.progress_file, 'w').close()
             self.pg_engine.set_source_status("initialised")
             self.connect_db_buffered()
             master_end = self.get_master_coordinates()
@@ -2306,8 +2685,6 @@ class mysql_source(object):
             self.logger.info(notifier_message)
 
         except:
-            if not self.keep_existing_schema:
-                self.drop_loading_schemas()
             self.pg_engine.set_source_status("error")
             notifier_message = "init replica for source %s failed" % self.source
             self.logger.critical(notifier_message)

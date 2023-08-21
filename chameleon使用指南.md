@@ -36,6 +36,7 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - 对于二级分区表，openGauss不支持一级和二级分区采用相同的键值。
 - 对于drop table操作，当表含有关联对象时，例如视图，mysql端可以用drop table只删除表而保留视图，openGauss端用drop table仅删除表会失败，此问题属于内核兼容性问题。因此对于mysql端的drop table语句，openGauss端将采用drop table cascade一并删除表及其关联的对象。
 - mysql的ddl里面comment包含"\0"时，迁移到openGauss端会转换为"\x00" 
+- 支持索引和表数据单独迁移，并且支持迁移过程中出现异常重启后跳过已经迁移完成的表。异常重启后索引和表数据是否分离需要与上一次迁移保持一致，直到所有表迁移完成。
 
 ### 1.3.2. 对象迁移限制
 
@@ -406,6 +407,10 @@ sources:
      migrate_default_value: Yes
 
      mysql_restart_config: Yes
+
+     is_create_index: Yes
+
+     index_dir: '~/.pg_chameleon/index/'
 ```
 
 配置文件使用yaml文件规则配置，需要特别注意对齐，缩进表示层级关系，缩进时不允许使用Tab键，只允许使用空格，缩进的空格数目不重要，但相同层级的元素左侧需要对齐。
@@ -732,6 +737,14 @@ csv文件对应列的顺序应和表的所有列的自然顺序保持一致。�
 对首次迁移失败的表，将加入迁移失败队列中，并增加重试机制，对失败的表重新进行迁移优先。该参数指定重试次数，取值为整数，默认值为3，可自定义。
 若设置为正数，则表示进行有限次重试，当失败队列为空或者重试次数已达到上限，迁移进程将自行退出；若设置为0，则表示不重试；若设置为负数，将无限尝试直至所有表迁移成功，否则迁移进程不会退出。
 
+### 3.4.33 is_create_index
+
+用于指定全量迁移过程中，是否将表数据和索引分离。默认为Yes, 表示索引和表数据一起迁移。当设置为No时，表示只迁移表数据，并将索引任务写入文件中。待表数据迁移完成后，通过chameleon start_index_replica进行索引迁移。
+
+### 3.4.34 index_dir
+
+用于指定全量迁移过程中，当is_create_index设置为No时，存放索引任务的文件目录，索引文件为${index_dir}/tables.index。该文件中每一行对应一个表的索引。
+
 ## **3.5.** 压缩参数配置
 
 compress_properties用于配置行存表压缩相关的参数，详情请参考[create table压缩参数](https://docs.opengauss.org/zh/docs/latest/docs/SQLReference/CREATE-TABLE.html)。
@@ -1021,6 +1034,10 @@ keep_existing_schema: No
 migrate_default_value: Yes
 
 mysql_restart_config: Yes
+
+is_create_index: Yes
+
+index_dir: '~/.pg_chameleon/index/'
 ```
 
 以上配置文件的含义是，迁移数据时，MySQL侧使用的用户名密码分别是 **mysql_test** 和 **password123**。MySQL服务器的IP和port分别是**127.0.0.1**和**3306**，待迁移的数据库是**mysql_database**。
@@ -1106,6 +1123,13 @@ gtid_mode = ON
 做完此步骤后，将把MySQL当前的全量数据复制到openGauss。可以在openGauss侧查看全量数据复制后的情况。
 
 ![img](./images/wps1.jpg) 
+
+在~/.pg_chameleon/progress/tables.progress文件中默认记录了已经迁移完成的表信息，每一个迁移完成的表占该文件的一行。若该文件内容为空，则表示所有表迁移完成。
+
+若配置is_create_index为No，则表数据迁移完成后可使用如下命令进行索引迁移：
+
+**chameleon start_index_replica --config default --source mysql --debug**
+索引迁移完成情况同样记录在~/.pg_chameleon/progress/tables.progress文件中。
 
 ## **6.5.** 复制数据库对象
 
