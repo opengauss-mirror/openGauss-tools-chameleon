@@ -3173,8 +3173,9 @@ class pg_engine(object):
             default_value = self.__trans_default_value(column.get("column_default"), column["data_type"])
 
             extra = ""
-            if column["extra"].lower().startswith(ON_UPDATE_CURRENT_TIMESTAMP):
-                extra = column["extra"].lower()
+            index = column["extra"].lower().find(ON_UPDATE_CURRENT_TIMESTAMP)
+            if index != -1:
+                extra = column["extra"].lower()[index:]
 
             character_and_collate = self.get_character_set_collate(column)
 
