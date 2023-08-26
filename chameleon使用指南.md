@@ -214,6 +214,8 @@ yum install python3-devel
 | centos7        | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/centos7/chameleon-5.0.0-x86_64.tar.gz |
 | openEuler20.03 | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.0.0-x86_64.tar.gz |
 | openEuler20.03 | aarch64  | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.0.0-aarch64.tar.gz |
+| openEuler22.03 | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler22.03/chameleon-5.0.0-x86_64.tar.gz |
+| openEuler22.03 | aarch64  | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler22.03/chameleon-5.0.0-aarch64.tar.gz |
 
 下载完成后，使用tar -zxvf 命令进行解压
 
