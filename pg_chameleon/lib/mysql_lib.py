@@ -1509,7 +1509,7 @@ class mysql_source(object):
                     table_schema as table_schema,
                     table_name as table_name,
                     column_name as column_name,
-                    data_type as data_type
+                    column_type as column_type
                 FROM
                     information_schema.columns
                 WHERE

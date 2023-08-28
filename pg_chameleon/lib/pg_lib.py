@@ -5053,9 +5053,9 @@ class pg_engine(object):
             :auto_increment_column: the auto_increment column
         """
         for column in auto_increment_column:
-            data_type = column["data_type"]
+            column_type = column["column_type"]
             column_name = column["column_name"]
-            ddl = "alter table `%s`.`%s` modify `%s` %s auto_increment;" % (schema, table, column_name, data_type)
+            ddl = "alter table `%s`.`%s` modify `%s` %s auto_increment;" % (schema, table, column_name, column_type)
             try:
                 self.pgsql_conn.execute(ddl)
             except Exception as exp:
