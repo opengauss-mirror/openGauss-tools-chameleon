@@ -203,17 +203,9 @@ class replica_engine(object):
         self.mysql_source.sources = self.config["sources"]
         self.mysql_source.type_override = self.config["type_override"]
         self.mysql_source.notifier = self.notifier
-        try:
-            mysql_restart_config = self.config["sources"][self.source]["mysql_restart_config"]
-        except KeyError:
-            mysql_restart_config = True
-        if self.__check_param_valid(mysql_restart_config):
-            self.mysql_source.mysql_restart_config = mysql_restart_config
-        else:
-            self.logger.error("FATAL, the parameter mysql_restart_config setting is improper, it should be set to "
-                              "Yes or No, but current setting is %s" % mysql_restart_config)
-            sys.exit()
 
+        self.__get_and_check_bool_param("is_create_index", True)
+        self.__get_and_check_bool_param("mysql_restart_config", True)
 
     def initialize_pg_engine(self):
         # pg_engine instance initialisation
@@ -376,6 +368,24 @@ class replica_engine(object):
         elif str(param).lower() == "yes" or str(param).lower() == "no":
             return True
         return False
+
+    def __get_and_check_bool_param(self, key, default_value):
+        """
+            The method is used get config value of key and check whether the param is valid.
+        """
+        try:
+            value = self.config["sources"][self.source][key]
+        except KeyError:
+            value = default_value
+        if self.__check_param_valid(value):
+            if key == "is_create_index":
+                self.mysql_source.is_create_index = value
+            if key == "mysql_restart_config":
+                self.mysql_source.mysql_restart_config = value
+        else:
+            self.logger.error("FATAL, the parameter " + key + " setting is improper, it should be set to "
+                              "Yes or No, but current setting is %s" % value)
+            sys.exit()
 
     def __check_parallel_workers(self, param):
         return type(param) == int and 0 <= param <= 32
@@ -1499,3 +1509,10 @@ class replica_engine(object):
         """
         self.logger.info("Ready to start the procedure replica for source %s" % (self.args.source,))
         self.__start_database_object_replica(DBObjectType.PROC)
+
+    def start_index_replica(self):
+        """
+        The method start a replication on index for a given source and configuration.
+        """
+        self.logger.info("Ready to start the index replica for source %s" % (self.args.source,))
+        self.mysql_source.start_index_replica()

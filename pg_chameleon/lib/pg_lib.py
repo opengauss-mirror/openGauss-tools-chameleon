@@ -4012,6 +4012,16 @@ class pg_engine(object):
                 self.logger.error("create table comment failed, the error sql is %s, error code is %s and"
                                   " error message is %s" % (table_comment_ddl, exp.code, exp.message))
 
+    def drop_failed_table(self, schema, table_name):
+        self.logger.info("begin dropping existed tables.")
+        destination_schema = self.schema_loading[schema]["loading"]
+        drop_sql = 'DROP TABLE IF EXISTS `%s`.`%s`' % (destination_schema, table_name) + 'CASCADE'
+        try:
+            self.pgsql_conn.execute(drop_sql)
+        except Exception as exp:
+            self.logger.error("drop existed table failed, the error sql is %s, error code is %s and"
+                                " error message is %s" % (drop_sql, exp.code, exp.message))
+
     def update_schema_mappings(self):
         """
             The method updates the schema mappings for the given source.

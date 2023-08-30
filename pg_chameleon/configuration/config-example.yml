@@ -85,6 +85,8 @@ sources:
     keep_existing_schema: No
     migrate_default_value: Yes
     mysql_restart_config: Yes
+    is_create_index: Yes
+    index_dir: '~/.pg_chameleon/index/'
 
   pgsql:
     db_conn:
