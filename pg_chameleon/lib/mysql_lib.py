@@ -1075,7 +1075,9 @@ class mysql_source(object):
             :rtype: dictionary
         """
         sql_col_type = """
-                SELECT column_name, data_type
+                SELECT 
+                    column_name as column_name, 
+                    data_type as data_type
                     FROM
                         information_schema.COLUMNS
                     WHERE
