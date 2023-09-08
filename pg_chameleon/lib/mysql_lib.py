@@ -2189,6 +2189,8 @@ class mysql_source(object):
 
         try:
             self.index_dir = self.source_config["index_dir"]
+            if self.index_dir:
+                self.index_dir = os.path.expanduser(self.index_dir)
         except KeyError:
             self.index_dir = None
         if self.index_dir is None:
