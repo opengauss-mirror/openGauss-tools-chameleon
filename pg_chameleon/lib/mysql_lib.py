@@ -277,6 +277,9 @@ class mysql_source(object):
             self.convert_map[v] = self.__decode_hexify_value
         for v in self.postgis_spatial_datatypes:
             self.convert_map[v] = self.__decode_postgis_spatial_value
+        self.convert_type_set = {ColumnType.M_BINARY.value, ColumnType.M_BIT.value, ColumnType.M_C_GIS_POINT.value,
+        ColumnType.M_C_GIS_GEO.value, ColumnType.M_C_GIS_POLYGON.value, ColumnType.M_C_GIS_LINESTR.value}
+        self.convert_type_set.update(self.hexify, self.postgis_spatial_datatypes)
 
 
     def __del__(self):
@@ -1124,6 +1127,17 @@ class mysql_source(object):
             data = cursor.fetchall()
         return data[0]['numeric_precision'] if data else 0
 
+    def get_table_data(self, schema, table, col_type):
+        sql_getdata = 'select '
+        for column_name, data_type in col_type.items():
+            if data_type not in self.convert_type_set:
+                sql_getdata += 'cast(`' + column_name + '` AS char CHARACTER SET utf8) AS ' + column_name + ', '
+            else:
+                sql_getdata += column_name + ', '
+        sql_getdata = sql_getdata[:-2] + ' from `%s`.`%s`;'
+
+        return sql_getdata % (schema, table)
+
     def transform_data_to_csv(self, table_data, col_type, numeric_precision, random):
         """
             The method transform table data which from cursor to csv format. 
@@ -1557,7 +1571,7 @@ class mysql_source(object):
         # a perfect method to slove this problem. We may need to find another method to slove this later.
         random = secrets.token_hex(16) + RANDOM_STR
         with self.reader_xact(self, cursor_buffered, table_txs):
-            sql_getdata = 'select * from `%s`.`%s`' % (schema, table)
+            sql_getdata = self.get_table_data(schema, table, col_type)
             cursor_dict_unbuffered.execute(sql_getdata)
             self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
             # unlock tables
