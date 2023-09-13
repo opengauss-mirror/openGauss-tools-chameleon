@@ -106,14 +106,14 @@ class replica_engine(object):
         self.catalog_version = '2.0.7'
         self.upgradable_version = '1.7'
         self.lst_yes = ['yes', 'Yes', 'y', 'Y']
-        self.initial_global_setting()
         self.args = args
         self.source = self.args.source
+        self.load_config()
+        self.initial_global_setting()
         if self.args.command == 'set_configuration_files':
             self.set_configuration_files()
             sys.exit()
 
-        self.load_config()
         self.is_debug_or_dump_json = self.args.debug or self.config['dump_json']
         log_list = self.__init_logger("global")
         self.logger = log_list[0]
@@ -145,7 +145,11 @@ class replica_engine(object):
         self.global_conf_example = '%s/../configuration/config-example.yml' % python_lib
         self.local_conf_example = '%s/config-example.yml' % local_conf
         local_logs = "%s/logs/" % cham_dir
-        local_pid = "%s/pid/" % cham_dir
+        if len(self.config["pid_dir"]) == 0:
+            local_pid = "%s/pid/" % cham_dir
+            self.config["pid_dir"] = local_pid
+        else:
+            local_pid = self.config["pid_dir"]
         pid_file_name = local_pid + "replica.pid"
         self.pid_file = pid_file_name
         self.conf_dirs = [
