@@ -140,7 +140,6 @@ class mysql_source(object):
         self.__init_decode_map()
         self.enable_compress = False
         self.sql_translator = SqlTranslator()
-        self.is_create_index = True
         self.only_migration_index = False
         self.migration_progress_dict = None
         self.write_progress_file_lock = None
@@ -603,9 +602,10 @@ class mysql_source(object):
 
             self.schema_tables[schema] = self.filter_table_list_from_csv_file(schema, table_list)
 
-            completed_schema_tables = self.get_completed_tables()
-            self.schema_tables[schema] = self.filter_table_list_from_progress(schema, table_list, completed_schema_tables) 
-            self.need_migration_tables_number += len(self.schema_tables[schema])
+            if self.is_skip_completed_tables:
+                completed_schema_tables = self.get_completed_tables()
+                self.schema_tables[schema] = self.filter_table_list_from_progress(schema, table_list, completed_schema_tables) 
+                self.need_migration_tables_number += len(self.schema_tables[schema])
 
             if self.dump_json:
                 for index, key in enumerate(table_list):
@@ -622,16 +622,23 @@ class mysql_source(object):
             The method initialize progress-related global variables,
             each table maintains a list of shards that have been migrated.
         """
-        self.logger.info("start to init migration_progress_dict.")
-        self.migration_progress_dict = multiprocessing.Manager().dict()
+        self.logger.info("start to init migration_progress variables.")
+
         self.write_progress_file_lock = multiprocessing.Manager().Lock()
-        self.tables_slices_lists = []
+        self.table_slice_num_dict = multiprocessing.Manager().dict()
+        self.table_completed_slice_dict = multiprocessing.Manager().dict()
+        self.table_slice_num_list = []
+        self.table_completed_slice_list = []
         for schema in self.schema_list:
             for table in self.schema_tables[schema]:
                 table_name = '`%s`.`%s`' % (schema, table)
                 table_slice_list = multiprocessing.Manager().list()
-                self.tables_slices_lists.append(table_slice_list)
-                self.migration_progress_dict[table_name] = table_slice_list
+                self.table_completed_slice_list.append(table_slice_list)
+                self.table_completed_slice_dict[table_name] = table_slice_list
+
+                table_slice_num =  multiprocessing.Manager().Value('i', -10)
+                self.table_slice_num_list.append(table_slice_num)
+                self.table_slice_num_dict[table_name] = table_slice_num
         self.logger.info("Finish initing migration_progress_dict.")
 
     def get_compress_tables(self, schema, table_list):
@@ -1367,20 +1374,27 @@ class mysql_source(object):
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
         self.get_table_list()
-        self.init_migration_progress_var()
+        if self.is_skip_completed_tables:
+            self.init_migration_progress_var()
         self.init_indextask_queue()
         self.read_indextask_from_file()
 
-        self.logger.info('begin to exec copy index tasks')
-        writers = self.__get_count("writers", 8)
-        writer_pool = []
-        self.init_workers(writers, self.data_writer, writer_pool, "writer-")
-        self.wait_for_finish(writer_pool)
-        writer_pool.clear()
-
-        if self.is_migration_complete():
-            open(self.index_file, 'w').close()
-            open(self.progress_file, 'w').close()
+        try:
+            self.logger.info('begin to exec copy index tasks')
+            writers = self.__get_count("writers", 8)
+            writer_pool = []
+            self.init_workers(writers, self.data_writer, writer_pool, "writer-")
+            self.wait_for_finish(writer_pool)
+            writer_pool.clear()
+            if self.is_skip_completed_tables:
+                open(self.progress_file, 'w').close()
+            notifier_message = "start index replica for source %s finished" % (self.source)
+            self.notifier.send_message(notifier_message, 'info')
+            self.logger.info(notifier_message)
+        except:
+            notifier_message = "start index replica for source %s occur Exception" % (self.source)
+            self.notifier.send_message(notifier_message, 'critical')
+            self.logger.critical(notifier_message)
 
 
     def __safe_close(self, resource, desc='', func_name='close'):
@@ -1493,8 +1507,8 @@ class mysql_source(object):
             self.write_task_queue.put(task, block=True)
             self.logger.info("Table %s.%s generated %s slices of total %s slices"
                              % (schema, table, index+1, len(file_list)))
-
-        self.handle_migration_progress(schema, table, len(file_list))
+        if self.is_skip_completed_tables:
+            self.handle_migration_progress(schema, table, len(file_list))
         self.logger.info("Table %s.%s generated %s slices" % (schema, table, len(file_list)))
         return [master_status, is_parallel_create_index]
     
@@ -1608,7 +1622,8 @@ class mysql_source(object):
                 self.write_task_queue.put(task, block=True)
                 task_slice += 1
                 self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, task_slice, total_slices))
-            self.handle_migration_progress(schema, table, task_slice)
+            if self.is_skip_completed_tables:
+                self.handle_migration_progress(schema, table, task_slice)
                 
         return [master_status, is_parallel_create_index]
 
@@ -1667,9 +1682,9 @@ class mysql_source(object):
             del task
             gc.collect()
         self.print_progress(task_slice + 1, total_slices, schema, table)
-        if copy_data_from_csv:
-            self.handle_migration_progress(schema, table, task_slice)
-        else:
+        if self.is_skip_completed_tables and copy_data_from_csv:
+            self.handle_migration_progress(schema, table)
+        elif not copy_data_from_csv:
             ins_arg = {"slice_insert": task_slice, "table": table, "schema": schema,
                        "select_stat": select_columns["select_stat"], "column_list": column_list,
                        "column_list_select": column_list_select, "copy_limit": copy_limit}
@@ -1703,7 +1718,8 @@ class mysql_source(object):
         cursor_unbuffered.execute(sql_fallback)
         insert_data = cursor_unbuffered.fetchall()
         self.pg_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
-        self.handle_migration_progress(schema, table, slice_insert)
+        if self.is_skip_completed_tables:
+            self.handle_migration_progress(schema, table)
 
         cursor_unbuffered.close()
         conn_unbuffered.close()
@@ -1716,7 +1732,8 @@ class mysql_source(object):
             self.logger.info("there are no indices be created, just store the table, tablename: "
                             + '`%s`.`%s`' % (task.schema, task.table))
             writer_engine.store_table(task.destination_schema, task.table, [], task.master_status)
-            self.handle_migration_progress(task.schema, task.table, -1)
+            if self.is_skip_completed_tables:
+                self.handle_migration_progress(task.schema, task.table)
             return
         table = task.table
         destination_schema = task.destination_schema
@@ -1746,8 +1763,8 @@ class mysql_source(object):
                 self.logger.info(
                     "Adding constraint and indices to the destination table  %s.%s" % (destination_schema, table))
                 writer_engine.create_idx_cons(destination_schema, table)
-            
-            self.handle_migration_progress(schema, table, -1)
+            if self.is_skip_completed_tables:
+                self.handle_migration_progress(schema, table)
         except:
             self.logger.error("create index or constraint error")
 
@@ -1789,11 +1806,11 @@ class mysql_source(object):
         """
         table_name = '`%s`.`%s`' % (schema, table)
         if self.only_migration_index:
-            return len(self.migration_progress_dict[table_name]) > 0
+            return len(self.table_completed_slice_dict[table_name]) > 0
         if self.is_create_index:
-            return self.migration_progress_dict[table_name][0] == len(self.migration_progress_dict[table_name]) - 2
+            return len(self.table_completed_slice_dict[table_name]) - 1 == self.table_slice_num_dict[table_name].value
         else:
-            return self.migration_progress_dict[table_name][0] == len(self.migration_progress_dict[table_name]) - 1
+            return len(self.table_completed_slice_dict[table_name]) == self.table_slice_num_dict[table_name].value
 
     def flush_progress_file(self, schema, table):
         """
@@ -1806,15 +1823,18 @@ class mysql_source(object):
             with open(self.progress_file, 'a') as fw:
                 fw.write('`%s`.`%s`' % (schema, table) + '\n')
         
-    def handle_migration_progress(self, schema, table, slice):
+    def handle_migration_progress(self, schema, table, total_slices = -1):
         """
             The method append completed slice to progress dict and check whether migration of table completed.
 
             :param schema: schema
             :param table: table
-            :param slice: slice number
+            :param total_slices: total slice number
         """
-        self.migration_progress_dict['`%s`.`%s`' % (schema, table)].append(slice)
+        if total_slices >= 0:
+            self.table_slice_num_dict['`%s`.`%s`' % (schema, table)].value = total_slices
+        else:
+            self.table_completed_slice_dict['`%s`.`%s`' % (schema, table)].append(1)
         if self.check_table_completed(schema, table):
             self.flush_progress_file(schema, table)
 
@@ -2210,23 +2230,34 @@ class mysql_source(object):
         if self.index_dir is None:
             self.index_dir = os.path.expanduser('~/.pg_chameleon/index')
         self.index_file = self.index_dir + os.sep + INDEX_FILE
+        # migration table and index separate
         if not self.only_migration_index and not self.is_create_index:
             self.create_file(self.index_dir, self.index_file)
+            if not self.is_skip_completed_tables:
+                open(self.index_file, 'w').close()
         
         self.progress_dir = os.path.expanduser('~/.pg_chameleon/progress')
         self.progress_file = self.progress_dir + os.sep + TABLE_PROGRESS_FILE
-        self.create_file(self.progress_dir, self.progress_file)
+        if self.is_skip_completed_tables:
+            self.create_file(self.progress_dir, self.progress_file)
         
         if "keep_existing_schema" in self.sources[self.source]:
             self.keep_existing_schema = self.sources[self.source]["keep_existing_schema"]
         else:
             self.keep_existing_schema = False
+        self.check_param_conflict()
         self.set_copy_max_memory()
         self.__init_postgis_state()
         self.connect_db_buffered()
         self.pg_engine.connect_db()
         self.schema_mappings = self.pg_engine.get_schema_mappings()
         self.pg_engine.schema_tables = self.schema_tables
+
+    def check_param_conflict(self):
+        if self.keep_existing_schema:
+            if not self.is_create_index or self.is_skip_completed_tables:
+                self.logger.error("is_create_index must be True and is_skip_completed_tables must be False when keep_existing_schema set True, exit.")
+                sys.exit()
 
     def refresh_schema(self):
         """
@@ -2675,7 +2706,8 @@ class mysql_source(object):
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
         self.get_table_list()
-        self.init_migration_progress_var()
+        if self.is_skip_completed_tables:
+            self.init_migration_progress_var()
         self.create_destination_schemas()
         try:
             self.pg_engine.insert_source_timings()
@@ -2684,15 +2716,16 @@ class mysql_source(object):
                 self.disconnect_db_buffered()
                 self.__copy_tables()
             else:
-                self.drop_destination_tables()
+                if self.is_skip_completed_tables:
+                    self.drop_destination_tables()
                 self.create_destination_tables()
                 self.disconnect_db_buffered()
                 self.__copy_tables()
-                if self.is_migration_complete():
-                    self.pg_engine.grant_select()
-                    self.pg_engine.swap_schemas()
-                    self.drop_loading_schemas()
-                    open(self.progress_file, 'w').close()
+                self.pg_engine.grant_select()
+                self.pg_engine.swap_schemas()
+                self.drop_loading_schemas()
+            if self.is_skip_completed_tables:
+                open(self.progress_file, 'w').close()
             self.pg_engine.set_source_status("initialised")
             self.connect_db_buffered()
             master_end = self.get_master_coordinates()
@@ -2703,6 +2736,8 @@ class mysql_source(object):
             self.logger.info(notifier_message)
 
         except:
+            if not self.keep_existing_schema or not self.is_skip_completed_tables:
+                self.drop_loading_schemas()
             self.pg_engine.set_source_status("error")
             notifier_message = "init replica for source %s failed" % self.source
             self.logger.critical(notifier_message)
