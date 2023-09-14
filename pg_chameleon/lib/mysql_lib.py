@@ -1917,7 +1917,7 @@ class mysql_source(object):
                     WHERE
                             table_schema=%s
                         AND table_name=%s
-                        AND	(index_type = 'BTREE' OR index_type = 'FULLTEXT')
+                        AND	(index_type = 'BTREE' OR index_type = 'FULLTEXT' OR index_type = 'SPATIAL')
                     GROUP BY
                         table_name,
                         non_unique,

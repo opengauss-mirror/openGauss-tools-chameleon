@@ -28,8 +28,8 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - 工具支持的MySQL版本为 5.5+，openGauss的版本为 2.1.0+。
 - 对于float、double等浮点数，迁移过程中可能由于精度误差，造成MySQL和openGauss中的值不完全一样。
 - 若想迁移到openGauss的表名和视图名的大小写与MySQL一致，MySQL的系统变量lower_case_table_names的值应设置为0。存在大小写的触发器名、自定义函数名、存储过程名迁移前后一致。
-- 对于索引或约束中的表达式，如索引前缀表达式id(5)的写法目前暂会迁移为col_name。
-- 迁移后的索引或者约束如index_name会改写为tbl_name_index_name的带有表名前缀的格式。
+- 迁移后的索引或者约束如index_name会改写为index_name_table_name的带有表名信息的格式。
+- MySQL端的fulltext索引，openGauss仅是语法兼容，因此迁移后本质仍为gin索引；MySQL端的hash索引，系统表information_schema.statistics显示为btree索引，因此迁移后仍为btree索引；MySQL端的spatial索引，openGauss端不支持，因此迁移过程提示告警信息，将忽略spatial索引，不进行迁移。
 - 由于openGauss内核中哈希分区表不支持切割分区，不支持合成分区，不支持添加和删除分区。列表分区表不支持切割分区，不支持合成分区，故该工具在HASH/LIST分区暂不支持COALESCE和REORGANIZE，在HASH分区不支持ADD/DROP PARTITION。
 - 由于目前openGauss内核的限制，二级分区的分区表可以正常执行 ALTER PARTITION中的ADD/DROP/TRUNCATE功能，COALESCE/REORGANIZE/EXCHANGE暂不支持。
 - 对于HASH分区及KEY分区表在线迁移，由于MySQL和openGauss中hash分区内核实现不同，迁移后openGauss数据存放分区与MySQL中数据存放的分区存在差异。
@@ -820,7 +820,7 @@ REORGANIZE PARTITION 中，openGauss侧采用MERGE和SPLIT实现分区的MySQL�
 
 需要注意的是，下面列出来的MySQL数据类型指的是information_schema.COLUMNS中的data_type而非column_type。比如对于 int unsigned的column_type，其data_type实际为 int。对于float(5,2)的column_type，其data_type实际为float。
 
-char(1)类型能够正常插入汉字跟数据库的编码有关。当数据库是B模式，且编码是UTF-8时，char(1)可成功插入1个汉字；当数据库是B模式，且编码是SQL_ASCII时，插入1个汉字会失败。当数据库是A模式时，插入1个汉字也会失败。
+char(1)类型能够正常插入汉字跟数据库模式有关。当数据库是B模式（加载了dolphin插件），char(1)可成功插入1个汉字；当数据库是A模式时，插入1个汉字会失败。
 
 | MySQL              | openGauss | 备注                                                                                                                                                                                                                                         |
 |--------------------|--|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|

@@ -4998,8 +4998,18 @@ class pg_engine(object):
                             table_primary = idx_col
                     else:
                         unique_key = ''
+
+                    fulltext_key = ''
+                    if index_type == 'SPATIAL':
+                        self.logger.warning("Table `%s`.`%s` column %s contains spatial index, openGauss does not "
+                                            "support spatial index, so ignore it."
+                                            % (schema, table, ','.join(index_columns)))
+                        continue
+                    elif index_type == 'FULLTEXT':
+                        fulltext_key = 'FULLTEXT'
+                        using = '(%s)' % (','.join(index_columns))
                     # openGauss doesn't support multi column for GIN index, so use BTREE when columns > 1
-                    if index_type == 'BTREE' or len(index_columns) > 1:
+                    elif index_type == 'BTREE' or len(index_columns) > 1:
                         using = 'USING BTREE(%s)' % (','.join(index_columns))
                     else:
                         using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
@@ -5008,11 +5018,11 @@ class pg_engine(object):
 
                     comment = index["index_comment"]
                     if len(comment) == 0:
-                        idx_def = 'CREATE %s INDEX `%s` ON `%s`.`%s` %s ;'\
-                                  % (unique_key, index_name, schema, table, using)
+                        idx_def = 'CREATE %s %s INDEX `%s` ON `%s`.`%s` %s ;'\
+                                  % (unique_key, fulltext_key, index_name, schema, table, using)
                     else:
-                        idx_def = """CREATE %s INDEX `%s` ON `%s`.`%s` %s comment '%s';"""\
-                                  % (unique_key, index_name, schema, table, using, comment)
+                        idx_def = """CREATE %s %s INDEX `%s` ON `%s`.`%s` %s comment '%s';"""\
+                                  % (unique_key, fulltext_key, index_name, schema, table, using, comment)
                     idx_ddl[index_name] = idx_def
                 self.idx_sequence += 1
 
