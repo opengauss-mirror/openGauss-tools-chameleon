@@ -87,6 +87,7 @@ sources:
     mysql_restart_config: Yes
     is_create_index: Yes
     index_dir: '~/.pg_chameleon/index/'
+    is_skip_completed_tables: No
 
   pgsql:
     db_conn:
