@@ -108,11 +108,13 @@ class replica_engine(object):
         self.lst_yes = ['yes', 'Yes', 'y', 'Y']
         self.args = args
         self.source = self.args.source
-        self.load_config()
         self.initial_global_setting()
         if self.args.command == 'set_configuration_files':
             self.set_configuration_files()
             sys.exit()
+
+        self.load_config()
+        self.update_pid_file()
 
         self.is_debug_or_dump_json = self.args.debug or self.config['dump_json']
         log_list = self.__init_logger("global")
@@ -138,6 +140,20 @@ class replica_engine(object):
                 print("FATAL, The source %s is not registered. Please add it add_source" % (self.args.source))
                 sys.exit()
 
+    def update_pid_file(self):
+        cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')
+        local_pid = "%s/pid/" % cham_dir
+        if len(self.config["pid_dir"]) == 0:
+            local_pid = "%s/pid/" % cham_dir
+            self.config["pid_dir"] = local_pid
+        else:
+            local_pid = os.path.expanduser(self.config["pid_dir"])
+        pid_file_name = local_pid + "replica.pid"
+        self.pid_file = pid_file_name
+        if not os.path.isdir(local_pid):
+            print("creating directory %s" % local_pid)
+            os.makedirs(local_pid)
+
     def initial_global_setting(self):
         python_lib = os.path.dirname(os.path.realpath(__file__))
         cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')
@@ -145,11 +161,7 @@ class replica_engine(object):
         self.global_conf_example = '%s/../configuration/config-example.yml' % python_lib
         self.local_conf_example = '%s/config-example.yml' % local_conf
         local_logs = "%s/logs/" % cham_dir
-        if len(self.config["pid_dir"]) == 0:
-            local_pid = "%s/pid/" % cham_dir
-            self.config["pid_dir"] = local_pid
-        else:
-            local_pid = self.config["pid_dir"]
+        local_pid = "%s/pid/" % cham_dir
         pid_file_name = local_pid + "replica.pid"
         self.pid_file = pid_file_name
         self.conf_dirs = [
@@ -436,7 +448,6 @@ class replica_engine(object):
         """
         local_confdir = "%s/.pg_chameleon/configuration/" % os.path.expanduser('~')
         self.config_file = '%s/%s.yml' % (local_confdir, self.args.config)
-
         if not os.path.isfile(self.config_file):
             print("**FATAL - configuration file missing. Please ensure the file %s is present." % (self.config_file))
             sys.exit()
