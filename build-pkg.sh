@@ -53,6 +53,7 @@ sed -i \"1s#/venv/bin/python3.6#\$current_path/venv/bin/python3.6#\" \`grep /ven
 
 #打包
 cd $path
+cp -rf ./install.sh $package_path
 tar zcvf chameleon-$version.tar.gz $package_name
 
 #删除临时文件
