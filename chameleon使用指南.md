@@ -145,9 +145,9 @@ ALTER TABLE tbl_name REORGANIZE PARTITION partition_names INTO (partition_defini
 
 安装包下载地址：
 
-https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/chameleon-5.0.0-py3-none-any.whl
+https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/chameleon-5.1.0-py3-none-any.whl
 
-其中5.0.0表示当前版本号，其可以通过chameleon --version命令查询。
+其中5.1.0表示当前版本号，其可以通过chameleon --version命令查询。
 
 下载完成后，通过python virtual env环境进行安装，首先创建python虚拟环境并激活：
 
@@ -157,7 +157,7 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/chameleon-5.0.0-
 
 然后通过pip安装即可：
 
-**pip3 install ./chameleon-5.0.0-py3-none-any.whl**
+**pip3 install ./chameleon-5.1.0-py3-none-any.whl**
 
 注意：安装过程中，将自动安装该工具依赖的其他库，请确保本机的pip能正常下载安装相关依赖。相关依赖库及版本要求为：
 
@@ -213,22 +213,22 @@ yum install python3-devel
 
 | 系统名称       | 系统架构 | 下载链接                                                     |
 | :------------- | -------- | ------------------------------------------------------------ |
-| centos7        | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/centos7/chameleon-5.0.0-x86_64.tar.gz |
-| openEuler20.03 | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.0.0-x86_64.tar.gz |
-| openEuler20.03 | aarch64  | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.0.0-aarch64.tar.gz |
-| openEuler22.03 | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler22.03/chameleon-5.0.0-x86_64.tar.gz |
-| openEuler22.03 | aarch64  | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler22.03/chameleon-5.0.0-aarch64.tar.gz |
+| centos7        | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/centos7/chameleon-5.1.0-x86_64.tar.gz |
+| openEuler20.03 | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.1.0-x86_64.tar.gz |
+| openEuler20.03 | aarch64  | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler20.03/chameleon-5.1.0-aarch64.tar.gz |
+| openEuler22.03 | x86_64   | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler22.03/chameleon-5.1.0-x86_64.tar.gz |
+| openEuler22.03 | aarch64  | https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/openEuler22.03/chameleon-5.1.0-aarch64.tar.gz |
 
 下载完成后，使用tar -zxvf 命令进行解压
 
 ```
-tar -zxvf chameleon-5.0.0-x86_64.tar.gz
+tar -zxvf chameleon-5.1.0-x86_64.tar.gz
 ```
 
 解压完成后，须在脚本所在目录执行初始化脚本build.sh
 
 ```
-cd chameleon-5.0.0
+cd chameleon-5.1.0
 sh build.sh
 ```
 
