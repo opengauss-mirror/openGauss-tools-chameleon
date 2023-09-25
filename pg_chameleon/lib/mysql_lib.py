@@ -261,7 +261,7 @@ class mysql_source(object):
 
     @classmethod
     def __convert_default_value(cls, origin_value, numeric_precision):
-        return str(origin_value)
+        return origin_value
 
     def __init_convert_map(self):
         self.convert_map = {
@@ -1049,7 +1049,8 @@ class mysql_source(object):
                     concat('cast(`',column_name,'` AS char CHARACTER SET """+ self.charset +""")')
                 END
                 AS select_csv,
-                column_name as column_name
+                column_name as column_name,
+                data_type as data_type
             FROM
                 information_schema.COLUMNS
             WHERE
@@ -1071,6 +1072,10 @@ class mysql_source(object):
         select_columns["select_stat"] = ','.join(select_stat)
         select_columns["column_list"] = ','.join(column_list)
         select_columns["column_list_select"] = select_columns["column_list"]
+        col_type = {}
+        for statement in select_data:
+            col_type[statement["column_name"]] = statement["data_type"]
+        select_columns["col_type"] = col_type
         return select_columns
 
     def select_columns_datatype(self, schema, table, cursor=None):
@@ -1118,7 +1123,7 @@ class mysql_source(object):
             :rtype: int
         """
         sql_numeric_percision = """
-                SELECT numeric_precision
+                SELECT numeric_precision as numeric_precision
                     FROM 
                         information_schema.COLUMNS
                     WHERE 
@@ -1138,35 +1143,69 @@ class mysql_source(object):
         sql_getdata = 'select '
         for column_name, data_type in col_type.items():
             if data_type not in self.convert_type_set:
-                sql_getdata += 'cast(`' + column_name + '` AS char CHARACTER SET utf8) AS ' + column_name + ', '
+                sql_getdata += 'cast(`' + column_name + '` AS char CHARACTER SET utf8) AS `' + column_name + '`, '
             else:
                 sql_getdata += column_name + ', '
         sql_getdata = sql_getdata[:-2] + ' from `%s`.`%s`;'
 
         return sql_getdata % (schema, table)
 
-    def transform_data_to_csv(self, table_data, col_type, numeric_precision, random):
+    def transform_data_to_csv(self, table_data, col_type, numeric_precision, need_type_convert):
         """
             The method transform table data which from cursor to csv format. 
 
             :param table_data: table data from cursor
             :param col_type: field-to-datatype mapping
             :param numeric_precision: numeric_precision for bit type
-            :param random: random string
+            :param need_type_convert: if table data need convert
             :return: data in csv string format
             :rtype: string
         """
-        converted_data = []
+        if need_type_convert:
+            return self.transform_convert_data_to_csv(table_data, col_type, numeric_precision)
+        else:
+            return self.transform_normal_data_to_csv(table_data)
+
+    def transform_convert_data_to_csv(self, table_data, col_type, numeric_precision):
+        """
+            The method transform table data which contains types need be converted to csv format. 
+
+            :param table_data: table data from cursor
+            :param col_type: field-to-datatype mapping
+            :param numeric_precision: numeric_precision for bit type
+            :return: data in csv string format
+            :rtype: string
+        """
+        csv_data = ''
         for line in table_data:
-            converted_line = []
+            line_str = ""
             for key, value in line.items():
                 if value is None:
-                    converted_line.append(random)
+                    line_str += 'NULL,'
                 else:
-                    converted_line.append(self.convert_map.get(col_type[key], self.__convert_default_value)(value, numeric_precision).replace('"', '""'))
-            line_str = '"' + '","'.join(converted_line) + '"'
-            converted_data.append(line_str.replace('"' + random + '"','NULL').replace('\x00', ''))
-        csv_data = '\n'.join(converted_data)
+                    line_str += '"' + self.convert_map.get(col_type[key], self.__convert_default_value)(value, numeric_precision).replace('"', '""') + '",'
+            csv_data += line_str[:-1] + '\n'
+        csv_data = csv_data.replace('\x00', '')
+        return csv_data
+
+    def transform_normal_data_to_csv(self, table_data):
+        """
+            The method transform table data which from cursor to csv format. 
+
+            :param table_data: table data from cursor
+            :return: data in csv string format
+            :rtype: string
+        """
+        csv_data = ''
+        for line in table_data:
+            line_str = ""
+            for value in line.values():
+                if value is None:
+                    line_str += 'NULL,'
+                else:
+                    line_str += '"' + value.replace('"', '""') + '",'
+            csv_data += line_str[:-1] + '\n'
+        csv_data = csv_data.replace('\x00', '')
         return csv_data
 
     # Use an inner class to represent transactions
@@ -1576,14 +1615,21 @@ class mysql_source(object):
         self.generate_table_metadata_statement(schema, table, total_rows, cursor_buffered)
         self.generate_column_metadata_statement(schema, table, cursor_buffered)
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
-        col_type = self.select_columns_datatype(schema, table, cursor_buffered)
-        numeric_precision = self.get_bit_numericpercision(schema, table, cursor_buffered)
+        col_type = select_columns.get("col_type")
+        numeric_precision = 0
+        table_type_set = set(col_type.values())
+        if ColumnType.M_BIT.value in table_type_set:
+            numeric_precision = self.get_bit_numericpercision(schema, table, cursor_buffered)
+        need_type_convert = False
+        for date_type in table_type_set:
+            if date_type in self.convert_type_set:
+                need_type_convert = True
+                break
         self.logger.debug("Executing query for table %s.%s" % (schema, table))
 
         # We use a random string here when the value is NULL, we can't use 'NULL' to represent a NULL value,
         # cause we can store a string which is 'NULL'(4 byte length string). But a random string is also not
         # a perfect method to slove this problem. We may need to find another method to slove this later.
-        random = secrets.token_hex(16) + RANDOM_STR
         with self.reader_xact(self, cursor_buffered, table_txs):
             sql_getdata = self.get_table_data(schema, table, col_type)
             cursor_dict_unbuffered.execute(sql_getdata)
@@ -1604,7 +1650,7 @@ class mysql_source(object):
                     break
                 # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
                 # will lead to different value stored in MySQL and openGauss, we have no choice...
-                csv_data = self.transform_data_to_csv(table_data, col_type, numeric_precision, random)
+                csv_data = self.transform_data_to_csv(table_data, col_type, numeric_precision, need_type_convert)
                 if self.copy_mode == 'file':
                     csv_file = codecs.open(out_file, 'wb', self.charset, buffering=-1)
                     csv_file.write(csv_data)
