@@ -225,17 +225,26 @@ yum install python3-devel
 tar -zxvf chameleon-5.1.0-x86_64.tar.gz
 ```
 
-解压完成后，须在脚本所在目录执行初始化脚本build.sh
+解压完成后，在脚本所在目录直接执行安装脚本install.sh
 
 ```
 cd chameleon-5.1.0
-sh build.sh
+sh install.sh
 ```
 
-执行完毕后通过加载虚拟环境变量即可调用chameleon命令：
+执行完毕后通过绝对路径或加载环境变量的方式即可调用chameleon命令（假设变色龙安装位置为/pkg）：
+
+绝对路径查询变色龙版本号：
+
+```
+/pkg/venv/bin/chameleon --version
+```
+
+加载环境变量查询变色龙版本号：
 
 ```
 source venv/bin/activate
+chameleon --version
 ```
 
 注意：tar.gz包支持内网状态下安装，如果tar.gz包安装失败，用户除了尝试解决问题外，也可以通过安装whl包的方式构建新的虚拟环境重新安装。
