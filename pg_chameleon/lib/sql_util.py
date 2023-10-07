@@ -1696,6 +1696,6 @@ class SqlTranslator():
         
         communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 
-        stdout = communicate[0].decode("utf-8").replace("`", "")  # sql translated into opengauss dialect format
+        stdout = communicate[0].decode("utf-8")  # sql translated into opengauss dialect format
         stderr = communicate[1].decode("utf-8")  # logs generated during translation
         return stdout, stderr
