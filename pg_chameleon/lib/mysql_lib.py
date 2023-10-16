@@ -1,4 +1,3 @@
-import codecs
 import gc
 import io
 import logging
@@ -6,9 +5,7 @@ import math
 import multiprocessing
 import os
 import re
-import secrets
 import sys
-import queue
 import codecs
 import json
 import secrets
@@ -20,11 +17,6 @@ import binascii
 import pymysql
 from geomet import wkb
 from geomet import wkt
-from pymysqlreplication import BinLogStreamReader
-from pymysqlreplication.event import QueryEvent, GtidEvent, HeartbeatLogEvent
-from pymysqlreplication.event import QueryEvent, GtidEvent, HeartbeatLogEvent, XidEvent
-from pymysqlreplication.row_event import DeleteRowsEvent,UpdateRowsEvent,WriteRowsEvent
-from pymysqlreplication.event import RotateEvent
 from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, WriteRowsEvent
 from pg_chameleon import sql_token, ColumnType
 from pg_chameleon.lib.parallel_replication import BinlogTrxReader, MyGtidEvent, modified_my_gtid_event
@@ -32,7 +24,6 @@ from pg_chameleon.lib.pg_lib import pg_engine
 from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
 from pg_chameleon.lib.task_lib import CopyDataTask, CreateIndexTask, ReadDataTask
 from pg_chameleon.lib.task_lib import TableMetadataTask, ColumnMetadataTask
-from pg_chameleon.lib.task_lib import KeyWords
 
 POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
@@ -2802,6 +2793,8 @@ class mysql_source(object):
         sql_to_get_object_metadata = db_object_type.sql_to_get_object_metadata()
         sql_to_get_create_object_statement = db_object_type.sql_to_get_create_object_statement()
 
+        self.pg_engine.pgsql_conn.execute("set b_compatibility_user_host_auth to on;")
+
         for schema in self.schema_mappings:
             self.logger.info("Starting the %s replica for schema %s." % (db_object_type.value, schema))
             success_num = 0  # number of replication success records
@@ -2822,17 +2815,16 @@ class mysql_source(object):
             for object_metadata in self.cursor_buffered.fetchall():
                 object_name = object_metadata["OBJECT_NAME"]
 
-                # set sql mode to ANSI_QUOTES, avoiding backticks in SQL statements
-                self.cursor_buffered.execute("SET SQL_MODE = 'ANSI_QUOTES';")
-
                 # get the details required to create the object
                 self.cursor_buffered.execute(sql_to_get_create_object_statement % (schema, object_name))
                 create_object_metadata = self.cursor_buffered.fetchone()
                 create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
-
+                if db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
+                    if not create_object_statement.endswith(";"):
+                        create_object_statement += ";"
                 # translate sql dialect in mysql format to opengauss format.
                 stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
-                tran_create_view_statement = self.__get_tran_create_view_statement(db_object_type, schema, stdout)
+                tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type, schema, stdout)
                 has_error, error_message = self.__unified_log(stderr)
                 if has_error:
                     # if translation has any error, this replication also fail
@@ -2846,9 +2838,9 @@ class mysql_source(object):
                     continue
                 # if translate successful, add the corresponding database object to opengauss
                 try:
-                    self.pg_engine.add_object(object_name, self.schema_mappings[schema], tran_create_view_statement)
+                    self.pg_engine.add_object(object_name, self.schema_mappings[schema], tran_create_object_statement)
                     self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement,
-                                                                  tran_create_view_statement)
+                                                                  tran_create_object_statement)
                     self.logger.info("Copying the source object success %s : %s" % (db_object_type.value, object_name))
                     if self.dump_json:
                         self.__copied_progress_json(db_object_type.value, object_name, process_state.PRECISION_SUCCESS)
@@ -2865,7 +2857,7 @@ class mysql_source(object):
             self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
                 db_object_type.value, schema, success_num + failure_num, success_num, failure_num))
 
-    def __get_tran_create_view_statement(self, db_object_type, schema, stdout):
+    def __get_tran_create_object_statement(self, db_object_type, schema, stdout):
         """
         Stdout should not be execute on opengauss directly, it needs to do some field replacement.
         :param db_object_type:
@@ -2873,24 +2865,16 @@ class mysql_source(object):
         :param stdout:
         :return:
         """
-        try:
-            if db_object_type == DBObjectType.VIEW:
-                tran_create_view_statement = stdout.replace("CREATE ", "CREATE OR REPLACE ")\
-                    .replace(schema + ".", self.schema_mappings[schema] + ".")\
-                    .replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
-            elif db_object_type == DBObjectType.TRIGGER:
-                tran_create_view_statement = stdout.replace(schema + ".", self.schema_mappings[schema] + ".")\
-                    .replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
-            elif db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
-                # can not end with '/', so delete it.
-                tran_create_view_statement = re.sub(r"/[\s]*$", "", stdout)\
-                    .replace(schema + ".", self.schema_mappings[schema] + ".")\
-                    .replace("\"" + schema + "\".", "\"" + self.schema_mappings[schema] + "\".")
-            else:
-                tran_create_view_statement = stdout
-        except KeyError:
-            tran_create_view_statement = stdout
-        return tran_create_view_statement
+        tran_create_object_statement = stdout
+        if db_object_type in DBObjectType:
+            if db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
+                tran_create_object_statement = re.sub(r"/[\s]*$", "", tran_create_object_statement)
+            try:
+                tran_create_object_statement = tran_create_object_statement.replace(schema + ".", self.schema_mappings[schema] + ".") \
+                    .replace("`" + schema + "`.", "`" + self.schema_mappings[schema] + "`.")
+            except KeyError:
+                pass
+        return tran_create_object_statement
 
     def __unified_log(self, stderr):
         """
