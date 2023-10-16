@@ -1,6 +1,6 @@
 venv_path=$(pwd)
 chameleon_path=${venv_path}/venv/bin/chameleon
-version=5.1.0
+version=5.1.1
 chameleon_version="chameleon "$version
 version_str=''
 install_log=install.log
