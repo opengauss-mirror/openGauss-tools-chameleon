@@ -3111,7 +3111,8 @@ class pg_engine(object):
         # when we need to quote value, we also need to add '\' to escape single quotation mark for string type
         quote = ''
         if self.mysql_version < COLUMNDEFAULT_INCLUDE_QUOTE_VER:
-            if column_type in self.character_type or column_type == ColumnType.O_ENUM.value:
+            if column_type in self.character_type or column_type == ColumnType.O_ENUM.value\
+                or column_type == ColumnType.O_SET.value:
                 quote = '\''
                 origin_default = origin_default.replace('\'', '\\\'')
             elif column_type in self.date_type:
@@ -3274,7 +3275,7 @@ class pg_engine(object):
         character_and_collate = ''
         if character_set and len(character_set) > 0 and character_set != UNSUPPORT_CHARACTER_SET:
             character_and_collate += " character set " + character_set
-        if column["data_type"] != "enum" and collate and len(collate) > 0 and collate != UNSUPPORT_COLLATE:
+        if collate and len(collate) > 0 and collate != UNSUPPORT_COLLATE:
             character_and_collate += " collate " + collate
         return character_and_collate
 
