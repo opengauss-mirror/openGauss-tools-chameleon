@@ -183,30 +183,6 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/chameleon-5.1.1-
 
 注意：chameleon安装需要前置安装一些yum包，包括mysql5-devel和python3-devel。 其中mysqlclient的安装依赖mysql5-devel包。
 
-如果安装过程中错误信息为：
-
-```
-/bin/sh: mysql_config: command not found
-```
-
-请安装mysql5-devel包，对应的命令为：
-
-```
-yum install mysql5-devel
-```
-
-如果安装过程中错误信息为：
-
-```
-fatal error: Python.h: No such file or directory
-```
-
-请安装python3-devel包，对应的命令为：
-
-```
-yum install python3-devel
-```
-
 ## **2.2.** tar.gz包安装
 
 安装包下载地址：
@@ -266,6 +242,72 @@ chameleon --version
 **python3 setup.py install**
 
 安装完成后，不要退出python虚拟环境，可以开始使用chameleon工具。
+
+## **2.4.** 安装常见问题
+
+##### Q：安装chameleon或查询chameleon版本时遇到以下报错该怎么办？
+
+```
+NameError:name '_mysql' is not defined
+```
+
+A：查看堆栈信息，找到上一个Error查看具体信息，如果报错信息为找不到libmariadb.so.*文件，例如：
+
+```
+ImportError: libmariadb.so.3: cannot open shared object file:No such file or directory
+```
+
+请尝试在root用户下执行以下命令安装mariadb扩展包，然后重新安装chameleon。
+
+```
+yum install mariadb-devel
+```
+
+如果报错信息为找不到libmysqlclient.so.*文件，例如：
+
+```
+ImportError: libmysqlclient.so.20: cannot open shared object file:No such file or directory
+```
+
+请尝试执行以下命令安装mysql扩展包，然后重新安装chameleon。
+
+```
+yum install mysql5-devel mysql-devel
+```
+
+安装扩展包只要成功其中一个即可。若两个扩展包均不存在或者均安装失败，可以从mysql5.7版本数据库的安装位置中获取报错中对应的libmysqlclient.so.*文件，并将这个文件复制一份至/usr/lib64文件夹下，或者在/usr/lib64文件夹建立软链接指向mysql5.7版本数据库的安装位置中对应的文件。
+
+##### Q：安装chameleon或查询chameleon版本时遇到以下报错该怎么办？
+
+```
+fatal error: Python.h: No such file or directory
+```
+
+A：请尝试在root用户下执行以下命令安装python扩展包，然后重新安装chameleon，安装扩展包只要成功其中一个即可。
+
+```
+yum install python3-devel python-devel
+```
+
+##### Q：安装chameleon或查询chameleon版本时遇到以下报错该怎么办？
+
+```
+gcc: Command not found
+```
+
+A：请尝试在root用户下执行以下命令安装gcc，然后重新安装chameleon，或者openGauss在安装时三方件中已经存在了gcc，加载安装openGauss时相关的环境变量即可。
+
+```
+yum install gcc
+```
+
+##### Q：使用whl包安装chameleon时遇到以下报错该怎么办？
+
+```
+mysql-replication 0.44.0 requires pymysql>=1.1.0,but you'll have pymysql 0.10.1 which is incompatible.
+```
+
+A：问题原因是whl安装时自动适配的依赖之间版本互相不兼容，比如mysql-replication 和 pymysql 各自的版本都是符合chameleon安装条件的，但mysql-replication高版本对pymysql的依赖和chameleon对pymysql的依赖不一致。这种情况也可能发生在别的依赖之间，建议更换为使用tar.gz包安装。tar.gz包中已经预置了一个依赖安装完毕且chameleon可以使用的虚拟环境。
 
 # **3.** chameleon配置文件说明
 
