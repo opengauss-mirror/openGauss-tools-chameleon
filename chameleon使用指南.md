@@ -201,26 +201,19 @@ https://opengauss.obs.cn-south-1.myhuaweicloud.com/latest/tools/chameleon-5.1.0-
 tar -zxvf chameleon-5.1.0-x86_64.tar.gz
 ```
 
-解压完成后，在脚本所在目录直接执行安装脚本install.sh
+解压完成后，在脚本所在目录执行离线安装脚本build.sh
 
 ```
 cd chameleon-5.1.0
-sh install.sh
+sh build.sh
 ```
 
-执行完毕后通过绝对路径或加载环境变量的方式即可调用chameleon命令（假设变色龙安装位置为/pkg）：
+执行完毕后通过绝对路径的方式即可调用chameleon命令（假设变色龙安装位置为/pkg）：
 
 绝对路径查询变色龙版本号：
 
 ```
 /pkg/venv/bin/chameleon --version
-```
-
-加载环境变量查询变色龙版本号：
-
-```
-source venv/bin/activate
-chameleon --version
 ```
 
 注意：tar.gz包支持内网状态下安装，如果tar.gz包安装失败，用户除了尝试解决问题外，也可以通过安装whl包的方式构建新的虚拟环境重新安装。
@@ -308,6 +301,19 @@ mysql-replication 0.44.0 requires pymysql>=1.1.0,but you'll have pymysql 0.10.1 
 ```
 
 A：问题原因是whl安装时自动适配的依赖之间版本互相不兼容，比如mysql-replication 和 pymysql 各自的版本都是符合chameleon安装条件的，但mysql-replication高版本对pymysql的依赖和chameleon对pymysql的依赖不一致。这种情况也可能发生在别的依赖之间，建议更换为使用tar.gz包安装。tar.gz包中已经预置了一个依赖安装完毕且chameleon可以使用的虚拟环境。
+
+##### Q：使用whl包安装chameleon时遇到以下报错该怎么办？
+
+```
+ModuleNotFoundError: No module named 'xxx'
+```
+
+A：请尝试在虚拟环境执行以下命令安装对应名字的扩展包，然后重新安装chameleon。
+
+```
+source venv/bin/activate
+pip3 install xxx
+```
 
 # **3.** chameleon配置文件说明
 
