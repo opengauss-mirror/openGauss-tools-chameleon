@@ -2655,15 +2655,10 @@ class mysql_source(object):
         self.__init_sync()
 
         sql_to_get_object_metadata = db_object_type.sql_to_get_object_metadata()
-        sql_to_get_create_object_statement = db_object_type.sql_to_get_create_object_statement()
-
         self.pg_engine.pgsql_conn.execute("set b_compatibility_user_host_auth to on;")
 
         for schema in self.schema_mappings:
             self.logger.info("Starting the %s replica for schema %s." % (db_object_type.value, schema))
-            success_num = 0  # number of replication success records
-            failure_num = 0  # number of replication fail records
-
             # get metadata (object name) of all objects on schema
             if self.dump_json:
                 self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
@@ -2676,50 +2671,92 @@ class mysql_source(object):
                     }})
 
             self.cursor_buffered.execute(sql_to_get_object_metadata % (schema,))
-            for object_metadata in self.cursor_buffered.fetchall():
-                object_name = object_metadata["OBJECT_NAME"]
+            self.create_single_object(db_object_type, schema)
 
-                # get the details required to create the object
-                self.cursor_buffered.execute(sql_to_get_create_object_statement % (schema, object_name))
-                create_object_metadata = self.cursor_buffered.fetchone()
-                create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
-                if db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
-                    if not create_object_statement.endswith(";"):
-                        create_object_statement += ";"
+    def create_single_object(self, db_object_type, schema):
+        """
+        The method create single object.
+
+        :param: db_object_type: the database object type, refer to enumeration class DBObjectType
+        :param: schema: the schema name
+        """
+        sql_to_get_create_object_statement = db_object_type.sql_to_get_create_object_statement()
+        success_num = 0  # number of replication success records
+        failure_num = 0  # number of replication fail records
+        for object_metadata in self.cursor_buffered.fetchall():
+            object_name = object_metadata["OBJECT_NAME"]
+
+            # get the details required to create the object
+            self.cursor_buffered.execute(sql_to_get_create_object_statement % (schema, object_name))
+            create_object_metadata = self.cursor_buffered.fetchone()
+            create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
+            if db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
+                if not create_object_statement.endswith(";"):
+                    create_object_statement += ";"
+            try:
+                # Method 1: Directly execute ddl to openGauss
+                tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type,
+                                                                                       schema,
+                                                                                       create_object_statement)
+                success_num = self.add_object_success(create_object_statement, db_object_type, object_name, schema,
+                                                      success_num, tran_create_object_statement)
+            except Exception as exp:
+                self.logger.error("Method 1 directly execute create %s %s.%s failed, sql code "
+                                  "is %s and sql message is %s, so translate it according to sql-translator"
+                                  % (db_object_type.value, schema, object_name, exp.code, exp.message))
+                # Method 2: translate sql to openGauss format
                 # translate sql dialect in mysql format to opengauss format.
                 stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
-                tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type, schema, stdout)
+                tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type, schema,
+                                                                                       stdout)
                 has_error, error_message = self.__unified_log(stderr)
                 if has_error:
                     # if translation has any error, this replication also fail
                     # insert a failure record into the object replication status table
-                    self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-                    self.logger.error("Copying the source object fail %s : %s" % (db_object_type.value, object_name))
-                    if self.dump_json:
-                        self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
-                                                    error_message)
-                    failure_num += 1
+                    failure_num = self.add_object_fail(create_object_statement, db_object_type, error_message, exp,
+                                                       failure_num, object_name, False)
                     continue
+
                 # if translate successful, add the corresponding database object to opengauss
                 try:
-                    self.pg_engine.add_object(object_name, self.schema_mappings[schema], tran_create_object_statement)
-                    self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement,
-                                                                  tran_create_object_statement)
-                    self.logger.info("Copying the source object success %s : %s" % (db_object_type.value, object_name))
-                    if self.dump_json:
-                        self.__copied_progress_json(db_object_type.value, object_name, process_state.PRECISION_SUCCESS)
-                    success_num += 1
-                except Exception as exp:
-                    self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-                    self.logger.error(exp.message)
-                    self.logger.error("Copying the source object fail %s : %s" % (db_object_type.value, object_name))
-                    if self.dump_json:
-                        self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
-                                                    exp.message)
-                    failure_num += 1
+                    success_num = self.add_object_success(create_object_statement, db_object_type, object_name,
+                                                          schema, success_num, tran_create_object_statement)
+                except Exception as exception:
+                    failure_num = self.add_object_fail(create_object_statement, db_object_type, error_message,
+                                                       exception, failure_num, object_name)
+        self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
+            db_object_type.value, schema, success_num + failure_num, success_num, failure_num))
 
-            self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
-                db_object_type.value, schema, success_num + failure_num, success_num, failure_num))
+    def add_object_fail(self, create_object_statement, db_object_type, error_message, exp, failure_num, object_name,
+                        flag=True):
+        self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
+        if flag:
+            self.logger.error("Method 2 execute create %s %s failed, sql code is %s and sql message is %s" %
+                              (db_object_type.value, object_name, exp.code, exp.message))
+        else:
+            self.logger.error("Method 2 execute create %s %s failed because of parse sql failed according "
+                              "to sql-translator, and error message is %s" %
+                              (db_object_type.value, object_name, error_message))
+        self.logger.error("Copying the source object fail %s : %s" % (db_object_type.value, object_name))
+        if self.dump_json:
+            self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
+                                        exp.message)
+        failure_num += 1
+        return failure_num
+
+    def add_object_success(self, create_object_statement, db_object_type, object_name, schema, success_num,
+                           tran_create_object_statement):
+        try:
+            self.pg_engine.add_object(object_name, self.schema_mappings[schema], tran_create_object_statement)
+        except KeyError:
+            pass
+        self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement,
+                                                      tran_create_object_statement)
+        self.logger.info("Copying the source object success %s : %s" % (db_object_type.value, object_name))
+        if self.dump_json:
+            self.__copied_progress_json(db_object_type.value, object_name, process_state.PRECISION_SUCCESS)
+        success_num += 1
+        return success_num
 
     def __get_tran_create_object_statement(self, db_object_type, schema, stdout):
         """
@@ -2753,12 +2790,17 @@ class mysql_source(object):
             log_split = log.split(' ')
             if len(log_split) > LOG_LEVEL_INDEX:
                 level_name = logging.getLevelName(log_split[LOG_LEVEL_INDEX])
+                parse_error_level_name = logging.getLevelName(log_split[1])
                 if level_name == logging.ERROR:
                     # when level_name value is ERROR
                     # it means there is an error log record in the translation, maybe the sql statement
                     # cannot be translated
                     # when level_name could not be got
                     # it means there is a problem with the project og-translator itself
+                    has_error = True
+                    self.logger.error(log)
+                    error_message.append(log)
+                elif parse_error_level_name == logging.ERROR:
                     has_error = True
                     self.logger.error(log)
                     error_message.append(log)
