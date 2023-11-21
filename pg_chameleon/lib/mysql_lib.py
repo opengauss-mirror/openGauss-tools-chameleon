@@ -1809,7 +1809,7 @@ class mysql_source(object):
                 WHERE
                         table_schema = %s
                     AND table_name = %s
-                    AND extra = "auto_increment"
+                    AND extra = 'auto_increment'
                     ;
                 """
         cursor_buffered.execute(sql_column, (schema, table))
