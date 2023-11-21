@@ -24,6 +24,8 @@ COLUMNDEFAULT_INCLUDE_QUOTE_VER = 7 + sql_token.VERSION_SCALE * 2 + \
 ON_UPDATE_CURRENT_TIMESTAMP = "on update current_timestamp"
 UNSUPPORT_CHARACTER_SET = "latin1"
 UNSUPPORT_COLLATE = "latin1_swedish_ci"
+MYSQL_ASCII = "ascii"
+OPENGAUSS_ASCII = "sql_ascii"
 
 
 def format_error(val):
@@ -3274,7 +3276,10 @@ class pg_engine(object):
             collate = ""
         character_and_collate = ''
         if character_set and len(character_set) > 0 and character_set != UNSUPPORT_CHARACTER_SET:
-            character_and_collate += " character set " + character_set
+            if character_set.lower() == MYSQL_ASCII:
+                character_and_collate += " character set " + OPENGAUSS_ASCII
+            else:
+                character_and_collate += " character set " + character_set
         if collate and len(collate) > 0 and collate != UNSUPPORT_COLLATE:
             character_and_collate += " collate " + collate
         return character_and_collate
