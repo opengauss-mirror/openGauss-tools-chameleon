@@ -598,20 +598,40 @@ class pg_engine(object):
         ]
 
     def check_migration_collate(self):
+        """
+            The method check whether to migrate collate
+        """
         if not self.migration_collate:
             return
-        sql_check = """show sql_compatibility"""
-        self.connect_db()
-        stmt = self.pgsql_conn.prepare(sql_check)
-        b_database_check = stmt.first()
 
         sql_check = """select encoding from pg_database where datname = '%s'"""
         stmt = self.pgsql_conn.prepare(sql_check % self.dest_conn["database"])
         encoding = stmt.first()
+        stmt.close()
 
-        # not b database or encoding id 0(SQL_ASCII), we will not migrate character set and collate
-        if b_database_check != 'B' or encoding == 0:
+        # For a b-compatible database, when its encoding is 0(SQL_ASCII),
+        # character set and collate will not be migrated.
+        if encoding == 0:
+            self.logger.warning("The character set and collate will not be migrated for database encoding 0(SQL_ASCII)")
             self.migration_collate = False
+
+    def check_b_database(self):
+        """
+            The method checks whether the database is a B-compatible database.
+        """
+        sql = """show sql_compatibility"""
+        self.connect_db()
+        stmt = self.pgsql_conn.prepare(sql)
+        b_database_check = stmt.first()
+        stmt.close()
+        if b_database_check != 'B':
+            self.logger.error("The openGauss database is not a B-compatible database, the migration will fail for sql syntax, "
+                              "such as backquote `, which is only supported in the B-compatible database, so "
+                              "a B-compatible database is required for migration. Statement \"CREATE DATABASE "
+                              "database_name WITH DBCOMPATIBILITY='B'\" can create a B-compatible database. "
+                              "And then please use the original role to connect B-compatibility database first, "
+                              "to load extension dolphin and to use for migration.")
+            os._exit(0)
 
     def check_postgis(self):
         """

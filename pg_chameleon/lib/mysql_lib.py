@@ -279,6 +279,28 @@ class mysql_source(object):
         self.disconnect_db_unbuffered()
         self.disconnect_db_buffered()
 
+    def check_lower_case_table_names(self):
+        """
+            The method check if the param lower_case_table_names in MySQL and the param dolphin.lower_case_table_names
+            in openGauss is the same. If the two params are inconsistent, the migration will exit.
+        """
+        lower_case_mysql_sql = """show global variables like 'lower_case_table_names';"""
+        self.cursor_buffered.execute(lower_case_mysql_sql)
+        lower_case_mysql = int(self.cursor_buffered.fetchone()["Value"])
+        lower_case_opengauss_sql = """show dolphin.lower_case_table_names;"""
+        stmt = self.pg_engine.pgsql_conn.prepare(lower_case_opengauss_sql)
+        lower_case_opengauss = int(stmt.first())
+        if lower_case_mysql > 1:
+            lower_case_mysql = 1
+        if lower_case_opengauss > 1:
+            lower_case_opengauss = 1
+        if lower_case_mysql != lower_case_opengauss:
+            self.logger.error("The param lower_case_table_names=%s in MySQL and the param "
+                                "dolphin.lower_case_table_names=%s in openGauss are inconsistent, the migration exit. "
+                                "0: case sensitive, 1: case insensitive, please set the same value."
+                                % (lower_case_mysql, lower_case_opengauss))
+            os._exit(0)
+
     def check_mysql_config(self, is_strict=False):
         """
             The method check if the mysql configuration is compatible with the replica requirements.
@@ -2599,7 +2621,9 @@ class mysql_source(object):
         self.__init_sync()
         self.__init_convert_map()
         self.check_mysql_config()
+        self.check_lower_case_table_names()
         master_start = self.get_master_coordinates()
+        self.pg_engine.check_b_database()
         self.pg_engine.set_source_status("initialising")
         self.pg_engine.clean_batch_data()
         self.pg_engine.save_master_status(master_start)
