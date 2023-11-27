@@ -1,6 +1,11 @@
+class Pair:
+    def __init__(self, first, second):
+        self.first = first
+        self.second = second
+
 class CopyDataTask:
     def __init__(self, csv_file, count_rows, table, schema, select_columns, rows, task_slice=0,
-                 contain_columns=False, column_split=','):
+                 contain_columns=False, column_split=',', idx_pair=Pair('','')):
         self.csv_file = csv_file
         self.count_rows = count_rows
         self.table = table
@@ -10,7 +15,7 @@ class CopyDataTask:
         self.slice = task_slice
         self.contain_columns = contain_columns
         self.column_split = column_split
-
+        self.idx_pair = idx_pair
 
 class CreateIndexTask:
     def __init__(self, table, schema, indices, destination_schema, master_status, is_parallel_create_index,

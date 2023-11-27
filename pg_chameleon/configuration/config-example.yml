@@ -88,6 +88,11 @@ sources:
     is_create_index: Yes
     index_dir: '~/.pg_chameleon/index/'
     is_skip_completed_tables: No
+    with_datacheck: No
+    slice_size: 100000
+    csv_files_threshold:
+    csv_dir_space_threshold:
+
 
   pgsql:
     db_conn:

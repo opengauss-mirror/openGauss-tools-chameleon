@@ -505,6 +505,14 @@ sources:
      index_dir: '~/.pg_chameleon/index/'
 
      is_skip_completed_tables: No
+     
+     with_datacheck: No
+     
+     slice_size: 100000
+     
+     csv_files_threshold:
+     
+     csv_dir_space_threshold:
 ```
 
 配置文件使用yaml文件规则配置，需要特别注意对齐，缩进表示层级关系，缩进时不允许使用Tab键，只允许使用空格，缩进的空格数目不重要，但相同层级的元素左侧需要对齐。
@@ -844,6 +852,46 @@ chameleon start_index_replica --config default --source mysql --debug。
 ### 3.4.35 is_skip_completed_tables
 
 用于控制工具异常重启后是否跳过已经迁移完成的表，默认关闭。设置为True或Yes时会生成~/.pg_chameleon/progress/tables.progress文件，该文件以`schema`.`table`记录源端已经迁移完成的表名。当该参数开启，每次迁移都会跳过~/.pg_chameleon/progress/tables.progress文件中记录的表。开启该参数对迁移性能有一定影响。
+
+### 3.4.36 with_datacheck
+
+用于控制迁移工具是否与数据校验进行协同。默认为False/No，表示迁移工具独立运行，设置为True/Yes，表示迁移与校验协同进行。迁移工具与校验工具协同进行时，迁移工具对单个表的索引创建完成后，校验工具即开启对该表的校验。同时，迁移工具会在${out_dir}/chameleon目录下生成reader.log以及writer.log，这两个log文件分别记录所有表的抽取和回放数据的信息用于辅助校验。并且csv文件存放于${out_dir}/chameleon/data目录下，迁移工具等待校验处理完单个csv文件后，再将对应的文件删除。
+
+reader日志格式示例如下：
+
+```
+{"type"："slice"，"schema":"schema"，"table":"table","name":"test_sbtest1_slice1.csv","no":1,"total":10,beginIdx":"1","endIndex":"10","slice":true}
+```
+
+type：取值为SLICE表示为分片记录，取值为INDEX时表示索引记录，只有在writer日志中会记录索引。schema：源端库名。table：表名。name：分片数据对应的csv文件名。no：分片编号，表示该分片属于表的第几个分片，从1开始计数。
+
+beginIdx：分片第一行数据对应的主键值（非单主键时为空)。endIdx：分片最后一行数据对应的主键值（非单主键时为空)。slice：表的总分片数为1时为false，否则为true。
+
+writer日志格式相比reader增加索引记录：
+
+```
+{"type"："index"，"schema":"schema"，"table":"table","timestamp":"2023-11-07 18:00:00","indexStatus":"START","containsIndex":true}
+```
+
+当type为SLICE时，writer日志与reader日志各个字段含义相同。当type为INDEX时，各个字段含义如下：
+
+timestamp：生成该条记录的时间戳。
+
+indexStatus：创建索引状态，取值为None表示无索引，START表示开始创建索引，END表示创建索引结束。
+
+containsIndex：True表示表存在索引，False表示表无索引。
+
+### 3.4.37 slice_size
+
+用于配置迁移工具与校验协同时，单个分片数据的行数，默认值为100000。该参数在with_datacheck为True/Yes时才生效。
+
+### 3.4.38 csv_files_threshold
+
+用于配置迁移工具与校验协同时，csv数据目录下存放文件数量的阈值，若该目录下文件数量超过阈值，则变色龙暂停数据抽取。校验工具处理完csv文件后将其后缀改为.check，变色龙监听数据目录并清理.check文件。待数据目录文件数量低于阈值时，再重新开启数据抽取。可通过ulimit -n查看用户可打开文件数量阈值，参数默认配置为ulimit -n返回值的一半。该参数在with_datacheck为True/Yes时才生效。
+
+### 3.4.39 csv_dir_space_threshold
+
+用于配置迁移工具与校验协同时，csv数据目录存储空间阈值，若该目录下文件总大小超过阈值，则变色龙暂停数据抽取。待数据目录文件总大小低于阈值时，再重新开启数据抽取。该参数仅支持存储单位为GB，仅配置对应数值即可。默认配置该参数为数据目录可用空间的一半。该参数在with_datacheck为True/Yes时才生效。
 
 ## **3.5.** 压缩参数配置
 

@@ -223,6 +223,7 @@ class replica_engine(object):
         self.__get_and_check_bool_param("is_create_index", True)
         self.__get_and_check_bool_param("mysql_restart_config", True)
         self.__get_and_check_bool_param("is_skip_completed_tables", False)
+        self.__get_and_check_bool_param("with_datacheck", False)
 
     def initialize_pg_engine(self):
         # pg_engine instance initialisation
@@ -401,6 +402,8 @@ class replica_engine(object):
                 self.mysql_source.mysql_restart_config = value
             if key == "is_skip_completed_tables":
                 self.mysql_source.is_skip_completed_tables = value
+            if key == "with_datacheck":
+                self.mysql_source.with_datacheck = value
         else:
             self.logger.error("FATAL, the parameter " + key + " setting is improper, it should be set to "
                               "Yes or No, but current setting is %s" % value)
