@@ -1115,11 +1115,7 @@ class mysql_source(object):
             SELECT
                 CASE
                     WHEN
-                        data_type IN ('"""+"','".join(self.hexify)+"""')
-                    THEN
-                        concat('hex(',column_name,')')
-                    WHEN
-                        data_type IN ('"""+ColumnType.M_BINARY.value+"""')
+                        data_type IN ('"""+"','".join(self.hexify)+"','"+ColumnType.M_BINARY.value+"""')
                     THEN
                         concat('concat(\\'\\\\\\\\x\\', hex(',column_name,'))')
                     WHEN
@@ -1316,6 +1312,7 @@ class mysql_source(object):
         writer_engine = self.get_new_engine()
         writer_engine.connect_db()
         writer_engine.set_source_status("initialising")
+        writer_engine.open_b_compatibility_mode()
         self.execute_task(task_queue=self.write_task_queue, engine=writer_engine)
         writer_engine.disconnect_db()
 
