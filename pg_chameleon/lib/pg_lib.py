@@ -4203,6 +4203,15 @@ class pg_engine(object):
         """
         self.pgsql_conn.execute(sql_cleanup % (self.i_id_source, ))
 
+    def open_b_compatibility_mode(self):
+        """
+            The method set dolphin.b_compatibility_mode to on.
+            The method assumes there is a database connection active.
+        """
+        sql_open = """
+            set dolphin.b_compatibility_mode = on;
+        """
+        self.pgsql_conn.execute(sql_open)
 
     def get_replica_status(self):
         """
