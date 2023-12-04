@@ -2194,7 +2194,8 @@ class mysql_source(object):
             self.read_task_queue.put(task, block=True)
         self.wait_for_finish(reader_pool)
         reader_pool.clear()
-        self.reader_log_queue.put(None)
+        if self.with_datacheck:
+            self.reader_log_queue.put(None)
 
         meta_queues = [self.index_waiting_queue, self.table_metadata_queue, self.column_metadata_queue]
         for meta_queue in meta_queues:
@@ -2203,9 +2204,9 @@ class mysql_source(object):
         self.write_task_queue.put(None, block=True)
         self.wait_for_finish(writer_pool)
         writer_pool.clear()
-        self.writer_log_queue.put(None)
 
         if self.with_datacheck:
+            self.writer_log_queue.put(None)
             self.write_csv_finish.set(True)
             reader_log_processer.join()
             writer_log_processer.join()
