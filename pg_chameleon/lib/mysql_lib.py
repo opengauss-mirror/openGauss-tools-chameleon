@@ -674,11 +674,11 @@ class mysql_source(object):
                 self.csv_files_threshold = csv_files_threshold_config
             else:
                 self.csv_files_threshold = int(int(os.popen("ulimit -n").read().strip()) / 2)
-                self.logger.info("parameter csv_files_threshold config wrong," + 
+                self.logger.warn("parameter csv_files_threshold config wrong," + 
                 "set csv_files_threshold to " + str(self.csv_files_threshold))
         except KeyError:
             self.csv_files_threshold = int(int(os.popen("ulimit -n").read().strip()) / 2)
-            self.logger.info("parse parameter csv_files_threshold failed," + 
+            self.logger.warn("parse parameter csv_files_threshold failed," + 
                 "set csv_files_threshold to " + str(self.csv_files_threshold))
         try:
             csv_dir_space_config = self.source_config["csv_dir_space_threshold"]        
@@ -686,11 +686,11 @@ class mysql_source(object):
                 self.csv_dir_space_threshold = csv_dir_space_config * 1024 * 1024
             else:
                 self.csv_dir_space_threshold = self.__get_csvdir_space(csv_file_dir) / 2
-            self.logger.info("parameter csv_dir_space_threshold config wrong," + 
+            self.logger.warn("parameter csv_dir_space_threshold config wrong," + 
                 "set csv_dir_space_threshold to " + str(self.csv_dir_space_threshold / (1024 * 1024)) + "GB")
         except KeyError:
             self.csv_dir_space_threshold = self.__get_csvdir_space(csv_file_dir) / 2
-            self.logger.info("parse parameter csv_dir_space_threshold failed, " +
+            self.logger.warn("parse parameter csv_dir_space_threshold failed, " +
                 "set csv_dir_space_threshold to " + str(self.csv_dir_space_threshold / (1024 * 1024)) + "GB")
         self.logger.info("Finish initing with_datacheck variables.")
 
@@ -2318,13 +2318,10 @@ class mysql_source(object):
             Delete all the csv file in out_dir
         """
         csv_file_dir = self.out_dir + os.sep + CSV_DATA_SUB_DIR
+        chameleon_dir = self.out_dir + os.sep + CSV_META_SUB_DIR
         if os.path.exists(csv_file_dir):
-            file_list = os.listdir(csv_file_dir)
-            for file in file_list:
-                if file.endswith(".csv"):
-                    os.remove(csv_file_dir + os.sep + file)
-        else:
-            os.makedirs(csv_file_dir)
+            os.system("rm -rf " + chameleon_dir + "/*")
+        os.makedirs(csv_file_dir)
 
     def set_copy_max_memory(self):
         """
