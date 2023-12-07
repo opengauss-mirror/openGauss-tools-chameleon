@@ -30,7 +30,7 @@ POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
 LINESTR_PREFIX_LEN = len('LINESTRING ')
 WKB_PREFIX_LEN = 4
-MARIADB = "MariaDB"
+MARIADB = "mariadb"
 LOG_LEVEL_INDEX = 3
 
 
@@ -339,6 +339,9 @@ class mysql_source(object):
         else:
             self.gtid_mode = False
 
+        self.__check_mysql_param(is_strict)
+
+    def __check_mysql_param(self, is_strict):
         sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'log_bin';"""
         self.cursor_buffered.execute(sql_log_bin)
         variable_check = self.cursor_buffered.fetchone()
@@ -360,25 +363,30 @@ class mysql_source(object):
         sql_gtid_mode = """SHOW GLOBAL VARIABLES LIKE 'gtid_mode';"""
         self.cursor_buffered.execute(sql_gtid_mode)
         variable_check = self.cursor_buffered.fetchone()
-        gtid_mode = variable_check["Value"]
+        if variable_check:
+            gtid_mode = variable_check["Value"]
+        else:
+            gtid_mode = "None"
 
-        sql_log_bin = """SHOW GLOBAL VARIABLES LIKE 'version';"""
-        self.cursor_buffered.execute(sql_log_bin)
+        sql_version = """SHOW GLOBAL VARIABLES LIKE 'version';"""
+        self.cursor_buffered.execute(sql_version)
         variable_check = self.cursor_buffered.fetchone()
-        self.is_mariadb = False if variable_check["Value"].find(MARIADB) == -1 else True
+        self.is_mariadb = False if variable_check["Value"].lower().find(MARIADB) == -1 else True
+        if self.is_mariadb:
+            self.logger.warning("It is a mariadb.")
         self.version = sql_token.parse_version(variable_check["Value"])
         self.pg_engine.mysql_version = -1 if self.is_mariadb == False else self.version
         self.logger.debug("mysql version %d" % self.version)
 
         if self.mysql_restart_config or is_strict:
             if log_bin.upper() != 'ON' or binlog_format.upper() != 'ROW' or binlog_row_image.upper() != 'FULL' \
-                    or gtid_mode.upper() != 'ON':
+                    or (not self.is_mariadb and gtid_mode.upper() != 'ON'):
                 self.logger.error("The MySQL configuration does not allow the replica. Exiting now")
                 self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
                                   % (log_bin.upper(), binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
                 self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode"
                                   " ON (only for MySQL 5.6+) ")
-                sys.exit()
+                os._exit(0)
         else:
             self.logger.warning("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
                                 % (log_bin.upper(), binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
