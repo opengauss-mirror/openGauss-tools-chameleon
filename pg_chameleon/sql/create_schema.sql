@@ -840,7 +840,7 @@ $BODY$
             GET DIAGNOSTICS v_i_skipped = ROW_COUNT;
             RAISE DEBUG 'SKIPPED ROWS: % ',v_i_skipped;
 
-            UPDATE ONLY sch_chameleon.t_replica_batch  
+            UPDATE ONLY (sch_chameleon.t_replica_batch)
             SET 
                 b_replayed=True,
                 i_skipped=v_i_skipped,
@@ -857,7 +857,7 @@ $BODY$
 
             v_ty_status.b_continue:=FALSE;
         ELSE
-            UPDATE ONLY sch_chameleon.t_replica_batch  
+            UPDATE ONLY (sch_chameleon.t_replica_batch)
             SET 
                 i_ddl=coalesce(i_ddl,0)+v_i_ddl,
                 i_replayed=coalesce(i_replayed,0)+v_i_replayed,
@@ -1077,9 +1077,9 @@ SELECT
     v_table_referenced,
     v_schema_referencing,
     v_table_referencing,
-    format('ALTER TABLE ONLY %I.%I DROP CONSTRAINT %I ;',v_schema_referencing,v_table_referencing ,v_fk_name) AS t_con_drop,
-    format('ALTER TABLE ONLY %I.%I ADD CONSTRAINT %I %s  NOT VALID ;',v_schema_referencing,v_table_referencing,v_fk_name,v_fk_definition) AS t_con_create,
-    format('ALTER TABLE ONLY %I.%I VALIDATE CONSTRAINT %I ;',v_schema_referencing,v_table_referencing ,v_fk_name) AS t_con_validate,
+    format('ALTER TABLE ONLY (%I.%I) DROP CONSTRAINT %I ;',v_schema_referencing,v_table_referencing ,v_fk_name) AS t_con_drop,
+    format('ALTER TABLE ONLY (%I.%I) ADD CONSTRAINT %I %s  NOT VALID ;',v_schema_referencing,v_table_referencing,v_fk_name,v_fk_definition) AS t_con_create,
+    format('ALTER TABLE ONLY (%I.%I) VALIDATE CONSTRAINT %I ;',v_schema_referencing,v_table_referencing ,v_fk_name) AS t_con_validate,
     v_fk_name
 
 FROM
