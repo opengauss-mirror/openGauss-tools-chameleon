@@ -1026,6 +1026,29 @@ class mysql_source(object):
         self.logger.info("Finish dropping failed tables before.")
 
     def generate_metadata_statement(self):
+        """
+            The method generate matedata info and store to file
+        """
+        try:
+            cursor_manager = reader_cursor_manager(self)
+            cursor_buffered = cursor_manager.cursor_buffered
+            for schema in self.schema_list:
+                self.write_metadata_file(schema, cursor_buffered)
+        except Exception as exp:
+            self.logger.error(exp)
+            self.logger.info("generate metadata statement failed.")
+        finally:
+            cursor_manager.close()
+            self.logger.warning("close connection for get metadata statement.")
+
+    def write_metadata_file(self, schema, cursor_buffered):
+        """
+            The method gets table and column metadata, then writes to csv files.
+
+            :param schema: the table or column metadata task
+            :param cursor_buffered: buffered cursor for mysql connection
+        """
+        csv_file_dir = self.out_dir + os.sep + CSV_META_SUB_DIR + os.sep
         sql_rows = """
             SELECT
                 table_rows as table_rows
@@ -1037,23 +1060,16 @@ class mysql_source(object):
                 AND table_name=%s
             ;
         """
-        try:
-            cursor_manager = reader_cursor_manager(self)
-            cursor_buffered = cursor_manager.cursor_buffered
-            for schema in self.schema_list:
-                for table in self.schema_tables[schema]:
-                    cursor_buffered.execute(sql_rows, (schema, table))
-                    select_data = cursor_buffered.fetchone()
-                    self.generate_table_metadata_statement(schema, table, select_data.get("table_rows"), cursor_buffered)
-                    self.generate_column_metadata_statement(schema, table, cursor_buffered)
-        except Exception as exp:
-            self.logger.error(exp)
-            self.logger.info("generate metadata statement failed.")
-        finally:
-            cursor_manager.close()
-            self.logger.warning("close connection for get metadata statement.")
+        table_metadata_file = csv_file_dir + "%s_information_schema_tables.csv" % schema
+        column_metadata_file = csv_file_dir + "%s_information_schema_columns.csv" % schema
+        with open(table_metadata_file, 'a') as fw_table, open(column_metadata_file, 'a') as fw_column:
+            for table in self.schema_tables[schema]:
+                cursor_buffered.execute(sql_rows, (schema, table))
+                select_data = cursor_buffered.fetchone()
+                self.generate_table_metadata_statement(schema, table, select_data.get("table_rows"), fw_table, cursor_buffered)
+                self.generate_column_metadata_statement(schema, table, fw_column, cursor_buffered)   
 
-    def generate_table_metadata_statement(self, schema, table, table_count, cursor=None):
+    def generate_table_metadata_statement(self, schema, table, table_count, fw_table, cursor=None):
         """
             The method gets table metadata including schema, table, table_count, contain primary key.
 
@@ -1074,9 +1090,9 @@ class mysql_source(object):
             task = TableMetadataTask(schema, table, table_count, 0)
         else:
             task = TableMetadataTask(schema, table, table_count, 1)
-        self.write_task_queue.put(task, block=True)
+        fw_table.write(json.dumps(task.__dict__) + os.linesep)
 
-    def generate_column_metadata_statement(self, schema, table, cursor=None):
+    def generate_column_metadata_statement(self, schema, table, fw_column, cursor=None):
         """
             The method gets column metadata including schema, table, column_name, column_index, column_datatype, column_key.
 
@@ -1095,7 +1111,7 @@ class mysql_source(object):
         for a_column_metadata in column_metadata:
             task = ColumnMetadataTask(schema, table, a_column_metadata["COLUMN_NAME"], a_column_metadata["ORDINAL_POSITION"],
                                         a_column_metadata["COLUMN_TYPE"], a_column_metadata["COLUMN_KEY"])
-            self.write_task_queue.put(task, block=True)
+            fw_column.write(json.dumps(task.__dict__) + os.linesep)
 
     def generate_select_statements(self, schema, table, cursor=None, pk_column=None):
         """
@@ -1436,10 +1452,6 @@ class mysql_source(object):
                     self.copy_table_data(task, engine)
                 elif isinstance(task, CreateIndexTask):
                     self.create_index_process(task, engine)
-                elif isinstance(task, TableMetadataTask):
-                    self.write_metadata_file(task, True)
-                elif isinstance(task, ColumnMetadataTask):
-                    self.write_metadata_file(task, False)
                 else:
                     self.logger.error("unknown write task type")
             # this is the data_reader process
@@ -1571,24 +1583,6 @@ class mysql_source(object):
         except Exception as exp:
             self.logger.warning("safe_close %s get exption: %s" % (desc, exp))
 
-    def write_metadata_file(self, task, is_table_task):
-        """
-            The method writes table and column metadata to csv files.
-
-            :param task: the table or column metadata task
-            :param is_table_task: true if is table_metadata task
-        """
-        json_string = json.dumps(task.__dict__)
-        schema = task.schema
-        csv_file_dir = self.out_dir + os.sep + CSV_META_SUB_DIR + os.sep
-        if is_table_task:
-            metadata_file = csv_file_dir + "%s_information_schema_tables.csv" % schema
-        else:
-            metadata_file = csv_file_dir + "%s_information_schema_columns.csv" % schema
-        column_file = open(metadata_file, 'a')
-        column_file.write(json_string + os.linesep)
-        column_file.close()
-
     def is_read_data_from_csv(self, schema, table):
         """
             The method judge copy the data from the table or csv file.
@@ -1634,8 +1628,6 @@ class mysql_source(object):
 
         self.logger.info("generate table and column metadata csv file")
         is_parallel_create_index = line_num >= DATA_NUM_FOR_PARALLEL_INDEX
-        self.generate_table_metadata_statement(schema, table, line_num, cursor_buffered)
-        self.generate_column_metadata_statement(schema, table, cursor_buffered)
         select_columns = self.generate_select_statements(schema, table, cursor_buffered)
 
         count_rows = {"table_rows": line_num, "copy_limit": DATA_NUM_FOR_A_SLICE_CSV, "avg_row_length": avg_row_length}
@@ -2166,8 +2158,6 @@ class mysql_source(object):
         self.read_task_queue = multiprocessing.Manager().Queue()
         self.read_retry_queue = multiprocessing.Manager().Queue()
         self.index_waiting_queue = multiprocessing.Manager().Queue()
-        self.table_metadata_queue = multiprocessing.Manager().Queue()
-        self.column_metadata_queue = multiprocessing.Manager().Queue()
 
     def __exec_copy_tables_tasks(self, tasks_lists):
         self.logger.info('begin to exec copy table tasks')
@@ -2194,10 +2184,8 @@ class mysql_source(object):
         if self.with_datacheck:
             self.reader_log_queue.put(None)
 
-        meta_queues = [self.index_waiting_queue, self.table_metadata_queue, self.column_metadata_queue]
-        for meta_queue in meta_queues:
-            while not meta_queue.empty():
-                self.write_task_queue.put(meta_queue.get(block=True), block=True)
+        while not self.index_waiting_queue.empty():
+            self.write_task_queue.put(self.index_waiting_queue.get(block=True), block=True)
         self.write_task_queue.put(None, block=True)
         self.wait_for_finish(writer_pool)
         writer_pool.clear()
