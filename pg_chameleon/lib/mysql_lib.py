@@ -703,6 +703,8 @@ class mysql_source(object):
             space_in_kb = float(space[:-1]) * 1024
         elif unit == 'G':
             space_in_kb = float(space[:-1]) * 1024 * 1024
+        elif unit == 'T':
+            space_in_kb = float(space[:-1]) * 1024 * 1024 * 1024
         return space_in_kb
 
     def __get_csvdir_space(self, csv_file_dir):
