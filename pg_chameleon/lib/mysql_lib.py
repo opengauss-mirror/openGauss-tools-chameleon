@@ -667,6 +667,8 @@ class mysql_source(object):
         self.total_slice_dict = multiprocessing.Manager().dict()
         self.stop_data_reader = multiprocessing.Manager().Value(bool, False)
         self.write_csv_finish = multiprocessing.Manager().Value(bool, False)
+        self.delete_failedtable = multiprocessing.Manager().Value(bool, False)
+        self.delete_failedtable_lock = multiprocessing.Manager().Lock()
         csv_file_dir = self.out_dir + os.sep + CSV_DATA_SUB_DIR
         try:
             csv_files_threshold_config = self.source_config["csv_files_threshold"]
@@ -1359,8 +1361,15 @@ class mysql_source(object):
             open(writer_log_path, 'w').close()
         with open(writer_log_path, 'a') as fwriter:
             while True:
-                if self.process_writer_log_queue(fwriter):
+                if self.delete_failedtable.get():
+                    time.sleep(1)
+                    continue
+                if self.is_write_log_finished(fwriter):
                     break
+    
+    def is_write_log_finished(self, fwriter):
+        with self.delete_failedtable_lock:
+            return self.process_writer_log_queue(fwriter)
 
     def process_writer_log_queue(self, fwriter):
         """
@@ -2161,17 +2170,24 @@ class mysql_source(object):
         self.read_retry_queue = multiprocessing.Manager().Queue()
         self.index_waiting_queue = multiprocessing.Manager().Queue()
 
+    def __start_with_datacheck_process(self):
+        self.logger.info('begin to start with_datacheck process')
+        self.with_datacheck_processes = []
+        self.init_with_datacheck_var()
+        reader_log_processer = multiprocessing.Process(target=self.process_reader_logger, name="reader-log-process", daemon=True)
+        writer_log_processer = multiprocessing.Process(target=self.process_writer_logger, name="writer-log-process", daemon=True)
+        csv_file_processor = multiprocessing.Process(target=self.process_csv_file, name="csv-file-processor", daemon=True)
+        reader_log_processer.start()
+        writer_log_processer.start()
+        csv_file_processor.start()
+        self.with_datacheck_processes.append(reader_log_processer)
+        self.with_datacheck_processes.append(writer_log_processer)
+        self.with_datacheck_processes.append(csv_file_processor)
+        self.logger.info('with_datacheck process started')
+        
+
     def __exec_copy_tables_tasks(self, tasks_lists):
         self.logger.info('begin to exec copy table tasks')
-        if self.with_datacheck:
-            self.init_with_datacheck_var()
-            reader_log_processer = multiprocessing.Process(target=self.process_reader_logger, name="reader-log-process", daemon=True)
-            writer_log_processer = multiprocessing.Process(target=self.process_writer_logger, name="writer-log-process", daemon=True)
-            csv_file_processor = multiprocessing.Process(target=self.process_csv_file, name="csv-file-processor", daemon=True)
-            reader_log_processer.start()
-            writer_log_processer.start()
-            csv_file_processor.start()
-
         readers = self.__get_count("readers", 8)
         writers = self.__get_count("writers", 8)
         writer_pool = []
@@ -2183,7 +2199,7 @@ class mysql_source(object):
             self.read_task_queue.put(task, block=True)
         self.wait_for_finish(reader_pool)
         reader_pool.clear()
-        if self.with_datacheck:
+        if self.with_datacheck and self.__no_need_retry():
             self.reader_log_queue.put(None)
 
         while not self.index_waiting_queue.empty():
@@ -2192,12 +2208,12 @@ class mysql_source(object):
         self.wait_for_finish(writer_pool)
         writer_pool.clear()
 
-        if self.with_datacheck:
+        if self.with_datacheck and self.__no_need_retry():
             self.writer_log_queue.put(None)
             self.write_csv_finish.set(True)
-            reader_log_processer.join()
-            writer_log_processer.join()
-            csv_file_processor.join()
+
+    def __no_need_retry(self):
+        return self.read_retry_queue.qsize() == 0 or self.retry == 0
 
     def __copy_tables(self):
         """
@@ -2208,32 +2224,66 @@ class mysql_source(object):
         """
         self.delete_csv_file()
         # get retry count, default is 3
-        retry = self.__get_count("retry", RETRY_COUNT, True)
+        self.retry = self.__get_count("retry", RETRY_COUNT, True)
         self.__before_copy_tables()
         self.generate_metadata_statement()
+        self.__start_with_datacheck_process()
         self.__exec_copy_tables_tasks(self.__build_all_tasks())
-        self.__retry_tasks(retry, self.read_retry_queue)
+        if self.with_datacheck:
+            self.__delete_failedtable_record()
+        self.__retry_tasks(self.read_retry_queue)
+        if self.with_datacheck:
+            self.wait_for_finish(self.with_datacheck_processes)
+
+    def __delete_failedtable_record(self):
+        self.delete_failedtable.set(True)
+        self.delete_failedtable_lock.acquire()
+        log_size = self.writer_log_queue.qsize()
+        while log_size > 0:
+            log_size -= 1
+            log_record = self.writer_log_queue.get()
+            if log_record is None:
+                self.writer_log_queue.put(None)
+                continue
+            schema = log_record.get("schema")
+            table = log_record.get("table")
+            retry_size = self.read_retry_queue.qsize()
+            reput_record = True
+            while retry_size > 0:
+                retry_size -= 1
+                task = self.read_retry_queue.get()
+                if schema == task.schema and table == task.table:
+                    reput_record = False
+                    self.read_retry_queue.put(task)
+                    break
+                self.read_retry_queue.put(task)
+            if reput_record:
+                self.writer_log_queue.put(log_record)
+        self.delete_failedtable_lock.release()
+        self.delete_failedtable.set(False)
 
     # NOTICE: retry less than 0 will not exit if table transfer failed!
-    def __retry_tasks(self, retry, tasks_queue):
-        if tasks_queue.empty() or retry == 0:
+    def __retry_tasks(self, tasks_queue):
+        if tasks_queue.empty() or self.retry == 0:
             self.logger.info("[RETRY] no need enter retry now: retry=%d, tasks: %s" % (
-                retry,
+                self.retry,
                 "empty" if tasks_queue.empty() else "not_empty"))
             return
+        self.retry -= 1
         tasks_list = []
         while not tasks_queue.empty():
             tasks_list.append(tasks_queue.get(block=True))
-
-        self.logger.info("[RETRY] failed table tasks received, retry count is %d. task:%s" % (retry, len(tasks_list)))
+        self.logger.info("[RETRY] failed table tasks received, retry count is %d. task:%s" % (self.retry, len(tasks_list)))
         self.truncate_table_and_delete_csv(tasks_list)
         self.__before_copy_tables()
         self.__exec_copy_tables_tasks(tasks_list)
+        if self.with_datacheck:
+            self.__delete_failedtable_record()
         tasks_queue = self.read_retry_queue
-        if retry < 0:
-            self.__retry_tasks(retry, tasks_queue)
+        if self.retry < 0:
+            self.__retry_tasks(tasks_queue)
         else:
-            self.__retry_tasks(retry - 1, tasks_queue)
+            self.__retry_tasks(tasks_queue)
 
     def __get_count(self, key, default_val, enable_less_than_zero=False):
         if key not in self.source_config:
@@ -2297,7 +2347,7 @@ class mysql_source(object):
         csv_file_dir = self.out_dir + os.sep + CSV_DATA_SUB_DIR
         if os.path.exists(csv_file_dir):
             file_list = os.listdir(csv_file_dir)
-            csv_prefix = "%s_%s_slice"
+            csv_prefix = ("%s_%s_slice") % (schema, table)
             for file in file_list:
                 if file.startswith(csv_prefix):
                     os.remove(csv_file_dir + os.sep + file)
