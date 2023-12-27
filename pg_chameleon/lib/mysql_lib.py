@@ -2171,19 +2171,20 @@ class mysql_source(object):
         self.index_waiting_queue = multiprocessing.Manager().Queue()
 
     def __start_with_datacheck_process(self):
-        self.logger.info('begin to start with_datacheck process')
-        self.with_datacheck_processes = []
-        self.init_with_datacheck_var()
-        reader_log_processer = multiprocessing.Process(target=self.process_reader_logger, name="reader-log-process", daemon=True)
-        writer_log_processer = multiprocessing.Process(target=self.process_writer_logger, name="writer-log-process", daemon=True)
-        csv_file_processor = multiprocessing.Process(target=self.process_csv_file, name="csv-file-processor", daemon=True)
-        reader_log_processer.start()
-        writer_log_processer.start()
-        csv_file_processor.start()
-        self.with_datacheck_processes.append(reader_log_processer)
-        self.with_datacheck_processes.append(writer_log_processer)
-        self.with_datacheck_processes.append(csv_file_processor)
-        self.logger.info('with_datacheck process started')
+        if self.with_datacheck:
+            self.logger.info('begin to start with_datacheck process')
+            self.with_datacheck_processes = []
+            self.init_with_datacheck_var()
+            reader_log_processer = multiprocessing.Process(target=self.process_reader_logger, name="reader-log-process", daemon=True)
+            writer_log_processer = multiprocessing.Process(target=self.process_writer_logger, name="writer-log-process", daemon=True)
+            csv_file_processor = multiprocessing.Process(target=self.process_csv_file, name="csv-file-processor", daemon=True)
+            reader_log_processer.start()
+            writer_log_processer.start()
+            csv_file_processor.start()
+            self.with_datacheck_processes.append(reader_log_processer)
+            self.with_datacheck_processes.append(writer_log_processer)
+            self.with_datacheck_processes.append(csv_file_processor)
+            self.logger.info('with_datacheck process started')
         
 
     def __exec_copy_tables_tasks(self, tasks_lists):
