@@ -1409,10 +1409,13 @@ class mysql_source(object):
             file_nums = int(os.popen("ls " +  csv_file_dir + " | wc -l").read())
             if self.write_csv_finish.get() and file_nums == 0:
                 break
-            if self.is_limit_reader(file_nums, csv_file_dir):
+            limit_reader = self.is_limit_reader(file_nums, csv_file_dir)
+            if limit_reader and not self.stop_data_reader.get():
                 self.stop_data_reader.set(True)
-            else:
+                self.logger.debug("read process stopped, wait for datacheck......")
+            elif not limit_reader and self.stop_data_reader.get():
                 self.stop_data_reader.set(False)
+                self.logger.debug("flow control finished, read process start.")
             time.sleep(2)
     
     def is_limit_reader(self, file_nums, csv_file_dir):
@@ -1445,10 +1448,8 @@ class mysql_source(object):
         if self.with_datacheck and self.stop_data_reader.get():
             while True:
                 if not self.stop_data_reader.get():
-                    self.logger.debug("read process start.")
                     break
                 else:
-                    self.logger.debug("read process stopped, wait for datacheck......")
                     time.sleep(1)
 
     def execute_task(self, task_queue, engine=None):
@@ -2185,7 +2186,6 @@ class mysql_source(object):
             self.with_datacheck_processes.append(writer_log_processer)
             self.with_datacheck_processes.append(csv_file_processor)
             self.logger.info('with_datacheck process started')
-        
 
     def __exec_copy_tables_tasks(self, tasks_lists):
         self.logger.info('begin to exec copy table tasks')
