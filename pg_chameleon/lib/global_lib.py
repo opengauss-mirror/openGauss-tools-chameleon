@@ -101,7 +101,8 @@ class replica_engine(object):
         """
         if os.geteuid() == 0:
             print("pg_chameleon cannot be run as root")
-            sys.exit(10)
+            os._exit(10)
+
 
         self.catalog_version = '2.0.7'
         self.upgradable_version = '1.7'
@@ -111,7 +112,7 @@ class replica_engine(object):
         self.initial_global_setting()
         if self.args.command == 'set_configuration_files':
             self.set_configuration_files()
-            sys.exit()
+            os._exit(0)
 
         self.load_config()
         self.update_pid_file()
@@ -138,7 +139,7 @@ class replica_engine(object):
             self.pg_engine.disconnect_db()
             if source_count == 0:
                 print("FATAL, The source %s is not registered. Please add it add_source" % (self.args.source))
-                sys.exit()
+                os._exit(0)
 
     def update_pid_file(self):
         cham_dir = "%s/.pg_chameleon" % os.path.expanduser('~')
@@ -188,7 +189,7 @@ class replica_engine(object):
                 if self.catalog_version != catalog_version:
                     print("FATAL, replica catalogue version mismatch. Expected %s, got %s" % (
                         self.catalog_version, catalog_version))
-                    sys.exit()
+                    os._exit(0)
 
     def initialize_pgsql_source(self):
         # pgsql_source instance initialisation
@@ -221,7 +222,7 @@ class replica_engine(object):
         self.mysql_source.notifier = self.notifier
 
         self.__get_and_check_bool_param("is_create_index", True)
-        self.__get_and_check_bool_param("mysql_restart_config", True)
+        self.__get_and_check_bool_param("mysql_restart_config", False)
         self.__get_and_check_bool_param("is_skip_completed_tables", False)
         self.__get_and_check_bool_param("with_datacheck", False)
 
@@ -407,7 +408,7 @@ class replica_engine(object):
         else:
             self.logger.error("FATAL, the parameter " + key + " setting is improper, it should be set to "
                               "Yes or No, but current setting is %s" % value)
-            sys.exit()
+            os._exit(0)
 
     def __check_parallel_workers(self, param):
         return type(param) == int and 0 <= param <= 32
@@ -421,7 +422,7 @@ class replica_engine(object):
         self.replay_daemon.terminate()
         self.pg_engine.connect_db()
         self.pg_engine.set_source_status("stopped")
-        sys.exit(0)
+        os._exit(0)
 
     def set_configuration_files(self):
         """
@@ -453,7 +454,7 @@ class replica_engine(object):
         self.config_file = '%s/%s.yml' % (local_confdir, self.args.config)
         if not os.path.isfile(self.config_file):
             print("**FATAL - configuration file missing. Please ensure the file %s is present." % (self.config_file))
-            sys.exit()
+            os._exit(0)
 
         config_file = open(self.config_file, 'r')
         self.config = yaml.load(config_file.read(), Loader=yaml.FullLoader)
@@ -566,7 +567,7 @@ class replica_engine(object):
                 source_type = self.config["sources"][self.args.source]["type"]
             except KeyError:
                 print("The source %s doesn't exists." % (self.args.source))
-                sys.exit()
+                os._exit(0)
             self.__stop_replica()
             if source_type == "mysql":
                 self.__init_mysql_replica()
@@ -688,7 +689,7 @@ class replica_engine(object):
         catalog_version = self.pg_engine.get_catalog_version()
         if catalog_version == self.catalog_version:
             print("The replica catalogue is already up to date.")
-            sys.exit()
+            os._exit(0)
         else:
             if catalog_version == self.upgradable_version:
                 upg_msg = 'Upgrading the catalogue %s to the version %s.\n Are you sure? YES/No\n' % (
@@ -706,7 +707,7 @@ class replica_engine(object):
                 self.pg_engine.upgrade_catalogue_v20()
             else:
                 print('Wrong starting version. Expected %s, got %s' % (catalog_version, self.upgradable_version))
-                sys.exit()
+                os._exit(0)
 
     def update_schema_mappings(self):
         """
@@ -1447,7 +1448,7 @@ class replica_engine(object):
             fh = TimedRotatingFileHandler(log_file, when="d", interval=1, backupCount=log_days_keep)
         else:
             print("Invalid log_dest value: %s" % log_dest)
-            sys.exit()
+            os._exit(0)
 
         if debug_mode:
             log_level = 'debug'
@@ -1474,7 +1475,7 @@ class replica_engine(object):
                 source_type = self.config["sources"][self.args.source]["type"]
             except KeyError:
                 self.logger.error("The source %s doesn't exists." % (self.args.source,))
-                sys.exit()
+                os._exit(0)
 
             if source_type == "mysql":
                 self.__start_mysql_database_object_replica(db_object_type)

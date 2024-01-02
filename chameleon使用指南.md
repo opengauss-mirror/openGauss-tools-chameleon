@@ -498,7 +498,7 @@ sources:
 
      migrate_default_value: Yes
 
-     mysql_restart_config: Yes
+     mysql_restart_config: No
 
      is_create_index: Yes
 
@@ -786,7 +786,7 @@ skip_events变量告诉chameleon跳过表或整个schema的特定事件。
 
 ### 3.4.25. mysql_restart_config
 
-用于指定是否允许重启Mysql数据库。默认值为Yes。由于在线迁移需要开启binlog，并设置如下参数：log_bin=on，binlog_format=row，binlog_row_image=full，gtid_mode=on, 若Mysql初始配置与上述参数不一致，则需要修改参数并重启Mysql数据库，方可使用离线和在线功能。当该参数为No时，则表示不允许重启数据库，若在线迁移参数不符合要求，则不允许使用在线迁移功能，仅能在停止业务前提下使用离线迁移功能。
+用于指定是否允许重启Mysql数据库，其中修改参数重启数据库操作由用户完成。默认值为No。由于在线迁移需要开启binlog，并设置如下参数：log_bin=on，binlog_format=row，binlog_row_image=full，gtid_mode=on, 若Mysql初始配置与上述参数不一致，则需要修改参数并重启Mysql数据库，方可使用离线和在线功能。当该参数为No时，则表示不允许重启数据库，若在线迁移参数不符合要求，则不允许使用在线迁移功能，仅能在停止业务前提下使用离线迁移功能。
 
 ### 3.4.26. index_parallel_workers
 
@@ -1181,7 +1181,7 @@ keep_existing_schema: No
 
 migrate_default_value: Yes
 
-mysql_restart_config: Yes
+mysql_restart_config: No
 
 is_create_index: Yes
 
@@ -1282,6 +1282,8 @@ dolphin.sql_mode和MySQL的sql_mode的映射关系如下：
 
 创建用户后，修改MySQL的配置文件，开启MySQL的复制功能。（一般是/etc/my.cnf或者/etc/my.cnf.d/mariadb-server.cnf）
 
+若需进行增量迁移，则需配置MySQL参数满足如下要求：
+
 在 [mysqld] 配置块下修改如下配置（若没有[mysqld] 配置块新增即可）
 
 ```
@@ -1299,6 +1301,8 @@ gtid_mode = ON
 ```
 
 修改完毕后重启MySQL。
+
+若仅进行全量迁移，可忽略上述参数配置要求。
 
 ## **6.3.** 初始化迁移过程
 

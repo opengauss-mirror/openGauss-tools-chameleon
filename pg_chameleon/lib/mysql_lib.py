@@ -378,7 +378,7 @@ class mysql_source(object):
                                   % (log_bin.upper(), binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
                 self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode"
                                   " ON (only for MySQL 5.6+) ")
-                sys.exit()
+                os._exit(0)
         else:
             self.logger.warning("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
                                 % (log_bin.upper(), binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
@@ -2384,7 +2384,7 @@ class mysql_source(object):
                 copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
             else:
                 print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
-                sys.exit(3)
+                os._exit(3)
         self.copy_max_memory = copy_max_memory
 
     def __init_postgis_state(self):
@@ -2453,7 +2453,7 @@ class mysql_source(object):
             self.source_config = self.sources[self.source]
         except KeyError:
             self.logger.error("The source %s doesn't exists " % (self.source))
-            sys.exit()
+            os._exit(0)
         self.out_dir = self.source_config["out_dir"]
         try:
             csv_dir = self.source_config["csv_dir"]
@@ -2526,7 +2526,7 @@ class mysql_source(object):
         if self.keep_existing_schema:
             if not self.is_create_index or self.is_skip_completed_tables:
                 self.logger.error("is_create_index must be True and is_skip_completed_tables must be False when keep_existing_schema set True, exit.")
-                sys.exit()
+                os._exit(0)
 
     def refresh_schema(self):
         """
