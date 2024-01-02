@@ -99,7 +99,7 @@ class pgsql_source(object):
                 copy_max_memory = str(int(copy_max_memory)*1024*1024*1024)
             else:
                 print("**FATAL - invalid suffix in parameter copy_max_memory  (accepted values are (k)ilobytes, (M)egabytes, (G)igabytes.")
-                sys.exit(3)
+                os._exit(3)
         self.copy_max_memory = copy_max_memory
 
 
@@ -137,7 +137,7 @@ class pgsql_source(object):
             pgsql_conn.execute("set session_timeout = 0;")
         else:
             self.logger.error("Undefined database connection string. Exiting now.")
-            sys.exit()
+            os._exit(0)
 
         return pgsql_conn
 
@@ -698,7 +698,7 @@ class pg_engine(object):
             self.pgsql_conn.execute("set session_timeout = 0;")
         elif not self.dest_conn:
             self.logger.error("Undefined database connection string. Exiting now.")
-            sys.exit()
+            os._exit(0)
         elif self.pgsql_conn:
             self.logger.debug("There is already a database connection active.")
 
@@ -2325,7 +2325,7 @@ class pg_engine(object):
                     self.pgsql_conn.execute(sql_view % (migration_version))
         else:
             print('There are sources in running or syncing state. You shall stop all the replica processes before upgrading the catalogue.')
-            sys.exit()
+            os._exit(0)
 
 
 
@@ -2563,7 +2563,7 @@ class pg_engine(object):
             self.pgsql_conn.execute(sql_rename_old)
         else:
             self.logger.info("The old schema %s does not exists, aborting the rollback" % (self.__v1_schema))
-            sys.exit()
+            os._exit(0)
         self.logger.info("Rollback successful. Please note the catalogue version 2 has been renamed to %s for debugging.\nYou will need to drop it before running another upgrade" % (self.__v2_schema, ))
 
 
@@ -2902,7 +2902,7 @@ class pg_engine(object):
         schema_mappings = json.dumps(self.sources[self.source]["schema_mappings"])
         if schema_mappings=='null':
             print("Schema mapping cannot be empty. Check your configuration file.")
-            sys.exit()
+            os._exit(0)
         else:
             sql_check = """
                 WITH t_check  AS
@@ -4170,7 +4170,7 @@ class pg_engine(object):
             self.i_id_source = source_data
         except:
             print("Source %s is not registered." % self.source)
-            sys.exit()
+            os._exit(0)
 
     def set_source_id(self):
         """
@@ -4190,7 +4190,7 @@ class pg_engine(object):
             self.i_id_source = source_data
         except:
             print("Source %s is not registered." % self.source)
-            sys.exit()
+            os._exit(0)
 
 
     def clean_batch_data(self):
@@ -4443,6 +4443,8 @@ class pg_engine(object):
 
             :param master_status: the master data with the binlogfile and the log position
         """
+        if not master_status:
+            return
         master_data = master_status[0]
         binlog_name = master_data["File"]
         binlog_position = master_data["Position"]
@@ -4471,6 +4473,8 @@ class pg_engine(object):
             :rtype: integer
         """
         next_batch_id = None
+        if not master_status:
+            return
         master_data = master_status[0]
         binlog_name = master_data["File"]
         binlog_position = master_data["Position"]
@@ -4484,6 +4488,27 @@ class pg_engine(object):
         except:
             event_time = None
 
+        sql_last_update, sql_master = self.__get_sql()
+
+        try:
+            stmt = self.pgsql_conn.prepare(sql_master % (self.i_id_source, binlog_name, binlog_position, executed_gtid_set, log_table))
+            next_batch_id=stmt.first()
+            stmt = self.pgsql_conn.prepare(sql_last_update)
+            db_event_time = stmt.first(event_time, self.i_id_source)
+            self.logger.info("Saved master data for source: %s" %(self.source, ) )
+            self.logger.debug("Binlog file: %s" % (binlog_name, ))
+            self.logger.debug("Binlog position:%s" % (binlog_position, ))
+            self.logger.debug("Last event: %s" % (db_event_time, ))
+            self.logger.debug("Next log table name: %s" % ( log_table, ))
+            self.logger.debug("Next batch id: %s" % ( next_batch_id, ))
+
+        except Exception as e:
+            self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
+            self.logger.error(sql_master % (self.i_id_source, binlog_name, binlog_position, executed_gtid_set, log_table))
+
+        return next_batch_id
+
+    def __get_sql(self):
         sql_master = """
             INSERT INTO sch_chameleon.t_replica_batch
                 (
@@ -4504,7 +4529,6 @@ class pg_engine(object):
             RETURNING i_id_batch
             ;
         """
-
         sql_last_update = """
             UPDATE
                 sch_chameleon.t_last_received
@@ -4515,24 +4539,7 @@ class pg_engine(object):
             RETURNING ts_last_received
         ;
         """
-
-        try:
-            stmt = self.pgsql_conn.prepare(sql_master % (self.i_id_source, binlog_name, binlog_position, executed_gtid_set, log_table))
-            next_batch_id=stmt.first()
-            stmt = self.pgsql_conn.prepare(sql_last_update)
-            db_event_time = stmt.first(event_time, self.i_id_source)
-            self.logger.info("Saved master data for source: %s" %(self.source, ) )
-            self.logger.debug("Binlog file: %s" % (binlog_name, ))
-            self.logger.debug("Binlog position:%s" % (binlog_position, ))
-            self.logger.debug("Last event: %s" % (db_event_time, ))
-            self.logger.debug("Next log table name: %s" % ( log_table, ))
-            self.logger.debug("Next batch id: %s" % ( next_batch_id, ))
-
-        except Exception as e:
-            self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
-            self.logger.error(sql_master % (self.i_id_source, binlog_name, binlog_position, executed_gtid_set, log_table))
-
-        return next_batch_id
+        return sql_last_update, sql_master
 
     def reindex_table(self, schema, table):
         """
