@@ -1809,12 +1809,21 @@ class mysql_source(object):
                 self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, task_slice, total_slices))
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(schema, table, task_slice)
+        self.__add_tableslices_to_reader(schema, table, task_slice, copydatatask_list, count_rows, select_columns)   
+        return [master_status, is_parallel_create_index]
+
+    def __add_tableslices_to_reader(self, schema, table, task_slice, copydatatask_list, count_rows, select_columns):
         if self.with_datacheck:
             self.total_slice_dict['`%s`.`%s`' % (schema, table)] = task_slice
+            if task_slice == 0:
+                csv_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_DATA_SUB_DIR, schema, table, task_slice + 1)
+                task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, 0, -1)
+                open(csv_file, 'w').close()
+                self.write_task_queue.put(task)
+                copydatatask_list.append(task)
             for task in copydatatask_list:
                 self.reader_log_queue.put({"type":"SLICE","schema":schema,"table":table,"name":os.path.basename(task.csv_file),
-                    "no":task.slice + 1,"total":task_slice,"beginIdx":task.idx_pair.first,"endIdx":task.idx_pair.second,"slice":task_slice > 1})   
-        return [master_status, is_parallel_create_index]
+                    "no":task.slice + 1,"total":task_slice,"beginIdx":task.idx_pair.first,"endIdx":task.idx_pair.second,"slice":task_slice > 1})
 
     def copy_table_data(self, task, writer_engine):
         if self.copy_mode == "direct":
