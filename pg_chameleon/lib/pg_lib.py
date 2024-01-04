@@ -3147,7 +3147,10 @@ class pg_engine(object):
                 pass
         else:
             origin_default = self.default_value_map.get(origin_default.lower(), origin_default)
-        default_str = "DEFAULT %s%s%s%s" % (re_symbol, quote, origin_default, quote)
+        if '\\' in origin_default:
+            default_str = "DEFAULT %s%s%s%s" % (re_symbol, quote, origin_default, quote)
+        else:
+            default_str = "DEFAULT %s%s%s" % (quote, origin_default, quote)
         return default_str
 
     def metadata_method_check(self, metadata, check_method):
