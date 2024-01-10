@@ -1819,7 +1819,6 @@ class mysql_source(object):
                 csv_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_DATA_SUB_DIR, schema, table, task_slice + 1)
                 task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, 0, -1)
                 open(csv_file, 'w').close()
-                self.write_task_queue.put(task)
                 copydatatask_list.append(task)
             for task in copydatatask_list:
                 self.reader_log_queue.put({"type":"SLICE","schema":schema,"table":table,"name":os.path.basename(task.csv_file),
@@ -1879,7 +1878,6 @@ class mysql_source(object):
                     self.logger.error("remove csv file failed %s and the exp message is %s"
                                       % (task.csv_file, exp.message))
             del csv_file
-            del task
             gc.collect()
         self.print_progress(task_slice + 1, total_slices, schema, table)
         if self.is_skip_completed_tables and copy_data_from_csv:
