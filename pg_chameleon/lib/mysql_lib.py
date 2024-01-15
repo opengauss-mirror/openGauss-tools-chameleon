@@ -1420,10 +1420,8 @@ class mysql_source(object):
             limit_reader = self.is_limit_reader(file_nums, csv_file_dir)
             if limit_reader and not self.stop_data_reader.get():
                 self.stop_data_reader.set(True)
-                self.logger.debug("read process stopped, wait for datacheck......")
             elif not limit_reader and self.stop_data_reader.get():
                 self.stop_data_reader.set(False)
-                self.logger.debug("flow control finished, read process start.")
             time.sleep(2)
     
     def is_limit_reader(self, file_nums, csv_file_dir):
@@ -1449,16 +1447,20 @@ class mysql_source(object):
         used_storage_in_kb = self.__format_space_in_kb(used_storage)
         return used_storage_in_kb >= self.csv_dir_space_threshold
 
-    def flow_control(self):
+    def flow_control(self, schema, table):
         """
         The method pause the reader process until flow control ends
         """
+        log_printed = False
         if self.with_datacheck and self.stop_data_reader.get():
             while True:
                 if not self.stop_data_reader.get():
+                    self.logger.info(("flow control for `%s`.`%s` finished, read process start.") % (schema, table))
                     break
-                else:
-                    time.sleep(1)
+                elif self.stop_data_reader.get() and not log_printed:
+                    self.logger.info(("read for `%s`.`%s` stopped, wait for datacheck......") % (schema, table))
+                    log_printed = True
+                time.sleep(1)
 
     def execute_task(self, task_queue, engine=None):
         while True:
@@ -1766,7 +1768,7 @@ class mysql_source(object):
 
         task_slice = 0
         copydatatask_list = []
-        self.flow_control()
+        self.flow_control(schema, table)
         with self.reader_xact(self, cursor_buffered, table_txs):
             cursor_unbuffered.execute(sql_csv)
             self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
