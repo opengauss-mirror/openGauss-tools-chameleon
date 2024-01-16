@@ -20,7 +20,6 @@ from py_opengauss.lib import Element
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
 COLUMNDEFAULT_INCLUDE_QUOTE_VER = 7 + sql_token.VERSION_SCALE * 2 + \
                                   (sql_token.VERSION_SCALE * sql_token.VERSION_SCALE) * 10
-OPENGAUSS_VERSION_510 = 510
 
 ON_UPDATE_CURRENT_TIMESTAMP = "on update current_timestamp"
 UNSUPPORT_CHARACTER_SET = "latin1"
@@ -4864,15 +4863,14 @@ class pg_engine(object):
                     $5,
                     $6
                 )
-            %s ON DUPLICATE KEY UPDATE
-                        v_table_pkey=EXCLUDED.v_table_pkey,
-                        t_binlog_name = EXCLUDED.t_binlog_name,
-                        i_binlog_position = EXCLUDED.i_binlog_position,
+            ON DUPLICATE KEY UPDATE
+                        v_table_pkey = v_table_pkey,
+                        t_binlog_name = t_binlog_name,
+                        i_binlog_position = i_binlog_position,
                         b_replica_enabled = True
             ;
         """
-        excluded_sql = "AS EXCLUDED" if self.__get_version() > OPENGAUSS_VERSION_510 else ""
-        stmt = self.pgsql_conn.prepare(sql_insert % excluded_sql)
+        stmt = self.pgsql_conn.prepare(sql_insert)
         stmt(
             self.i_id_source,
             table,
@@ -4881,18 +4879,6 @@ class pg_engine(object):
             binlog_file,
             binlog_pos
             )
-
-    def __get_version(self):
-        # openGauss version info:
-        #  (openGauss 5.1.1 build 68b573b9) compiled at 2023-11-22 00:10:02 commit 0 last mr
-        #  on x86_64-unknown-linux-gnu, compiled by g++ (GCC) 10.3.0, 64-bit
-        stmt = self.pgsql_conn.prepare("select version()")
-        version = stmt.first()
-        stmt.close()
-        version_info = version.split(" ")
-        if len(version_info) >= 2:
-            return int(version_info[1].replace(".", ""))
-        return OPENGAUSS_VERSION_510
 
     def copy_data(self, csv_file, schema, table, column_list, contain_columns, column_split):
         """
