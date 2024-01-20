@@ -1357,7 +1357,7 @@ class mysql_source(object):
                 if log_record is None:
                     freader.write("finished")
                     break
-                freader.write(json.dumps(log_record) + os.linesep)
+                freader.write(json.dumps(log_record, ensure_ascii=False) + os.linesep)
                 freader.flush()
 
     def process_writer_logger(self):
@@ -1389,7 +1389,7 @@ class mysql_source(object):
                 log_record = self.writer_log_queue.get()
                 total_slice = self.total_slice_dict.get('`%s`.`%s`' % (log_record.get("schema"), log_record.get("table")))
                 log_record.update({"total": total_slice, "slice":(total_slice > 1)})
-                fwriter.write(json.dumps(log_record) + os.linesep)
+                fwriter.write(json.dumps(log_record, ensure_ascii=False) + os.linesep)
             fwriter.write("finished")
             fwriter.flush()
             return True
@@ -1401,7 +1401,7 @@ class mysql_source(object):
                     time.sleep(2)
                     return False
                 log_record.update({"total": total_slice, "slice":(total_slice > 1)})
-            fwriter.write(json.dumps(log_record) + os.linesep)
+            fwriter.write(json.dumps(log_record, ensure_ascii=False) + os.linesep)
             fwriter.flush()
         return False            
     
