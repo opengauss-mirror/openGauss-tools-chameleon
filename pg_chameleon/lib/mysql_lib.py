@@ -1143,7 +1143,7 @@ class mysql_source(object):
             SELECT
                 CASE
                     WHEN
-                        data_type IN ('"""+"','".join(self.hexify)+"','"+ColumnType.M_BINARY.value+"""')
+                        data_type IN ('"""+"','".join(self.hexify)+"','"+ColumnType.M_BINARY.value+"','"+ColumnType.M_VARBINARY.value+"""')
                     THEN
                         concat('concat(\\'\\\\\\\\x\\', hex(',column_name,'))')
                     WHEN
@@ -1244,14 +1244,13 @@ class mysql_source(object):
         """
         if cursor is None:
             self.cursor_buffered.execute(sql_pkname % (schema, table))
-            pk_list = self.cursor_buffered.fetchone()
+            pk_list = self.cursor_buffered.fetchall()
         else:
             cursor.execute(sql_pkname % (schema, table))
-            pk_list = cursor.fetchone()
+            pk_list = cursor.fetchall()
         
-        if pk_list and len(pk_list) == 1:
-            return pk_list[0]
-        return pk_list
+        if pk_list and len(pk_list) == 1 and len(pk_list[0]) == 1:
+            return pk_list[0][0]
 
     # Use an inner class to represent transactions
     class reader_xact:
@@ -1821,6 +1820,7 @@ class mysql_source(object):
                 csv_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_DATA_SUB_DIR, schema, table, task_slice + 1)
                 task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, 0, -1)
                 open(csv_file, 'w').close()
+                self.write_task_queue.put(task)
                 copydatatask_list.append(task)
             for task in copydatatask_list:
                 self.reader_log_queue.put({"type":"SLICE","schema":schema,"table":table,"name":os.path.basename(task.csv_file),
@@ -1856,6 +1856,9 @@ class mysql_source(object):
         contain_columns = task.contain_columns
         column_split = task.column_split
         copy_data_from_csv = True
+        if self.with_datacheck and task.slice == -1:
+            self.put_writer_record("SLICE", task)
+            return
         
         try:
             writer_engine.copy_data(csv_file, loading_schema, table, column_list, contain_columns, column_split)
