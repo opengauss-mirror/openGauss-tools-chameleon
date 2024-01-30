@@ -1093,7 +1093,7 @@ pg_conn:
 
   user: "opengauss_test"
 
-  password: "password123"
+  password: "Sample@123"
 
   database: "opengauss_database"
 
@@ -1190,7 +1190,7 @@ index_dir: '~/.pg_chameleon/index/'
 
 以上配置文件的含义是，迁移数据时，MySQL侧使用的用户名密码分别是 **mysql_test** 和 **password123**。MySQL服务器的IP和port分别是**127.0.0.1**和**3306**，待迁移的数据库是**mysql_database**。
 
-openGauss侧使用的用户名密码分别是 **opengauss_test**和 **password123**。openGauss服务器的IP和port分别是**127.0.0.1**和**5432**，目标数据库是**opengauss_database**，同时会在**opengauss_database**下创建**sch_mysql_database** schema，迁移的表都将位于该schema下。
+openGauss侧使用的用户名密码分别是 **opengauss_test**和 **Sample@123**。openGauss服务器的IP和port分别是**127.0.0.1**和**5432**，目标数据库是**opengauss_database**，同时会在**opengauss_database**下创建**sch_mysql_database** schema，迁移的表都将位于该schema下。
 
 需要注意的是，这里使用的用户需要有远程连接MySQL和openGauss的权限，以及对对应数据库的读写权限。同时对于openGauss，运行chameleon所在的机器需要在openGauss的远程访问白名单中。对于MySQL，用户还需要有RELOAD、REPLICATION CLIENT、REPLICATION SLAVE的权限。
 
@@ -1198,7 +1198,7 @@ openGauss侧使用的用户名密码分别是 **opengauss_test**和 **password12
 
 准备好配置文件后，在openGauss侧创建迁移时需要用到的用户以及database。
 
-**CREATE USER opengauss_test WITH PASSWORD 'password123';**
+**CREATE USER opengauss_test WITH PASSWORD 'Sample@123';**
 
 **CREATE DATABASE opengauss_database WITH OWNER opengauss_test dbcompatibility='B' ;**
 
