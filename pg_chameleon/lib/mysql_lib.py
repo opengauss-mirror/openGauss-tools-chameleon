@@ -1072,6 +1072,7 @@ class mysql_source(object):
                 AND table_name=%s
             ;
         """
+        self.logger.info("start write meta information to file.")
         table_metadata_file = csv_file_dir + "%s_information_schema_tables.csv" % schema
         column_metadata_file = csv_file_dir + "%s_information_schema_columns.csv" % schema
         with open(table_metadata_file, 'a') as fw_table, open(column_metadata_file, 'a') as fw_column:
@@ -1079,7 +1080,8 @@ class mysql_source(object):
                 cursor_buffered.execute(sql_rows, (schema, table))
                 select_data = cursor_buffered.fetchone()
                 self.generate_table_metadata_statement(schema, table, select_data.get("table_rows"), fw_table, cursor_buffered)
-                self.generate_column_metadata_statement(schema, table, fw_column, cursor_buffered)   
+                self.generate_column_metadata_statement(schema, table, fw_column, cursor_buffered) 
+        self.logger.info("finish write meta information to file.")  
 
     def generate_table_metadata_statement(self, schema, table, table_count, fw_table, cursor=None):
         """
@@ -1090,6 +1092,7 @@ class mysql_source(object):
             :param table_count: the table count
             :param cursor: the cursor
         """
+        self.logger.info("start write table metadata for `%s`.`%s`." % (schema, table))
         contain_primary_key_select = """SELECT COUNT(*) COUNT FROM information_schema.KEY_COLUMN_USAGE 
             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s"""
         if cursor is None:
@@ -1103,6 +1106,7 @@ class mysql_source(object):
         else:
             task = TableMetadataTask(schema, table, table_count, 1)
         fw_table.write(json.dumps(task.__dict__) + os.linesep)
+        self.logger.info("finish write table metadata for `%s`.`%s`." % (schema, table))
 
     def generate_column_metadata_statement(self, schema, table, fw_column, cursor=None):
         """
@@ -1112,6 +1116,7 @@ class mysql_source(object):
             :param table: the table name
             :param cursor: the cursor
         """
+        self.logger.info("start write column metadata for `%s`.`%s`." % (schema, table))
         column_metadata_select = """SELECT COLUMN_NAME, ORDINAL_POSITION, COLUMN_TYPE, COLUMN_KEY FROM information_schema.COLUMNS
             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s"""
         if cursor is None:
@@ -1124,6 +1129,7 @@ class mysql_source(object):
             task = ColumnMetadataTask(schema, table, a_column_metadata["COLUMN_NAME"], a_column_metadata["ORDINAL_POSITION"],
                                         a_column_metadata["COLUMN_TYPE"], a_column_metadata["COLUMN_KEY"])
             fw_column.write(json.dumps(task.__dict__) + os.linesep)
+        self.logger.info("finish write column metadata for `%s`.`%s`." % (schema, table))
 
     def generate_select_statements(self, schema, table, cursor=None, pk_column=None):
         """
