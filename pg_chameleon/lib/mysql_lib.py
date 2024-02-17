@@ -3097,9 +3097,10 @@ class mysql_source(object):
                 success_num = self.add_object_success(create_object_statement, db_object_type, object_name, schema,
                                                       success_num, tran_create_object_statement)
             except Exception as exp:
-                self.logger.error("Method 1 directly execute create %s %s.%s failed, sql code "
-                                  "is %s and sql message is %s, so translate it according to sql-translator"
+                self.logger.warning("Method 1 directly execute create %s %s.%s failed, error code "
+                                  "is %s and error message is %s, so translate it according to sql-translator"
                                   % (db_object_type.value, schema, object_name, exp.code, exp.message))
+                total_error_message = "Method 1 execute failed: %s" % exp.message
                 # Method 2: translate sql to openGauss format
                 # translate sql dialect in mysql format to opengauss format.
                 stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
@@ -3109,8 +3110,9 @@ class mysql_source(object):
                 if has_error:
                     # if translation has any error, this replication also fail
                     # insert a failure record into the object replication status table
-                    failure_num = self.add_object_fail(create_object_statement, db_object_type, error_message, exp,
-                                                       failure_num, object_name, False)
+                    total_error_message += "; " + "Method 2 parse sql failed: %s" % error_message
+                    failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
+                                                       failure_num, object_name)
                     continue
 
                 # if translate successful, add the corresponding database object to opengauss
@@ -3118,25 +3120,20 @@ class mysql_source(object):
                     success_num = self.add_object_success(create_object_statement, db_object_type, object_name,
                                                           schema, success_num, tran_create_object_statement)
                 except Exception as exception:
-                    failure_num = self.add_object_fail(create_object_statement, db_object_type, error_message,
-                                                       exception, failure_num, object_name)
+                    total_error_message += "; " + "Method 2 execute failed: %s" % exception.message
+                    failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
+                                                       failure_num, object_name)
         self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
             db_object_type.value, schema, success_num + failure_num, success_num, failure_num))
 
-    def add_object_fail(self, create_object_statement, db_object_type, error_message, exp, failure_num, object_name,
-                        flag=True):
+    def add_object_fail(self, create_object_statement, db_object_type, total_error_message, failure_num, object_name):
         self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-        if flag:
-            self.logger.error("Method 2 execute create %s %s failed, sql code is %s and sql message is %s" %
-                              (db_object_type.value, object_name, exp.code, exp.message))
-        else:
-            self.logger.error("Method 2 execute create %s %s failed because of parse sql failed according "
-                              "to sql-translator, and error message is %s" %
-                              (db_object_type.value, object_name, error_message))
+        self.logger.error("Two methods execute create %s %s failed, error message is %s" %
+                          (db_object_type.value, object_name, total_error_message))
         self.logger.error("Copying the source object fail %s : %s" % (db_object_type.value, object_name))
         if self.dump_json:
             self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
-                                        exp.message)
+                                        total_error_message)
         failure_num += 1
         return failure_num
 
