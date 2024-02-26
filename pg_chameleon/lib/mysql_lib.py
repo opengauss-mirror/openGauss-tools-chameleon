@@ -3104,6 +3104,12 @@ class mysql_source(object):
                 # Method 2: translate sql to openGauss format
                 # translate sql dialect in mysql format to opengauss format.
                 stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
+                if "java: command not found" in stderr:
+                    total_error_message += "; " + "Method 2 parse sql failed: No java environment for running sql-translator, %s" % stderr.strip()
+                    failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
+                                                       failure_num, object_name)
+                    continue
+
                 tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type, schema,
                                                                                        stdout)
                 has_error, error_message = self.__unified_log(stderr)
