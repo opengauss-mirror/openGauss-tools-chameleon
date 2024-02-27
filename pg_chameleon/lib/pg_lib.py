@@ -134,6 +134,7 @@ class pgsql_source(object):
             pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"], sslmode="disable")
             pgsql_conn.settings['client_encoding']=self.source_conn["charset"]
             pgsql_conn.execute("set session_timeout = 0;")
+            self.set_params(pgsql_conn)
         else:
             self.logger.error("Undefined database connection string. Exiting now.")
             os._exit(0)
@@ -695,12 +696,27 @@ class pg_engine(object):
             self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"], sslmode="disable")
             self.pgsql_conn.settings['client_encoding']=self.dest_conn["charset"]
             self.pgsql_conn.execute("set session_timeout = 0;")
+            self.set_params(self.pgsql_conn)
         elif not self.dest_conn:
             self.logger.error("Undefined database connection string. Exiting now.")
             os._exit(0)
         elif self.pgsql_conn:
             self.logger.debug("There is already a database connection active.")
 
+    def set_params(self, connection):
+        try:
+            if not self.dest_conn["params"]:
+                return
+            for param in self.dest_conn["params"]:
+                sql = "set %s = '%s'" % (param, self.dest_conn["params"][param])
+                try:
+                    connection.execute(sql)
+                    self.logger.info("Param %s when create a connection" % sql)
+                except Exception as exp:
+                    self.logger.warning("Set param failed when execute %s, SQLCODE: %s SQLERROR: %s"
+                                        % (sql, exp.code, exp.message))
+        except KeyError:
+            pass
 
     def disconnect_db(self):
         """

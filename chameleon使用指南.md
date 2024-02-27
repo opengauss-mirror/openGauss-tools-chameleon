@@ -425,7 +425,9 @@ pg_conn:
   database: "db_test"
 
   charset: "utf8"
-
+  
+  params:
+  
  
 
 sources:
@@ -641,6 +643,19 @@ openGauss server监听的端口号。
 ### 3.3.6. charset
 
 database所指定的数据库的编码格式。
+
+### 3.3.7 params
+
+创建连接时指定设置的数据库参数，session级别生效，无默认值。
+
+可按照如下格式添加对应的参数：
+
+```
+pg_conn:
+  params:
+    param1: value1
+    param2: value2
+```
 
 ## **3.4.** MySQL配置
 
@@ -1098,6 +1113,8 @@ pg_conn:
   database: "opengauss_database"
 
   charset: "utf8"
+
+  params:
 
  
 
