@@ -34,6 +34,10 @@ pg_conn:
   password: "never_commit_passwords"
   database: "db_replica"
   charset: "utf8"
+  params:
+#    maintenance_work_mem: "1G"
+#    param1: value1
+#    param2: value2
 
 sources:
   mysql:
