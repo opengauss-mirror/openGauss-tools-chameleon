@@ -79,6 +79,7 @@ class ColumnType(Enum):
     O_NUMERIC = 'numeric'
     O_DOUBLE_P = 'double precision'
     O_REAL = 'real'
+    O_FLOAT = 'float'
     O_BIT = 'bit'
     O_ENUM = 'enum'
     O_SET = 'set'

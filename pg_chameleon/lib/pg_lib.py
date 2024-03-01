@@ -3787,12 +3787,25 @@ class pg_engine(object):
 
     def __get_float_type(self, column):
         if 'numeric_scale' in column.keys() and column["numeric_scale"] is not None:
-            column_type = "%s (%s,%s)" % (ColumnType.O_NUMERIC.value,
-                                          str(column["numeric_precision"]), str(column["numeric_scale"]))
+            # for p !=0 or type = decimal, type(p,s) -> numeric(p,s)
+            if int(column["numeric_scale"]) != 0 or column["data_type"] == ColumnType.M_DECIMAL.value:
+                # decimal(p,s) -> numeric(p,s)
+                column_type = "%s (%s,%s)" % (ColumnType.O_NUMERIC.value, str(column["numeric_precision"]),
+                                              str(column["numeric_scale"]))
+            else:
+                # double(p,0), float(p,0) -> float(p)
+                column_type = "%s(%s)" % (ColumnType.O_FLOAT.value, str(column["numeric_precision"]))
         elif column["data_type"] == ColumnType.M_DOUBLE.value:
+            # double -> number
             column_type = ColumnType.O_NUMBER.value
         else:
-            column_type = column["data_type"]
+            # float -> float, float(p) -> float(p)
+            if 'numeric_precision' in column.keys() and column["numeric_precision"] is not None:
+                # float(p) -> float(p)
+                column_type = "%s(%s)" % (ColumnType.O_FLOAT.value, str(column["numeric_precision"]))
+            else:
+                # float -> float
+                column_type = ColumnType.O_FLOAT.value
         return column_type
 
     def set_application_name(self, action=""):
