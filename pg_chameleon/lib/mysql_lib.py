@@ -1105,7 +1105,7 @@ class mysql_source(object):
             task = TableMetadataTask(schema, table, table_count, 0)
         else:
             task = TableMetadataTask(schema, table, table_count, 1)
-        fw_table.write(json.dumps(task.__dict__) + os.linesep)
+        fw_table.write(json.dumps(task.__dict__, ensure_ascii=False) + os.linesep)
         self.logger.info("finish write table metadata for `%s`.`%s`." % (schema, table))
 
     def generate_column_metadata_statement(self, schema, table, fw_column, cursor=None):
@@ -1128,7 +1128,7 @@ class mysql_source(object):
         for a_column_metadata in column_metadata:
             task = ColumnMetadataTask(schema, table, a_column_metadata["COLUMN_NAME"], a_column_metadata["ORDINAL_POSITION"],
                                         a_column_metadata["COLUMN_TYPE"], a_column_metadata["COLUMN_KEY"])
-            fw_column.write(json.dumps(task.__dict__) + os.linesep)
+            fw_column.write(json.dumps(task.__dict__, ensure_ascii=False) + os.linesep)
         self.logger.info("finish write column metadata for `%s`.`%s`." % (schema, table))
 
     def generate_select_statements(self, schema, table, cursor=None, pk_column=None):
