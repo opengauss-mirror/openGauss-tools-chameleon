@@ -818,6 +818,10 @@ class mysql_source(object):
                 destination_schema = self.schema_mappings[schema]
                 loading_schema = "_%s_tmp" % destination_schema[0:59]
                 self.schema_loading[schema] = {'destination': destination_schema, 'loading': loading_schema}
+                # drop tmp schema if exist in last migration.
+                if not self.is_skip_completed_tables:
+                    self.logger.debug("Dropping the existing tmp schema %s." % loading_schema)
+                    self.pg_engine.drop_database_schema(loading_schema, True)
                 self.logger.debug("Creating the loading schema %s." % loading_schema)
                 self.pg_engine.create_database_schema(loading_schema)
                 self.logger.debug("Creating the destination schema %s." % destination_schema)

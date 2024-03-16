@@ -368,7 +368,7 @@ class replica_engine(object):
             if key == "total":
                 dump_jsons["total"] = dump_object[key]
             else:
-            	dump_jsons[dump_object_name].append(dump_object[key])
+                dump_jsons[dump_object_name].append(dump_object[key])
         with open('data_'+self.args.config+'_'+self.args.command+'.json', 'w', encoding='utf8') as f:
             f.seek(0)
             json.dump(dump_jsons,f)
