@@ -117,7 +117,9 @@ class replica_engine(object):
         self.load_config()
         self.update_pid_file()
 
-        self.is_debug_or_dump_json = self.args.debug or self.config['dump_json']
+        self.is_debug = self.args.debug
+        self.dump_json = self.config['dump_json']
+        self.is_debug_or_dump_json = self.is_debug or self.dump_json
         log_list = self.__init_logger("global")
         self.logger = log_list[0]
         self.logger_fds = log_list[1]
@@ -1438,20 +1440,23 @@ class replica_engine(object):
         logger.propagate = False
         if debug_mode:
             str_format = "%(asctime)s.%(msecs)03d %(processName)s %(levelname)s %(filename)s (%(lineno)s): %(message)s"
+            log_level = 'debug'
         else:
             str_format = "%(asctime)s %(processName)s %(levelname)s: %(message)s"
         formatter = logging.Formatter(str_format, "%Y-%m-%d %H:%M:%S")
 
-        if log_dest == 'stdout' or debug_mode:
+        if log_dest == 'stdout' or self.dump_json:
             fh = logging.StreamHandler(sys.stdout)
         elif log_dest == 'file':
             fh = TimedRotatingFileHandler(log_file, when="d", interval=1, backupCount=log_days_keep)
+            if self.is_debug:
+                fh_console = logging.StreamHandler(sys.stdout)
+                fh_console.setLevel(log_level_map.get(log_level, logging.DEBUG))
+                fh_console.setFormatter(formatter)
+                logger.addHandler(fh_console)
         else:
             print("Invalid log_dest value: %s" % log_dest)
             os._exit(0)
-
-        if debug_mode:
-            log_level = 'debug'
 
         fh.setLevel(log_level_map.get(log_level, logging.DEBUG))
         fh.setFormatter(formatter)
