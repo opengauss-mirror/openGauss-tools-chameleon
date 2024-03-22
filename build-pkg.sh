@@ -1,5 +1,5 @@
 ﻿#显示当前路径
-version=6.0.0
+version=6.0.0-RC1
 path=`pwd`
 echo $path
 package_name=chameleon-$version
