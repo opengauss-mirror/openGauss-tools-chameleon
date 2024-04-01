@@ -5218,6 +5218,7 @@ class pg_engine(object):
                     i_id_batch
             ;
         """
+        self.pgsql_conn.execute("set dolphin.b_compatibility_mode = off")
         self.pgsql_conn.execute(sql_collect_events % (id_batch, ))
 
 
