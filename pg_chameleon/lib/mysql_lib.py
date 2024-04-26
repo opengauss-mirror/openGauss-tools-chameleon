@@ -64,6 +64,7 @@ INDEX_FILE = "tables.index"
 DICTCURSOR_INDEX = 0
 SSCURSOR_INDEX = 1
 SSDICTCURSOR_INDEX = 2
+USER_NOT_EXIST_ERROR_CODE = '42704'
 
 
 class process_state():
@@ -3083,6 +3084,8 @@ class mysql_source(object):
         sql_to_get_create_object_statement = db_object_type.sql_to_get_create_object_statement()
         success_num = 0  # number of replication success records
         failure_num = 0  # number of replication fail records
+
+        info_message = ". PLEASE create openGauss role!!! FIRST：set b_compatibility_user_host_auth to on; SECOND：create user `XXX`@`XXX` with password 'XXXXXX';(Attention: `` not '') THIRD: grant all privileges to `XXX`@`XXX`;"
         for object_metadata in self.cursor_buffered.fetchall():
             object_name = object_metadata["OBJECT_NAME"]
 
@@ -3104,12 +3107,20 @@ class mysql_source(object):
                 self.logger.warning("Method 1 directly execute create %s %s.%s failed, error code "
                                   "is %s and error message is %s, so translate it according to sql-translator"
                                   % (db_object_type.value, schema, object_name, exp.code, exp.message))
+
                 total_error_message = "Method 1 execute failed: %s" % exp.message
+                is_user_not_exist = False
+                if exp.code == USER_NOT_EXIST_ERROR_CODE:
+                    is_user_not_exist = True
+
                 # Method 2: translate sql to openGauss format
                 # translate sql dialect in mysql format to opengauss format.
                 stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
                 if "java: command not found" in stderr:
                     total_error_message += "; " + "Method 2 parse sql failed: No java environment for running sql-translator, %s" % stderr.strip()
+
+                    if is_user_not_exist:
+                        total_error_message += info_message
                     failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
                                                        failure_num, object_name)
                     continue
@@ -3121,6 +3132,8 @@ class mysql_source(object):
                     # if translation has any error, this replication also fail
                     # insert a failure record into the object replication status table
                     total_error_message += "; " + "Method 2 parse sql failed: %s" % error_message
+                    if is_user_not_exist:
+                        total_error_message += info_message
                     failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
                                                        failure_num, object_name)
                     continue
@@ -3131,6 +3144,8 @@ class mysql_source(object):
                                                           schema, success_num, tran_create_object_statement)
                 except Exception as exception:
                     total_error_message += "; " + "Method 2 execute failed: %s" % exception.message
+                    if is_user_not_exist or exception.code == USER_NOT_EXIST_ERROR_CODE:
+                        total_error_message += info_message
                     failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
                                                        failure_num, object_name)
         self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
