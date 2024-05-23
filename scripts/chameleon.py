@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import multiprocessing
 import traceback
+import os
 import time
 import json
 from pkg_resources import get_distribution
@@ -75,8 +76,10 @@ if (replica.config['dump_json'] and (args.command == 'init_replica' or args.comm
 
         getattr(replica, args.command)()
 
-        replica.write_Json()
         dump_thread.terminate()
+        replica.write_Json()
+        with open("migration_completed_status", 'a') as f:
+            f.write(args.command + " finished" + os.linesep)
         replica.logger.info(args.command + " finished.")
     except Exception as e:
         error_msg = traceback.format_exc()
