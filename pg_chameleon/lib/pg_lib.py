@@ -27,6 +27,7 @@ UNSUPPORT_COLLATE = "latin1_swedish_ci"
 MYSQL_ASCII = "ascii"
 OPENGAUSS_ASCII = "sql_ascii"
 
+EMPTY_STR = ""
 
 def format_error(val):
     return f"[{val.code}] {val.details.get('severity')} {val.message}"
@@ -597,6 +598,9 @@ class pg_engine(object):
             {'version': '2.0.6',  'script': '205_to_206.sql'},
             {'version': '2.0.7',  'script': '206_to_207.sql'},
         ]
+
+        self.types_override_rule = {ColumnType.ALL_DOUBLES.value: ColumnType.M_DOUBLE.value,
+                                    ColumnType.ALL_FLOATS.value: ColumnType.M_FLOAT.value}
 
     def check_migration_collate(self):
         """
@@ -3755,6 +3759,56 @@ class pg_engine(object):
 
         return {'drop':query_drop_default, 'create':query_add_default}
 
+    def get_types_override_to(self, table, column, origin_types, to_type):
+        """
+            The method support type cast like double* -> double.
+
+            :param table: the table name
+            :param column: the column dictionary extracted from the information_schema or built in the sql_parser class
+            :param origin_types: origin types like double*
+            :param to_type: valid convert type from origin_types
+            :return: the postgresql converted column type if supported else None
+            :rtype: string
+        """
+        types_override = self.type_override.get(origin_types)
+        if ((types_override is None) or (not column["column_type"].lower().startswith(to_type))):
+            return EMPTY_STR
+
+        override_to = types_override.get("override_to")
+        if override_to != to_type:
+            self.logger.error("unsupport type cast from %s to %s." % (origin_types, types_override.get("override_to")))
+            return EMPTY_STR
+        override_tables = types_override.get("override_tables")
+        if override_tables and override_tables[0] == '*' or (table in override_tables):
+            return to_type
+        return EMPTY_STR
+
+    def get_castedtype_when_override(self, column, schema, table):
+        """
+            The method get casetd type in override case.
+             
+            :param column: the column dictionary extracted from the information_schema or built in the sql_parser class
+            :param schema: the schema name
+            :param table: the table name
+            :return: the postgresql converted column type in override case
+            :rtype: string
+        """
+        table_full = "%s.%s" % (schema, table)
+        for origin_types, to_type in self.types_override_rule.items():
+            override_to = self.get_types_override_to(table_full, column, origin_types, to_type)
+            if not self.is_empty_str(override_to):
+                return override_to
+
+        type_override = self.type_override[column["column_type"]]
+        override_to = type_override["override_to"]
+        override_tables = type_override["override_tables"]
+        if override_tables[0] == '*' or table_full in override_tables:
+            return override_to
+        return EMPTY_STR
+
+    def is_empty_str(self, input_str):
+        return input_str == EMPTY_STR
+
     def get_data_type(self, column, schema, table):
         """
             The method determines whether the specified type has to be overridden or not.
@@ -3767,13 +3821,9 @@ class pg_engine(object):
         """
         try:
             if self.type_override:
-                table_full = "%s.%s" % (schema, table)
-                type_override = self.type_override[column["column_type"]]
-                override_to = type_override["override_to"]
-                override_tables = type_override["override_tables"]
-                if override_tables[0] == '*' or table_full in override_tables:
-                    column_type = override_to
-                    return column_type
+                column_type = self.get_castedtype_when_override(column, schema, table)
+                if not self.is_empty_str(column_type):
+                    return column_type 
         except KeyError:
             column_type = column["column_type"]
 

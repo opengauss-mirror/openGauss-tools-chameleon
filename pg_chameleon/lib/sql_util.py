@@ -89,6 +89,9 @@ class ColumnType(Enum):
     O_POLYGON = 'polygon'
     O_BYTEA = 'bytea'
 
+    ALL_DOUBLES = 'double*'
+    ALL_FLOATS = 'float*'
+
     @staticmethod
     def __name_start_with(prefix_name):
         results = set()
