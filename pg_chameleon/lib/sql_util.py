@@ -1635,7 +1635,9 @@ class sql_token(object):
         split_num = num_str.split('.')
         version_num = 0
         for v in split_num:
-            version_num = version_num * sql_token.VERSION_SCALE + int(v)
+            version_num = version_num * sql_token.VERSION_SCALE
+            if v.isdigit():
+                version_num += int(v)
         return version_num
 
 
