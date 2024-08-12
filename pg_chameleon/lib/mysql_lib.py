@@ -605,10 +605,10 @@ class mysql_source(object):
         for schema in self.schema_list:
             self.cursor_buffered.execute(sql_tables, (schema))
             table_list = []
-            table_rows = []
+            table_rows = {}
             for table in self.cursor_buffered.fetchall():
                 table_list.append(table["table_name"])
-                table_rows.append(table["table_rows"])
+                table_rows[table["table_name"]] = table["table_rows"]
 
             try:
                 limit_tables = self.limit_tables[schema]
@@ -632,12 +632,13 @@ class mysql_source(object):
                 self.schema_tables[schema] = self.filter_table_list_from_progress(schema, table_list, completed_schema_tables) 
                 self.need_migration_tables_number += len(self.schema_tables[schema])
 
+            table_rows = {key: value for key, value in table_rows.items() if key in table_list}
             if self.dump_json:
-                for index, key in enumerate(table_list):
+                for key in enumerate(table_list):
                     managerJson.update({key: {
                         "name": key,
                         "status": process_state.ACCOMPLISH_STATUS
-                        if table_rows[index] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
+                        if table_rows[key] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
                         "percent": process_state.PRECISION_START,
                         "error": ""
                     }})
