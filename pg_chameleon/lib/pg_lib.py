@@ -5033,6 +5033,7 @@ class pg_engine(object):
             except:
                 self.logger.error("unexpected error when processing the row")
                 self.logger.error(" - > Table: %s.%s" % (schema, table))
+                raise
 
     def get_existing_pkey(self,schema,table):
         """

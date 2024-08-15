@@ -634,7 +634,7 @@ class mysql_source(object):
 
             table_rows = {key: value for key, value in table_rows.items() if key in table_list}
             if self.dump_json:
-                for key in enumerate(table_list):
+                for key in table_list:
                     managerJson.update({key: {
                         "name": key,
                         "status": process_state.ACCOMPLISH_STATUS
@@ -1880,8 +1880,6 @@ class mysql_source(object):
                 self.__copied_progress_json("table", table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
         except Exception as exp:
-            if self.dump_json:
-                self.__copied_progress_json("table", table, process_state.FAIL_STATUS, exp.message)
             self.logger.error("SQLCODE: %s SQLERROR: %s" % (exp.code, exp.message))
             self.logger.info("Table %s.%s error in copy csv mode, saving slice number for the fallback to "
                              "insert statements" % (loading_schema, table))
@@ -1902,7 +1900,8 @@ class mysql_source(object):
         elif not copy_data_from_csv:
             ins_arg = {"slice_insert": task_slice, "table": table, "schema": schema,
                        "select_stat": select_columns["select_stat"], "column_list": column_list,
-                       "column_list_select": column_list_select, "copy_limit": copy_limit}
+                       "column_list_select": column_list_select, "copy_limit": copy_limit, "total_slices": total_slices,
+                       "avg_row_length": avg_row_length}
             self.insert_table_data(ins_arg)
             self.put_writer_record("SLICE", task)
 
@@ -1922,6 +1921,8 @@ class mysql_source(object):
         column_list = ins_arg["column_list"]
         column_list_select = ins_arg["column_list_select"]
         copy_limit = ins_arg["copy_limit"]
+        total_slices = ins_arg["total_slices"]
+        avg_row_length = ins_arg["avg_row_length"]
         loading_schema = self.schema_loading[schema]["loading"]
         conn_unbuffered = self.get_connect(SSCURSOR_INDEX)
         cursor_unbuffered = conn_unbuffered.cursor()
@@ -1933,7 +1934,15 @@ class mysql_source(object):
         select_stat, schema, table, offset, copy_limit)
         cursor_unbuffered.execute(sql_fallback)
         insert_data = cursor_unbuffered.fetchall()
-        self.pg_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
+        try:
+            self.pg_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
+            if self.dump_json:
+                percent = 1.0 if (slice_insert + 1) > total_slices else (slice_insert + 1) / total_slices
+                self.__copied_progress_json("table", table, percent)
+                self.__copy_total_progress_json(copy_limit, avg_row_length)
+        except Exception as exp:
+            if self.dump_json:
+                self.__copied_progress_json("table", table, process_state.FAIL_STATUS, exp.message)
         if self.is_skip_completed_tables:
             self.handle_migration_progress(schema, table)
 
