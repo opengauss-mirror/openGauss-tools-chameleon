@@ -1355,11 +1355,16 @@ class replica_engine(object):
         """
         if self.args.source == "*":
             print("You must specify a source name with the argument --source")
-        elif self.args.tables != "*":
+            return 
+        if self.args.tables != "*":
             print("You cannot specify a table name when running detach_replica.")
-        else:
-            drp_msg = 'Detaching the replica will remove any reference for the source %s.\n Are you sure? YES/No\n' % self.args.source
-            drop_src = input(drp_msg)
+            return
+        attempts = 3
+        for attempt in range(attempts):
+            drp_msg = (f'Detaching the replica will migrate foreign keys (if they exist) '
+                f'and remove any reference for the source {self.args.source}.\n'
+                f'Are you sure? YES/NO\n')
+            drop_src = input(drp_msg).upper()
             if drop_src == 'YES':
                 if "keep_existing_schema" in self.config["sources"][self.args.source]:
                     keep_existing_schema = self.config["sources"][self.args.source]["keep_existing_schema"]
@@ -1370,8 +1375,15 @@ class replica_engine(object):
                     self.pg_engine.fk_metadata = self.mysql_source.get_foreign_keys_metadata()
                 self.__stop_replica()
                 self.pg_engine.detach_replica()
-            elif drop_src in self.lst_yes:
-                print('Please type YES all uppercase to confirm')
+                return
+            elif drop_src == 'NO':
+                print("Operation cancelled.")
+                return
+            else:
+                print(f'{drop_src} is an invalid input. Please enter YES or NO.')
+            if attempt < attempts - 1:
+                print(f"You have {attempts - attempt - 1} more chance。")
+        print("The input times were exhausted. Detaching the replica failed.")
 
     def run_maintenance(self):
         """
