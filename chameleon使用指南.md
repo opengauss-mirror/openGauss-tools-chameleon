@@ -32,7 +32,6 @@ chameleon是一个用Python 3编写的MySQL到openGauss的实时复制工具。�
 - 由于openGauss内核中哈希分区表不支持切割分区，不支持合成分区，不支持添加和删除分区。列表分区表不支持切割分区，不支持合成分区，故该工具在HASH/LIST分区暂不支持COALESCE和REORGANIZE，在HASH分区不支持ADD/DROP PARTITION。
 - 由于目前openGauss内核的限制，二级分区的分区表可以正常执行 ALTER PARTITION中的ADD/DROP/TRUNCATE功能，COALESCE/REORGANIZE/EXCHANGE暂不支持。
 - 对于HASH分区及KEY分区表在线迁移，由于MySQL和openGauss中hash分区内核实现不同，迁移后openGauss数据存放分区与MySQL中数据存放的分区存在差异。
-- 对于二级分区表，openGauss不支持一级和二级分区采用相同的键值。
 - 对于drop table操作，当表含有关联对象时，例如视图，mysql端可以用drop table只删除表而保留视图，openGauss端用drop table仅删除表会失败，此问题属于内核兼容性问题。因此对于mysql端的drop table语句，openGauss端将采用drop table cascade一并删除表及其关联的对象。
 - mysql的ddl里面comment包含"\0"时，迁移到openGauss端会转换为"\x00" 
 - 支持索引和表数据单独迁移，并且支持迁移过程中出现异常重启后跳过已经迁移完成的表。异常重启后索引和表数据是否分离需要与上一次迁移保持一致，直到所有表迁移完成。
