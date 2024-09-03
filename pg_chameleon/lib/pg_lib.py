@@ -5196,7 +5196,9 @@ class pg_engine(object):
         for column in auto_increment_column:
             column_type = column["column_type"]
             column_name = column["column_name"]
+            column_comment = column["column_comment"]
             ddl = "alter table `%s`.`%s` modify `%s` %s auto_increment;" % (schema, table, column_name, column_type)
+            ddl += "comment on column `%s`.`%s`.`%s` is '%s';" % (schema, table, column_name, column_comment)
             try:
                 self.pgsql_conn.execute(ddl)
             except Exception as exp:
