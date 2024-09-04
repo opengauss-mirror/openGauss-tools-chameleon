@@ -3256,6 +3256,11 @@ class pg_engine(object):
                 table_ddl["table"] = (ddl_head + def_columns + subpartition_method + ddl_tail)
                 return table_ddl
 
+        # not specify partition key
+        if partition_metadata[0]["partition_expression"] is None or partition_metadata[0]["partition_expression"] == "":
+            table_ddl["table"] = (ddl_head + def_columns + ddl_tail)
+            return table_ddl
+            
         # get partition key num
         part_key = partition_metadata[0]["partition_expression"].replace('`', '')
         part_key_split = part_key.split(',')
