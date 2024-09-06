@@ -5092,64 +5092,64 @@ class pg_engine(object):
         idx_ddl = {}
         table_primary = []
         for index in index_data:
-                table_timestamp = str(int(time.time()))
-                indx = index["index_name"]
-                self.logger.debug("Building DDL for index %s" % indx)
-                idx_col = [column.strip() for column in index["index_columns"].split(',')]
-                idx_sub_part = index["sub_part"].split(',')
-                index_columns = []
-                for idx in range(len(idx_sub_part)):
-                    if int(idx_sub_part[idx]) == 0:
-                        index_columns.append("`%s`" % idx_col[idx])
-                    else:
-                        index_columns.append("`" + idx_col[idx] + "`(" + idx_sub_part[idx] + ")")
-                non_unique = index["non_unique"]
-                index_type = index["index_type"]
-                if indx == 'PRIMARY':
-                    pkey_name = format("pk_%s_%s_%s" % (table[0:100], table_timestamp, self.idx_sequence))
-                    comment = index["index_comment"]
-                    if len(comment) == 0:
-                        pkey_def = """ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s);""" \
-                                   % (schema, table, pkey_name, ','.join(index_columns))
-                    else:
-                        pkey_def = """ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s) comment '%s';"""\
-                               % (schema, table, pkey_name, ','.join(index_columns), index["index_comment"])
-                    idx_ddl[pkey_name] = pkey_def
-                    table_primary = idx_col
+            table_timestamp = str(int(time.time() * 1e6)) + "_" + str(os.getpid())
+            indx = index["index_name"]
+            self.logger.debug("Building DDL for index %s" % indx)
+            idx_col = [column.strip() for column in index["index_columns"].split(',')]
+            idx_sub_part = index["sub_part"].split(',')
+            index_columns = []
+            for idx in range(len(idx_sub_part)):
+                if int(idx_sub_part[idx]) == 0:
+                    index_columns.append("`%s`" % idx_col[idx])
                 else:
-                    if non_unique == 0:
-                        unique_key = 'UNIQUE'
-                        if table_primary == []:
-                            table_primary = idx_col
-                    else:
-                        unique_key = ''
+                    index_columns.append("`" + idx_col[idx] + "`(" + idx_sub_part[idx] + ")")
+            non_unique = index["non_unique"]
+            index_type = index["index_type"]
+            if indx == 'PRIMARY':
+                pkey_name = format("pk_%s_%s_%s" % (table[0:100], table_timestamp, self.idx_sequence))
+                comment = index["index_comment"]
+                if len(comment) == 0:
+                    pkey_def = """ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s);""" \
+                               % (schema, table, pkey_name, ','.join(index_columns))
+                else:
+                    pkey_def = """ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` PRIMARY KEY (%s) comment '%s';"""\
+                           % (schema, table, pkey_name, ','.join(index_columns), index["index_comment"])
+                idx_ddl[pkey_name] = pkey_def
+                table_primary = idx_col
+            else:
+                if non_unique == 0:
+                    unique_key = 'UNIQUE'
+                    if table_primary == []:
+                        table_primary = idx_col
+                else:
+                    unique_key = ''
 
-                    fulltext_key = ''
-                    if index_type == 'SPATIAL':
-                        self.logger.warning("Table `%s`.`%s` column %s contains spatial index, openGauss does not "
-                                            "support spatial index, so ignore it."
-                                            % (schema, table, ','.join(index_columns)))
-                        continue
-                    elif index_type == 'FULLTEXT':
-                        fulltext_key = 'FULLTEXT'
-                        using = '(%s)' % (','.join(index_columns))
-                    # openGauss doesn't support multi column for GIN index, so use BTREE when columns > 1
-                    elif index_type == 'BTREE' or len(index_columns) > 1:
-                        using = 'USING BTREE(%s)' % (','.join(index_columns))
-                    else:
-                        using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
-                    index_name = 'idx_%s_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp,
-                                                       random.randint(0, 10000), self.idx_sequence)
+                fulltext_key = ''
+                if index_type == 'SPATIAL':
+                    self.logger.warning("Table `%s`.`%s` column %s contains spatial index, openGauss does not "
+                                        "support spatial index, so ignore it."
+                                        % (schema, table, ','.join(index_columns)))
+                    continue
+                elif index_type == 'FULLTEXT':
+                    fulltext_key = 'FULLTEXT'
+                    using = '(%s)' % (','.join(index_columns))
+                # openGauss doesn't support multi column for GIN index, so use BTREE when columns > 1
+                elif index_type == 'BTREE' or len(index_columns) > 1:
+                    using = 'USING BTREE(%s)' % (','.join(index_columns))
+                else:
+                    using = "USING GIN(to_tsvector('simple', %s))" % (index_columns[0])
+                index_name = 'idx_%s_%s_%s_%s_%s' % (indx[0:10], table[0:10], table_timestamp,
+                                                   random.randint(0, 10000), self.idx_sequence)
 
-                    comment = index["index_comment"]
-                    if len(comment) == 0:
-                        idx_def = 'CREATE %s %s INDEX `%s` ON `%s`.`%s` %s ;'\
-                                  % (unique_key, fulltext_key, index_name, schema, table, using)
-                    else:
-                        idx_def = """CREATE %s %s INDEX `%s` ON `%s`.`%s` %s comment '%s';"""\
-                                  % (unique_key, fulltext_key, index_name, schema, table, using, comment)
-                    idx_ddl[index_name] = idx_def
-                self.idx_sequence += 1
+                comment = index["index_comment"]
+                if len(comment) == 0:
+                    idx_def = 'CREATE %s %s INDEX `%s` ON `%s`.`%s` %s ;'\
+                              % (unique_key, fulltext_key, index_name, schema, table, using)
+                else:
+                    idx_def = """CREATE %s %s INDEX `%s` ON `%s`.`%s` %s comment '%s';"""\
+                              % (unique_key, fulltext_key, index_name, schema, table, using, comment)
+                idx_ddl[index_name] = idx_def
+            self.idx_sequence += 1
 
         if is_parallel_create_index:
             if self.index_parallel_workers == 0:
