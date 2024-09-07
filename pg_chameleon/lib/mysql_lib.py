@@ -797,6 +797,25 @@ class mysql_source(object):
             table_list = [table for table in table_list if table not in completed_schema_tables[schema]]
         return table_list
 
+    def get_source_collate(self, schema):
+        """
+            The method get character set and collate of source schema.
+        """
+        sql_get_collate = "select DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME from information_schema.SCHEMATA where SCHEMA_NAME = '%s';"
+        collates = {}
+        try:
+            cursor_manager = reader_cursor_manager(self)
+            cursor_buffered = cursor_manager.cursor_buffered
+            cursor_buffered.execute(sql_get_collate % (schema))
+            collates = cursor_buffered.fetchone()
+        except Exception as exp:
+            self.logger.error(exp)
+            self.logger.info("get dource schema character set and collate failed.")
+        finally:
+            cursor_manager.close()
+            self.logger.warning("close connection for get dource schema character set and collate.")
+        return collates     
+
     def create_destination_schemas(self):
         """
             Creates the loading schemas in the destination database and associated tables listed in the dictionary
@@ -824,9 +843,10 @@ class mysql_source(object):
                     self.logger.debug("Dropping the existing tmp schema %s." % loading_schema)
                     self.pg_engine.drop_database_schema(loading_schema, True)
                 self.logger.debug("Creating the loading schema %s." % loading_schema)
-                self.pg_engine.create_database_schema(loading_schema)
+                collates = self.get_source_collate(schema)
+                self.pg_engine.create_database_schema(loading_schema, collates)
                 self.logger.debug("Creating the destination schema %s." % destination_schema)
-                self.pg_engine.create_database_schema(destination_schema)
+                self.pg_engine.create_database_schema(destination_schema, collates)
 
     def drop_loading_schemas(self):
         """

@@ -5328,7 +5328,8 @@ class pg_engine(object):
                 x.commit()
 
         self.__swap_enums()
-    def create_database_schema(self, schema_name):
+
+    def create_database_schema(self, schema_name, collate):
         """
             The method creates a database schema.
             The create schema is issued with the clause IF NOT EXISTS.
@@ -5339,8 +5340,12 @@ class pg_engine(object):
         sql = 'select * from pg_namespace where nspname=$1'
         result = self.pgsql_conn.query.first(sql, schema_name)
         if not result:
-            sql_create = ("CREATE SCHEMA {};").format((schema_name))
-            self.pgsql_conn.execute(sql_create)
+            try:
+                sql_create = "CREATE SCHEMA %s CHARACTER SET %s COLLATE %s;"
+                self.pgsql_conn.execute(sql_create % (schema_name, collate["DEFAULT_CHARACTER_SET_NAME"], collate["DEFAULT_COLLATION_NAME"]))
+            except Exception as exp:
+                self.logger.warning("create schema with character set and collate failed, create normal")
+                self.pgsql_conn.execute(("CREATE SCHEMA {};").format((schema_name)))
 
     def drop_database_schema(self, schema_name, cascade):
         """
