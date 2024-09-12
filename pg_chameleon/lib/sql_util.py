@@ -1698,7 +1698,7 @@ class SqlTranslator():
         sql_encoded = str(base64.b64encode(raw_sql.encode("utf-8")), "utf-8")
         # chameleon calling the java subproject og-translator to implement the power of translating sql statements
 
-        cmd = "java -jar %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
+        cmd = "java -jar -Dfile.encoding=UTF-8 %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
         
         communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 
