@@ -141,6 +141,8 @@ class mysql_source(object):
         self.need_migration_tables_number = 0
         self.complted_tables_number_before = 0
         self.only_migration_index = False
+        # record table pkey info when keep_existing_schema open
+        self.table_pkeys = {}
 
     @classmethod
     def initJson(cls):
@@ -1528,10 +1530,14 @@ class mysql_source(object):
             else:
                 master_status, is_parallel_create_index = self.read_data_from_table(schema, table, cursor_manager)
             
-            indices = self.__get_index_data(schema=schema, table=table, cursor_buffered=cursor_manager.cursor_buffered)
-            auto_increment_column = self.__get_auto_increment_column(schema, table, cursor_manager.cursor_buffered)
-            index_write_task = CreateIndexTask(table, schema, indices, destination_schema, master_status,
-                                            is_parallel_create_index, auto_increment_column)
+            if self.keep_existing_schema:
+                index_write_task = CreateIndexTask(table, schema, [1], destination_schema, master_status,
+                                            is_parallel_create_index, None)
+            else:
+                indices = self.__get_index_data(schema=schema, table=table, cursor_buffered=cursor_manager.cursor_buffered)
+                auto_increment_column = self.__get_auto_increment_column(schema, table, cursor_manager.cursor_buffered)
+                index_write_task = CreateIndexTask(table, schema, indices, destination_schema, master_status,
+                                                is_parallel_create_index, auto_increment_column)
             if not self.is_create_index:
                 self.write_indextask_to_file(index_write_task)
             elif self.with_datacheck:
@@ -1981,26 +1987,17 @@ class mysql_source(object):
         master_status = task.master_status
         try:
             if self.keep_existing_schema:
-                table_pkey = writer_engine.get_existing_pkey(destination_schema, table)
-                self.logger.info("Collecting constraints and indices from the destination table  %s.%s" % (
-                    destination_schema, table))
-                writer_engine.collect_idx_cons(destination_schema, table)
-                self.logger.info("Removing constraints and indices from the destination table  %s.%s" % (
-                    destination_schema, table))
-                writer_engine.cleanup_idx_cons(destination_schema, table)
-                writer_engine.truncate_table(destination_schema, table)
+                self.logger.info(
+                    "Adding constraint and indices to the destination table  %s.%s" % (destination_schema, table))
+                writer_engine.create_idx_cons(destination_schema, table)
+                table_pkey = self.table_pkeys.get("`%s`.`%s`" % (destination_schema, table))
             else:
                 self.put_writer_record("INDEX", task, "START", True)
                 table_pkey = writer_engine.create_indices(loading_schema, table, task.indices,
                                                           task.is_parallel_create_index)
                 self.put_writer_record("INDEX", task, "END", True)
                 writer_engine.create_auto_increment_column(loading_schema, table, task.auto_increment_column)
-
             writer_engine.store_table(destination_schema, table, table_pkey, master_status)
-            if self.keep_existing_schema:
-                self.logger.info(
-                    "Adding constraint and indices to the destination table  %s.%s" % (destination_schema, table))
-                writer_engine.create_idx_cons(destination_schema, table)
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(schema, table)
         except:
@@ -3010,6 +3007,20 @@ class mysql_source(object):
 
             self.disconnect_db_buffered()
 
+    def __clean_existing_tables(self):
+        for schema in self.schema_list:
+            table_list = self.schema_tables[schema]
+            for table in table_list:
+                destination_schema = self.schema_mappings[schema]
+                self.table_pkeys["`%s`.`%s`" % (destination_schema, table)] = self.pg_engine.get_existing_pkey(destination_schema, table)
+                self.logger.info("Collecting constraints and indices from the destination table  %s.%s" % (
+                    destination_schema, table))
+                self.pg_engine.collect_idx_cons(destination_schema, table)
+                self.logger.info("Removing constraints and indices from the destination table  %s.%s" % (
+                    destination_schema, table))
+                self.pg_engine.cleanup_idx_cons(destination_schema, table)
+                self.pg_engine.truncate_table(destination_schema, table)
+
     def init_replica(self):
         """
             The method performs a full init replica for the given source
@@ -3036,6 +3047,7 @@ class mysql_source(object):
             self.pg_engine.schema_loading = self.schema_loading
             if self.keep_existing_schema:
                 self.disconnect_db_buffered()
+                self.__clean_existing_tables()
                 self.__copy_tables()
             else:
                 if self.is_skip_completed_tables:
@@ -3058,7 +3070,7 @@ class mysql_source(object):
             self.logger.info(notifier_message)
 
         except:
-            if not self.keep_existing_schema or not self.is_skip_completed_tables:
+            if not self.keep_existing_schema and not self.is_skip_completed_tables:
                 self.drop_loading_schemas()
             self.pg_engine.set_source_status("error")
             notifier_message = "init replica for source %s failed" % self.source

@@ -4798,7 +4798,7 @@ class pg_engine(object):
                 vip.v_schema_name ='%s'
                 AND vip.v_table_name ='%s'
             AND NOT vip.b_idx_pkey
-            ON DUPLICATE KEY UPDATE t_index_drop=EXCLUDED.t_index_drop,t_index_create=EXCLUDED.t_index_create
+            ON DUPLICATE KEY UPDATE t_index_drop=t_index_drop,t_index_create=t_index_create
             ;
         """
         sql_pkey = """
@@ -4822,7 +4822,7 @@ class pg_engine(object):
                 vip.v_schema_name ='%s'
                 AND vip.v_table_name ='%s'
             AND vip.b_idx_pkey
-            ON DUPLICATE KEY UPDATE v_index_name = EXCLUDED.v_index_name,t_pkey_drop=EXCLUDED.t_pkey_drop,t_pkey_create=EXCLUDED.t_pkey_create;
+            ON DUPLICATE KEY UPDATE v_index_name = v_index_name,t_pkey_drop=t_pkey_drop,t_pkey_create=t_pkey_create;
 
         """
 
@@ -4854,7 +4854,7 @@ class pg_engine(object):
                         v_schema_referenced ='%s'
                     AND v_table_referenced ='%s'
                     )
-            ON DUPLICATE KEY UPDATE t_fkey_drop=EXCLUDED.t_fkey_drop,t_fkey_create=EXCLUDED.t_fkey_create,t_fkey_validate=EXCLUDED.t_fkey_validate;
+            ON DUPLICATE KEY UPDATE t_fkey_drop=t_fkey_drop,t_fkey_create=t_fkey_create,t_fkey_validate=t_fkey_validate;
             ;
         """
         self.pgsql_conn.execute(sql_index%(schema,table,))
