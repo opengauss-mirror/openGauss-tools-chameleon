@@ -4764,11 +4764,18 @@ class pg_engine(object):
             self.logger.info("Creating the primary key {}".format(pk[0],))
             self.pgsql_conn.execute(pk[1])
 
+        # Check if the table is partitioned (to determine if we should create local indexes)
+        is_partitioned = self.have_table_partitions(schema, table)
         for idx in idx_create:
             self.logger.info("Creating the index {}".format(idx[0],))
-            self.pgsql_conn.execute(idx[1])
-
-
+            # If the table is partitioned, modify the index creation statement to include 'LOCAL'
+            if is_partitioned:
+                idx_create_sql = idx[1].replace('CREATE INDEX', 'CREATE INDEX LOCAL')
+                self.logger.info("Table %s.%s is a partitioned table. Creating local indexes." % (schema, table))
+                self.pgsql_conn.execute(idx_create_sql)
+            else:
+                self.logger.info("Table %s.%s is not a partitioned table. Creating global indexes." % (schema, table))
+                self.pgsql_conn.execute(idx[1])
 
     def collect_idx_cons(self,schema,table):
         """
@@ -5143,12 +5150,18 @@ class pg_engine(object):
                                                    random.randint(0, 10000), self.idx_sequence)
 
                 comment = index["index_comment"]
-                if len(comment) == 0:
-                    idx_def = 'CREATE %s %s INDEX `%s` ON `%s`.`%s` %s ;'\
-                              % (unique_key, fulltext_key, index_name, schema, table, using)
+                # If the table is partitioned, create a local index
+                if self.have_table_partitions(schema, table):
+                    local_index = 'LOCAL'  # Add the LOCAL keyword to indicate the local index
                 else:
-                    idx_def = """CREATE %s %s INDEX `%s` ON `%s`.`%s` %s comment '%s';"""\
-                              % (unique_key, fulltext_key, index_name, schema, table, using, comment)
+                    local_index = ''
+
+                if len(comment) == 0:
+                    idx_def = 'CREATE %s %s INDEX `%s` ON `%s`.`%s` %s %s;'\
+                              % (unique_key, fulltext_key, index_name, schema, table, using, local_index)
+                else:
+                    idx_def = """CREATE %s %s INDEX `%s` ON `%s`.`%s` %s %s comment '%s';"""\
+                              % (unique_key, fulltext_key, index_name, schema, table, using, local_index, comment)
                 idx_ddl[index_name] = idx_def
             self.idx_sequence += 1
 
