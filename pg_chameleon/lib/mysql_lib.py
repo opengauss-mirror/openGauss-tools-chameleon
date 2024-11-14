@@ -1928,10 +1928,10 @@ class mysql_source(object):
                        "select_stat": select_columns["select_stat"], "column_list": column_list,
                        "column_list_select": column_list_select, "copy_limit": copy_limit, "total_slices": total_slices,
                        "avg_row_length": avg_row_length}
-            self.insert_table_data(ins_arg)
+            self.insert_table_data(ins_arg, writer_engine)
             self.put_writer_record("SLICE", task)
 
-    def insert_table_data(self, ins_arg):
+    def insert_table_data(self, ins_arg, writer_engine):
         """
             This method is a fallback procedure whether copy_table_data fails.
             The ins_args is a list with the informations required to run the select for building the insert
@@ -1961,7 +1961,7 @@ class mysql_source(object):
         cursor_unbuffered.execute(sql_fallback)
         insert_data = cursor_unbuffered.fetchall()
         try:
-            self.pg_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
+            writer_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
             if self.dump_json:
                 percent = 1.0 if (slice_insert + 1) > total_slices else (slice_insert + 1) / total_slices
                 self.__copied_progress_json("table", table, percent)
