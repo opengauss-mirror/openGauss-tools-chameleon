@@ -7,6 +7,9 @@ log_days_keep: 10
 rollbar_key: ''
 rollbar_env: ''
 dump_json: No
+alert_log_collection_enable: false
+alert_log_kafka_server: 127.0.0.1:9092
+alert_log_kafka_topic: my_log
 
 # type_override allows the user to override the default type conversion
 # into a different one.

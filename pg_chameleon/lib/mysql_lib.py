@@ -25,6 +25,7 @@ from pg_chameleon.lib.pg_lib import pg_engine
 from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
 from pg_chameleon.lib.task_lib import CopyDataTask, CreateIndexTask, ReadDataTask
 from pg_chameleon.lib.task_lib import TableMetadataTask, ColumnMetadataTask, Pair
+from pg_chameleon.lib.error_code import ErrorCode
 
 POINT_PREFIX_LEN = len('POINT ')
 POLYGON_PREFIX_LEN = len('POLYGON ')
@@ -301,10 +302,10 @@ class mysql_source(object):
         if lower_case_opengauss > 1:
             lower_case_opengauss = 1
         if lower_case_mysql != lower_case_opengauss:
-            self.logger.error("The param lower_case_table_names=%s in MySQL and the param "
+            self.logger.error("%s The param lower_case_table_names=%s in MySQL and the param "
                                 "dolphin.lower_case_table_names=%s in openGauss are inconsistent, the migration exit. "
                                 "0: case sensitive, 1: case insensitive, please set the same value."
-                                % (lower_case_mysql, lower_case_opengauss))
+                                % (ErrorCode.INCORRECT_CONFIGURATION, lower_case_mysql, lower_case_opengauss))
             os._exit(0)
 
     def check_mysql_config(self, is_strict=False):
@@ -384,11 +385,13 @@ class mysql_source(object):
         if self.mysql_restart_config or is_strict:
             if log_bin.upper() != 'ON' or binlog_format.upper() != 'ROW' or binlog_row_image.upper() != 'FULL' \
                     or (not self.is_mariadb and gtid_mode.upper() != 'ON'):
-                self.logger.error("The MySQL configuration does not allow the replica. Exiting now")
-                self.logger.error("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
-                                  % (log_bin.upper(), binlog_format.upper(), binlog_row_image.upper(), gtid_mode.upper()))
-                self.logger.error("Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode"
-                                  " ON (only for MySQL 5.6+) ")
+                self.logger.error("%s The MySQL configuration does not allow the replica. Exiting now" %
+                    ErrorCode.INCORRECT_CONFIGURATION)
+                self.logger.error("%s Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
+                    % (ErrorCode.INCORRECT_CONFIGURATION, log_bin.upper(), binlog_format.upper(),
+                    binlog_row_image.upper(), gtid_mode.upper()))
+                self.logger.error("%s Mandatory settings - log_bin ON, binlog_format ROW, binlog_row_image FULL, gtid_mode"
+                                  " ON (only for MySQL 5.6+) " % ErrorCode.INCORRECT_CONFIGURATION)
                 os._exit(0)
         else:
             self.logger.warning("Source settings - log_bin %s, binlog_format %s, binlog_row_image %s, gtid_mode %s"
@@ -812,7 +815,7 @@ class mysql_source(object):
             cursor_buffered.execute(sql_get_collate % (schema))
             collates = cursor_buffered.fetchone()
         except Exception as exp:
-            self.logger.error(exp)
+            self.logger.error(f"{ErrorCode.GET_SOURCE_SCHEMA_CHARSET_COLLATE_FAILED}: {exp}")
             self.logger.info("get dource schema character set and collate failed.")
         finally:
             cursor_manager.close()
@@ -1052,7 +1055,7 @@ class mysql_source(object):
                 else:
                     self.pg_engine.create_table(table_metadata, table_info, partition_metadata,
                                                 table, schema, 'mysql')
-        self.logger.info("Finish creating all the tables")
+        self.logger.info("Finish creating all the tables.")
 
     def drop_destination_tables(self):
         """
@@ -1075,7 +1078,7 @@ class mysql_source(object):
             for schema in self.schema_list:
                 self.write_metadata_file(schema, cursor_buffered)
         except Exception as exp:
-            self.logger.error(exp)
+            self.logger.error("%s Message: %s", ErrorCode.META_GENERATION_FAILED, exp)
             self.logger.info("generate metadata statement failed.")
         finally:
             cursor_manager.close()
@@ -1508,12 +1511,12 @@ class mysql_source(object):
                 elif isinstance(task, CreateIndexTask):
                     self.create_index_process(task, engine)
                 else:
-                    self.logger.error("unknown write task type")
+                    self.logger.error("%s unknown write task type", ErrorCode.PROCESS_STATE_CHECK_EXCEPTION)
             # this is the data_reader process
             elif isinstance(task, ReadDataTask):
                 self.read_data_process(task)
             else:
-                self.logger.error("unknown read task type")
+                self.logger.error("%s unknown read task type", ErrorCode.PROCESS_STATE_CHECK_EXCEPTION)
 
 
     def read_data_process(self, task):
@@ -1549,7 +1552,7 @@ class mysql_source(object):
                     self.write_task_queue.put(self.index_waiting_queue.get(block=True))
                 self.index_waiting_queue.put(index_write_task, block=True)
         except BaseException as exp:
-            self.logger.error(exp)
+            self.logger.error("%s Message: %s", ErrorCode.PROCESS_STATE_CHECK_EXCEPTION, exp)
             self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
             self.read_retry_queue.put(task, block=True)
         finally:
@@ -1595,7 +1598,8 @@ class mysql_source(object):
             for table in self.schema_tables[schema]:
                 index_infos = index_task_dict.get('`%s`.`%s`' % (schema, table))
                 if index_infos is None:
-                    self.logger.error('does not have indexinfo of `%s`.`%s` in index_file.' % (schema, table))
+                    self.logger.error('%s does not have indexinfo of `%s`.`%s` in index_file.' %
+                        (ErrorCode.INDEX_FILE_MISSING_DATA, schema, table))
                     continue
                 index_write_task = CreateIndexTask(table, schema, index_infos[0], index_infos[1],
                                                     index_infos[2], index_infos[3], index_infos[4])
@@ -1711,7 +1715,8 @@ class mysql_source(object):
             if os.system("mv %s %s" % (split_csv, generated_csv_path)) == 0:
                 csv_len = int(str(os.popen(line_num_cmd % generated_csv_path).read()).strip().split(" ")[0])
             else:
-                self.logger.error("mv csv file to out_dir failed for table {}.{}", schema, table)
+                self.logger.error("%s mv csv file to out_dir failed for table {}.{}",
+                    ErrorCode.CSV_FILE_MOVE_FAILED, schema, table)
             if self.contains_columns and index == 0:
                 # read column name list
                 with open(generated_csv_path, 'r') as f:
@@ -1818,7 +1823,7 @@ class mysql_source(object):
                 try:
                     csv_results = cursor_unbuffered.fetchmany(copy_limit)
                 except BaseException as exp:
-                    self.logger.error("catch exception in fetch many and exp is %s" % exp)
+                    self.logger.error("%s catch exception in fetch many and exp is %s" % (ErrorCode.GET_SOURCE_DATA_FAILED, exp))
                     raise
                 if len(csv_results) == 0:
                     break
@@ -1906,7 +1911,7 @@ class mysql_source(object):
                 self.__copied_progress_json("table", table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
         except Exception as exp:
-            self.logger.error("SQLCODE: %s SQLERROR: %s" % (exp.code, exp.message))
+            self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, exp.code, exp.message))
             self.logger.info("Table %s.%s error in copy csv mode, saving slice number for the fallback to "
                              "insert statements" % (loading_schema, table))
             copy_data_from_csv = False
@@ -1916,8 +1921,8 @@ class mysql_source(object):
                 try:
                     remove(task.csv_file)
                 except Exception as exp:
-                    self.logger.error("remove csv file failed %s and the exp message is %s"
-                                      % (task.csv_file, exp.message))
+                    self.logger.error("%s remove csv file failed %s and the exp message is %s"
+                                      % (ErrorCode.CSV_FILE_REMOVE_FAILED, task.csv_file, exp.message))
             del csv_file
             gc.collect()
         self.print_progress(task_slice + 1, total_slices, schema, table)
@@ -1958,8 +1963,11 @@ class mysql_source(object):
         offset = slice_insert * copy_limit
         sql_fallback = "SELECT %s FROM `%s`.`%s` LIMIT %s, %s;" % (
         select_stat, schema, table, offset, copy_limit)
-        cursor_unbuffered.execute(sql_fallback)
-        insert_data = cursor_unbuffered.fetchall()
+        try:
+            cursor_unbuffered.execute(sql_fallback)
+            insert_data = cursor_unbuffered.fetchall()
+        except Exception as exp:
+            self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, exp.code, exp.message))
         try:
             writer_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
             if self.dump_json:
@@ -1977,7 +1985,7 @@ class mysql_source(object):
 
     def create_index_process(self, task, writer_engine):
         if task.indices is None:
-            self.logger.error("index data is None")
+            self.logger.error("%s index data is None", ErrorCode.CREATE_INDEX_FAILED)
             return
         if len(task.indices) == 0:
             self.logger.info("there are no indices be created, just store the table, tablename: "
@@ -2011,7 +2019,7 @@ class mysql_source(object):
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(schema, table)
         except:
-            self.logger.error("create index or constraint error")
+            self.logger.error("%s create index or constraint error", ErrorCode.CREATE_INDEX_FAILED)
 
     def put_writer_record(self, record_type, task, index_status=None, contains_index=None):
         """
@@ -2381,7 +2389,7 @@ class mysql_source(object):
         try:
             self.pg_engine.connect_db()
         except BaseException as exp:
-            self.logger.error('[RETRY] build new connect to og failed!')
+            self.logger.error('%s [RETRY] build new connect to og failed!', ErrorCode.OPENGAUSS_DB_CONNECTION_FAILED)
             raise
         for a_read_data_task in retry_table_task_list:
             table_name = a_read_data_task.table
@@ -2391,8 +2399,8 @@ class mysql_source(object):
             try:
                 self.pg_engine.pgsql_conn.execute("truncate table %s.%s" % (loading_schema, table_name))
             except Exception as exp:
-                self.logger.error("truncate table %s.%s failed and the error message is %s"
-                                  % (loading_schema, table_name, exp.message))
+                self.logger.error("%s truncate table %s.%s failed and the error message is %s"
+                                  % (ErrorCode.SQL_EXCEPTION, loading_schema, table_name, exp.message))
             self.delete_table_csv_file(schema, table_name)
         self.pg_engine.disconnect_db()
         self.logger.info('[RETRY] end to delete failed tables')
@@ -2511,7 +2519,7 @@ class mysql_source(object):
         try:
             self.source_config = self.sources[self.source]
         except KeyError:
-            self.logger.error("The source %s doesn't exists " % (self.source))
+            self.logger.error("%s The source %s doesn't exists " % (ErrorCode.SOURCE_NOT_FOUND_IN_CONFIGURATION, self.source))
             os._exit(0)
         self.out_dir = self.source_config["out_dir"]
         try:
@@ -2584,7 +2592,8 @@ class mysql_source(object):
     def check_param_conflict(self):
         if self.keep_existing_schema:
             if not self.is_create_index or self.is_skip_completed_tables:
-                self.logger.error("is_create_index must be True and is_skip_completed_tables must be False when keep_existing_schema set True, exit.")
+                self.logger.error("%s is_create_index must be True and is_skip_completed_tables must be False"
+                    "when keep_existing_schema set True,exit.", ErrorCode.INCORRECT_CONFIGURATION)
                 os._exit(0)
 
     def refresh_schema(self):
@@ -3196,9 +3205,10 @@ class mysql_source(object):
 
     def add_object_fail(self, create_object_statement, db_object_type, total_error_message, failure_num, object_name):
         self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-        self.logger.error("Two methods execute create %s %s failed, error message is %s" %
-                          (db_object_type.value, object_name, total_error_message))
-        self.logger.error("Copying the source object fail %s : %s" % (db_object_type.value, object_name))
+        self.logger.error("%s Two methods execute create %s %s failed, error message is %s" %
+            (ErrorCode.OBJECT_MIGRATION_USER_MISSING, db_object_type.value, object_name, total_error_message))
+        self.logger.error("%s Copying the source object fail %s : %s" %
+            (ErrorCode.OBJECT_MIGRATION_FAILED, db_object_type.value, object_name))
         if self.dump_json:
             self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
                                         total_error_message)
@@ -3259,12 +3269,12 @@ class mysql_source(object):
                     # when level_name could not be got
                     # it means there is a problem with the project og-translator itself
                     has_error = True
-                    self.logger.error(log)
-                    error_message.append(log)
+                    self.logger.error(f"{ErrorCode.UNKNOWN}: {log}")
+                    error_message.append(f"{ErrorCode.UNKNOWN}: {log}")
                 elif parse_error_level_name == logging.ERROR:
                     has_error = True
-                    self.logger.error(log)
-                    error_message.append(log)
+                    self.logger.error(f"{ErrorCode.UNKNOWN}: {log}")
+                    error_message.append(f"{ErrorCode.UNKNOWN}: {log}")
                 elif not isinstance(level_name, int):
                     print(log)
                 else:

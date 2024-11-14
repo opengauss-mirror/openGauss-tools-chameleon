@@ -15,6 +15,7 @@ from pg_chameleon import sql_token, ColumnType
 from pg_chameleon.lib.task_lib import KeyWords
 from py_opengauss import sys as pg_sys
 from py_opengauss.lib import Element
+from pg_chameleon.lib.error_code import ErrorCode
 
 # from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
@@ -137,7 +138,7 @@ class pgsql_source(object):
             pgsql_conn.execute("set session_timeout = 0;")
             self.set_params(pgsql_conn)
         else:
-            self.logger.error("Undefined database connection string. Exiting now.")
+            self.logger.error("%s Undefined database connection string. Exiting now.", ErrorCode.INCORRECT_CONFIGURATION)
             os._exit(0)
 
         return pgsql_conn
@@ -477,7 +478,7 @@ class pgsql_source(object):
                     try:
                         self.pg_engine.pgsql_conn.execute(idx[0])
                     except:
-                        self.logger.error("an error occcurred when executing %s" %(idx[0]))
+                        self.logger.error("%s an error occcurred when executing %s" % (ErrorCode.CREATE_INDEX_FAILED, idx[0]))
                     if idx[2]:
                         self.pg_engine.store_table(destination_schema, table, ['foo'], None)
         db_conn.close()
@@ -630,12 +631,12 @@ class pg_engine(object):
         b_database_check = stmt.first()
         stmt.close()
         if b_database_check != 'B':
-            self.logger.error("The openGauss database is not a B-compatible database, the migration will fail for sql syntax, "
+            self.logger.error("%s The openGauss database is not a B-compatible database, the migration will fail for sql syntax, "
                               "such as backquote `, which is only supported in the B-compatible database, so "
                               "a B-compatible database is required for migration. Statement \"CREATE DATABASE "
                               "database_name WITH DBCOMPATIBILITY='B'\" can create a B-compatible database. "
                               "And then please use the original role to connect B-compatibility database first, "
-                              "to load extension dolphin and to use for migration.")
+                              "to load extension dolphin and to use for migration." % ErrorCode.INCORRECT_CONFIGURATION)
             os._exit(0)
 
     def check_postgis(self):
@@ -702,7 +703,8 @@ class pg_engine(object):
             self.pgsql_conn.execute("set session_timeout = 0;")
             self.set_params(self.pgsql_conn)
         elif not self.dest_conn:
-            self.logger.error("Undefined database connection string. Exiting now.")
+            self.logger.error("%s Undefined database connection string. Exiting now.",
+                ErrorCode.INCORRECT_CONFIGURATION)
             os._exit(0)
         elif self.pgsql_conn:
             self.logger.debug("There is already a database connection active.")
@@ -804,8 +806,9 @@ class pg_engine(object):
                 self.logger.info("resetting the sequence  %s" % statement[1])
                 self.pgsql_conn.execute(statement[0])
         except Exception as e:
-                    self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
-                    self.logger.error(statement)
+            self.logger.error("%s SQLCODE: %s SQLERROR: %s" %
+                (ErrorCode.SQL_EXCEPTION, e.code, e.message))
+            self.logger.error("STATEMENT: %s", statement)
         except:
             raise
         if not self.keep_existing_schema:
@@ -841,9 +844,10 @@ class pg_engine(object):
                 try:
                     self.pgsql_conn.execute(sql_fkey)
                 except Exception as e:
-                        self.logger.error("could not create the foreign key %s on table %s.%s" % (fk_name, table_schema, table_name))
-                        self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
-                        self.logger.error("STATEMENT: %s " % (sql_fkey))
+                    self.logger.error("%s could not create the foreign key %s on table %s.%s" %
+                        (ErrorCode.SQL_EXCEPTION, fk_name, table_schema, table_name))
+                    self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, e.code, e.message))
+                    self.logger.error("STATEMENT: %s " % (sql_fkey))
 
 
             for fkey in fk_list:
@@ -852,9 +856,10 @@ class pg_engine(object):
                 try:
                     self.pgsql_conn.execute(sql_validate)
                 except Exception as e:
-                        self.logger.error("could not validate the foreign key %s on table %s" % (fkey["table_name"], fkey["fkey_name"]))
-                        self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
-                        self.logger.error("STATEMENT: %s " % (sql_validate))
+                    self.logger.error("%s could not validate the foreign key %s on table %s" %
+                        (ErrorCode.SQL_EXCEPTION, fkey["table_name"], fkey["fkey_name"]))
+                    self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, e.code, e.message))
+                    self.logger.error("STATEMENT: %s " % (sql_validate))
         self.drop_source()
 
     def get_inconsistent_tables(self):
@@ -918,12 +923,14 @@ class pg_engine(object):
                             try:
                                 self.pgsql_conn.execute(sql_grant_select)
                             except Exception as er:
-                                self.logger.error("SQLCODE: %s SQLERROR: %s" % (er.code, er.message))
+                                self.logger.error("%s SQLCODE: %s SQLERROR: %s" %
+                                    (ErrorCode.SQL_EXCEPTION, er.code, er.message))
                     except Exception as e:
                         if e.code == "42704":
                             self.logger.warning("The role %s does not exist" % (db_role, ))
                         else:
-                            self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
+                            self.logger.error("%s SQLCODE: %s SQLERROR: %s" %
+                                (ErrorCode.SQL_EXCEPTION, e.code, e.message))
 
     def set_read_paused(self, read_paused):
         """
@@ -1154,7 +1161,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(sql_stat[1])
             except:
-                self.logger.error("An error occurred when running VACUUM FULL on the table %s" % (sql_stat[0]))
+                self.logger.error("%s An error occurred when running VACUUM FULL on the table %s" %
+                    (ErrorCode.SQL_EXCEPTION, sql_stat[0]))
 
 
 
@@ -1186,7 +1194,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(sql_stat[1])
             except:
-                self.logger.error("An error occurred when running VACUUM on the table %s" % (sql_stat[0]))
+                self.logger.error("%s An error occurred when running VACUUM on the table %s" %
+                    (ErrorCode.SQL_VACUUM_EXECUTION_FAILED, sql_stat[0]))
 
 
     def run_maintenance(self):
@@ -1207,7 +1216,7 @@ class pg_engine(object):
             self.__pause_replica(others=False)
             wait_result = self.__wait_for_self_pause()
             if wait_result == 'abort':
-                self.logger.error("Cannot proceed with the maintenance")
+                self.logger.error("%s Cannot proceed with the maintenance", ErrorCode.PROCESS_STATE_CHECK_EXCEPTION)
                 return wait_result
             if self.full:
                 self.__vacuum_full_log_tables()
@@ -2514,7 +2523,8 @@ class pg_engine(object):
             list_mapped = config_mapping[1]
             list_config = config_mapping[2]
             if not source_mapped:
-                self.logger.error("Checks for source %s failed. Matched mappings %s, configured mappings %s" % (source, list_mapped, list_config))
+                self.logger.error("%s Checks for source %s failed. Matched mappings %s, configured mappings %s" %
+                    (ErrorCode.INCORRECT_CONFIGURATION, source, list_mapped, list_config))
                 upgrade_possible = False
         if upgrade_possible:
             try:
@@ -2552,7 +2562,8 @@ class pg_engine(object):
             except:
                 self.rollback_upgrade_v1()
         else:
-            self.logger.error("Sanity checks for the schema mappings failed. Aborting the upgrade")
+            self.logger.error("%s Sanity checks for the schema mappings failed. Aborting the upgrade",
+                ErrorCode.INCORRECT_CONFIGURATION)
             self.rollback_upgrade_v1()
         self.disconnect_db()
 
@@ -2986,7 +2997,9 @@ class pg_engine(object):
         if num_sources == 0:
             check_mappings = self.check_schema_mappings()
             if check_mappings:
-                self.logger.error("Could not register the source %s. There is a duplicate destination schema in the schema mappings." % self.source)
+                self.logger.error("%s Could not register the source %s. "
+                    "There is a duplicate destination schema in the schema mappings."
+                    % (ErrorCode.INCORRECT_CONFIGURATION, self.source))
             else:
                 self.logger.debug("Adding source %s " % self.source)
                 schema_mappings = json.dumps(self.sources[self.source]["schema_mappings"])
@@ -3778,7 +3791,8 @@ class pg_engine(object):
 
         override_to = types_override.get("override_to")
         if override_to != to_type:
-            self.logger.error("unsupport type cast from %s to %s." % (origin_types, types_override.get("override_to")))
+            self.logger.error("%s unsupport type cast from %s to %s." %
+                (ErrorCode.UNSUPPORTED_TYPE_CONVERSION, origin_types, types_override.get("override_to")))
             return EMPTY_STR
         override_tables = types_override.get("override_tables")
         if override_tables and override_tables[0] == '*' or (table in override_tables):
@@ -3934,7 +3948,7 @@ class pg_engine(object):
             stmt = self.pgsql_conn.prepare(sql_copy)
             stmt.load_rows(csv_file)
         except Exception as e:
-            self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
+            self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, e.code, e.message))
             self.logger.error("fallback to inserts")
             self.insert_batch(group_insert)
         self.set_application_name("idle")
@@ -4021,14 +4035,14 @@ class pg_engine(object):
                                 event_time
                             )
                     except:
-                        self.logger.error("Cleanup unsuccessful. Saving the discarded row")
+                        self.logger.error("%s Cleanup unsuccessful. Saving the discarded row" % ErrorCode.SQL_EXCEPTION)
                         self.save_discarded_row(row_data)
                 else:
-                    self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
-                    self.logger.error("Error when storing event data. Saving the discarded row")
+                    self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, e.code, e.message))
+                    self.logger.error("%s Error when storing event data. Saving the discarded row" % ErrorCode.SQL_EXCEPTION)
                     self.save_discarded_row(row_data)
             except:
-                self.logger.error("Error when storing event data. Saving the discarded row")
+                self.logger.error("%s Error when storing event data. Saving the discarded row" % ErrorCode.SQL_EXCEPTION)
                 self.save_discarded_row(row_data)
 
     def save_discarded_row(self,row_data):
@@ -4102,15 +4116,15 @@ class pg_engine(object):
             self.pgsql_conn.execute(table_ddl)
         except Exception as exp:
             self.logger.error(exp)
-            self.logger.error("Execute create table failed, the error sql is %s, sql code is %s, and error"
-                              " message is %s" % (table_ddl, exp.code, exp.message))
+            self.logger.error("%s Execute create table failed, the error sql is %s, sql code is %s, and error"
+                              " message is %s" % (ErrorCode.SQL_EXCEPTION, table_ddl, exp.code, exp.message))
 
         if column_comments_ddl != '':
             try:
                 self.pgsql_conn.execute(column_comments_ddl)
             except Exception as exp:
-                self.logger.error("Execute create column comment ddl failed, the error sql is %s, sql code "
-                                  "is %s, and error message is %s" % (column_comments_ddl, exp.code, exp.message))
+                self.logger.error("%s Execute create column comment ddl failed, the error sql is %s, sql code "
+                                  "is %s, and error message is %s" % (ErrorCode.SQL_EXCEPTION, column_comments_ddl, exp.code, exp.message))
 
         table_comment = table_info["table_comment"]
         if len(table_comment) > 0:
@@ -4119,8 +4133,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(table_comment_ddl)
             except Exception as exp:
-                self.logger.error("create table comment failed, the error sql is %s, error code is %s and"
-                                  " error message is %s" % (table_comment_ddl, exp.code, exp.message))
+                self.logger.error("%s create table comment failed, the error sql is %s, error code is %s and"
+                                  " error message is %s" % (ErrorCode.SQL_EXCEPTION, table_comment_ddl, exp.code, exp.message))
 
     def drop_failed_table(self, schema, table_name):
         self.logger.info("begin dropping existed tables.")
@@ -4129,8 +4143,8 @@ class pg_engine(object):
         try:
             self.pgsql_conn.execute(drop_sql)
         except Exception as exp:
-            self.logger.error("drop existed table failed, the error sql is %s, error code is %s and"
-                                " error message is %s" % (drop_sql, exp.code, exp.message))
+            self.logger.error("%s drop existed table failed, the error sql is %s, error code is %s and"
+                                " error message is %s" % (ErrorCode.SQL_EXCEPTION, drop_sql, exp.code, exp.message))
 
     def update_schema_mappings(self):
         """
@@ -4197,7 +4211,9 @@ class pg_engine(object):
                 self.pgsql_conn.execute(sql_source % (json.dumps(new_schema_mappings), self.i_id_source))
                 x.commit()
             else:
-                self.logger.error("Could update the schema mappings for source %s. There is a duplicate destination schema in other sources. The offending schema is %s." % (self.source, duplicate_mappings[1]))
+                self.logger.error("%s Could update the schema mappings for source %s. "
+                    "There is a duplicate destination schema in other sources. The offending schema is %s." %
+                    (ErrorCode.INCORRECT_CONFIGURATION, self.source, duplicate_mappings[1]))
         else:
             self.logger.debug("The configuration file and catalogue mappings for source %s are the same. Not updating." % self.source)
         #print (self.i_id_source)
@@ -4586,7 +4602,7 @@ class pg_engine(object):
             self.logger.debug("Next batch id: %s" % ( next_batch_id, ))
 
         except Exception as e:
-            self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
+            self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, e.code, e.message))
             self.logger.error(sql_master % (self.i_id_source, binlog_name, binlog_position, executed_gtid_set, log_table))
 
         return next_batch_id
@@ -5021,10 +5037,10 @@ class pg_engine(object):
                         self.logger.info(sql_head)
                         self.pgsql_conn.execute(sql_head % data_row)
                     except Exception as exp:
-                        self.logger.error("SQLCODE: %s SQLERROR: %s" % (exp.code, exp.message))
+                        self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, exp.code, exp.message))
                         self.logger.error(sql_head % data_row)
                 else:
-                    self.logger.error("SQLCODE: %s SQLERROR: %s" % (e.code, e.message))
+                    self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, e.code, e.message))
                     self.logger.error(sql_head % data_row)
             except ValueError:
                 self.logger.warning("character mismatch when inserting the data, trying to cleanup the row data")
@@ -5038,9 +5054,9 @@ class pg_engine(object):
                 try:
                     self.pgsql_conn.execute(sql_head % data_row)
                 except:
-                    self.logger.error("error when inserting the row, skipping the row")
+                    self.logger.error("%s error when inserting the row, skipping the row." % ErrorCode.SQL_EXCEPTION)
             except:
-                self.logger.error("unexpected error when processing the row")
+                self.logger.error("%s unexpected error when processing the row" % ErrorCode.UNKNOWN)
                 self.logger.error(" - > Table: %s.%s" % (schema, table))
                 raise
 
@@ -5176,8 +5192,8 @@ class pg_engine(object):
                 try:
                     self.pgsql_conn.execute(set_parallel_index)
                 except Exception as exp:
-                    self.logger.error("create parallel index error, error code is %s and error is %s"
-                                  % (exp.code, exp.message))
+                    self.logger.error("%s create parallel index error, error code is %s and error is %s"
+                                  % (ErrorCode.SQL_EXCEPTION, exp.code, exp.message))
                 self.logger.info("set parallel index workers %s for table %s.%s"
                          % (self.index_parallel_workers, schema, table))
 
@@ -5186,8 +5202,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(idx_ddl[index])
             except Exception as exp:
-                self.logger.error("create index error, error sql is %s, error code is %s and error message is %s"
-                                  % (idx_ddl[index], exp.code, exp.message))
+                self.logger.error("%s create index error, error sql is %s, error code is %s and error message is %s"
+                                  % (ErrorCode.SQL_EXCEPTION, idx_ddl[index], exp.code, exp.message))
             self.logger.info("Finish Building index %s on %s.%s" % (index, schema, table))
 
         if is_parallel_create_index and self.index_parallel_workers != 0:
@@ -5197,8 +5213,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(reset_parallel_index)
             except Exception as exp:
-                self.logger.error("reset parallel index error, error code is %s and error is %s"
-                                  % (exp.code, exp.message))
+                self.logger.error("%s reset parallel index error, error code is %s and error is %s"
+                                  % (ErrorCode.PARALLEL_INDEX_RESET_FAILED, exp.code, exp.message))
             self.logger.info("reset parallel index workers %s for table %s.%s"
                              % (self.index_parallel_workers, schema, table))
 
@@ -5220,8 +5236,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(ddl)
             except Exception as exp:
-                self.logger.error("alter table adding auto_increment failed, error code is %s and error message is %s"
-                                  % (exp.code, exp.message))
+                self.logger.error("%s alter table adding auto_increment failed, error code is %s and error message is %s"
+                                  % (ErrorCode.AUTO_INCREMENT_INDEX_CREATE_FAILED, exp.code, exp.message))
 
     def swap_schemas(self):
         """
@@ -5382,7 +5398,8 @@ class pg_engine(object):
         try:
             self.pgsql_conn.execute(sql_drop)
         except:
-            self.logger.error("could not drop the schema %s. You will need to drop it manually." % schema_name)
+            self.logger.error("%s could not drop the schema %s. You will need to drop it manually." %
+                (ErrorCode.SQL_EXCEPTION, schema_name))
 
     def add_object(self, object_name, schema, dst_object_sql):
         """

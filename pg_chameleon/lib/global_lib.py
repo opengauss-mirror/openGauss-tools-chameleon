@@ -1,15 +1,16 @@
 import logging
-import multiprocessing as mp
 import os
 import os.path
-import pickle
-import pprint
-import signal
 import sys
 import json
+import pickle
+import re
+import pprint
+import signal
 import time
-from logging.handlers import TimedRotatingFileHandler
+import multiprocessing as mp
 from shutil import copy
+from logging.handlers import TimedRotatingFileHandler
 import rollbar
 import yaml
 from daemonize import Daemonize
@@ -31,6 +32,8 @@ from pg_chameleon.lib.parallel_replication import MyGtidEvent, modified_my_gtid_
 from pg_chameleon.lib.parallel_replication import Transaction
 from pg_chameleon.lib.parallel_replication import Packet, ReplicaPosition
 from pg_chameleon.lib.parallel_replication import write_pid
+from pg_chameleon.lib.error_code import ErrorCode
+from pg_chameleon.lib.kafka_util import KafkaHandler
 
 ROTATE_EVENT = 0x04
 TABLE_MAP_EVENT = 0x13
@@ -42,7 +45,7 @@ NUM_TRX = 500
 
 MYSQL_PACKET_HAED_LENGTH = 20
 INDEX_PARALLEL_WORKERS = 2
-
+KAFKA_LOG_PATTERN = r"(<CODE:\d{4}> [\s\S]+|&lt;CODE:\d{4}> [\s\S]+)"
 
 class rollbar_notifier(object):
     """
@@ -82,10 +85,9 @@ class rollbar_notifier(object):
                         if exc_info[0]:
                             self.notifier.report_exc_info(exc_info)
                     except:
-                        self.logger.error("Could not send the message to rollbar.")
+                        self.logger.error("%s Could not send the message to rollbar." % ErrorCode.NETWORK_OR_SERVICE_UNAVAILABLE)
             except:
-                self.logger.error("Wrong rollbar level specified.")
-
+                self.logger.error("%s Wrong rollbar level specified." % ErrorCode.INVALID_LEVEL)
 
 class replica_engine(object):
     """
@@ -116,6 +118,7 @@ class replica_engine(object):
 
         self.load_config()
         self.update_pid_file()
+        self.sent_error_log_count = 0
 
         self.is_debug = self.args.debug
         self.dump_json = self.config['dump_json']
@@ -408,8 +411,8 @@ class replica_engine(object):
             if key == "with_datacheck":
                 self.mysql_source.with_datacheck = value
         else:
-            self.logger.error("FATAL, the parameter " + key + " setting is improper, it should be set to "
-                              "Yes or No, but current setting is %s" % value)
+            self.logger.error("%s FATAL, the parameter " + key + " setting is improper, it should be set to "
+                              "Yes or No, but current setting is %s" % (ErrorCode.INCORRECT_CONFIGURATION, value))
             os._exit(0)
 
     def __check_parallel_workers(self, param):
@@ -1111,14 +1114,15 @@ class replica_engine(object):
                 self.pg_engine.cleanup_replayed_batches()
             else:
                 stack_trace = log_queue.get()
-                self.logger.error("Read process alive: %s - Replay process alive: %s" % (read_alive, replay_alive, ))
-                self.logger.error("Stack trace: %s" % (stack_trace, ))
+                self.logger.error("%s Read process alive: %s - Replay process alive: %s" %
+                    (ErrorCode.QUEUE_READ_EXCEPTION, read_alive, replay_alive))
+                self.logger.error("%s Stack trace: %s" % (ErrorCode.UNKNOWN, stack_trace))
                 if read_alive:
                     self.read_daemon.terminate()
-                    self.logger.error("Replay daemon crashed. Terminating the read daemon.")
+                    self.logger.error("%s Replay daemon crashed. Terminating the read daemon." % ErrorCode.PROCESS_STATE_CHECK_EXCEPTION)
                 if replay_alive:
                     self.replay_daemon.terminate()
-                    self.logger.error("Read daemon crashed. Terminating the replay daemon.")
+                    self.logger.error("%s Read daemon crashed. Terminating the replay daemon." % ErrorCode.PROCESS_STATE_CHECK_EXCEPTION)
                 if self.is_debug_or_dump_json:
                     replica_status = "stopped"
                 else:
@@ -1223,9 +1227,12 @@ class replica_engine(object):
         """
         try:
             self.pg_engine.connect_db()
+        except:
+            self.logger.error("%s build connect to og failed!" % ErrorCode.OPENGAUSS_DB_CONNECTION_FAILED)
+        try:
             self.pg_engine.set_source_status("stopped")
         except:
-            self.logger.error("Setting source status to stopped failed.")
+            self.logger.error("%s Setting source status to stopped failed." % ErrorCode.OPENGAUSS_DB_SET_STATUS_FAILED)
         self.__stop_replica()
 
     def stop_all_replicas(self):
@@ -1429,6 +1436,10 @@ class replica_engine(object):
         log_level = self.config["log_level"]
         log_dest = self.config["log_dest"]
         log_days_keep = self.config["log_days_keep"]
+        try:
+            alert_log_collection_enable = self.config["alert_log_collection_enable"]
+        except KeyError:
+            alert_log_collection_enable = False
         log_level_map = {
             "debug": logging.DEBUG,
             "info": logging.INFO,
@@ -1469,7 +1480,16 @@ class replica_engine(object):
         else:
             print("Invalid log_dest value: %s" % log_dest)
             os._exit(0)
-
+        if isinstance(alert_log_collection_enable, bool) and alert_log_collection_enable:
+            alert_log_kafka_server = self.config["alert_log_kafka_server"]
+            alert_log_kafka_topic = self.config['alert_log_kafka_topic']
+            kafka_handler = KafkaHandler(alert_log_kafka_server=alert_log_kafka_server, topic=alert_log_kafka_topic,
+                log_filter_pattern=KAFKA_LOG_PATTERN, sent_error_log_count=self.sent_error_log_count)
+            kafka_format = "%(asctime)s.%(msecs)03d [%(processName)s] %(levelname)s %(filename)s:(%(lineno)s) - %(message)s"
+            kafka_formatter = logging.Formatter(kafka_format, "%Y-%m-%d %H:%M:%S")
+            kafka_handler.setFormatter(kafka_formatter)
+            logger.addHandler(kafka_handler)
+            self.sent_error_log_count = kafka_handler.get_error_log_count()
         fh.setLevel(log_level_map.get(log_level, logging.DEBUG))
         fh.setFormatter(formatter)
         logger.addHandler(fh)
@@ -1483,15 +1503,18 @@ class replica_engine(object):
         :param db_object_type: the database object type, refer to enumeration class DBObjectType
         """
         if self.args.source == "*":
-            self.logger.error("You must specify a source name with the argument --source")
+            self.logger.error("%s You must specify a source name with the argument --source" %
+                ErrorCode.INCORRECT_CONFIGURATION)
         elif self.args.tables != "*":
             self.logger.error(
-                "You cannot specify a table name when running start_%s_replica" % (db_object_type.name.lower(),))
+                "%s You cannot specify a table name when running start_%s_replica" %
+                (ErrorCode.INCORRECT_CONFIGURATION, db_object_type.name.lower(),))
         else:
             try:
                 source_type = self.config["sources"][self.args.source]["type"]
             except KeyError:
-                self.logger.error("The source %s doesn't exists." % (self.args.source,))
+                self.logger.error("%s The source %s doesn't exists." %
+                    (ErrorCode.INCORRECT_CONFIGURATION, self.args.source,))
                 os._exit(0)
 
             if source_type == "mysql":
