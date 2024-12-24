@@ -22,6 +22,7 @@ from pg_chameleon.lib.pg_lib import pg_engine
 from multiprocessing import Process, Array
 from ctypes import Structure, c_char_p, c_int, c_char
 from pg_chameleon.lib.task_lib import KeyWords
+from pg_chameleon.lib.error_code import ErrorCode
 
 NUM_TRX_PRINT = 10000
 
@@ -620,12 +621,12 @@ def process_work(pg_engine, arr, i):
                 arr[id].flag = -1
             except Exception as exp:
                 if is_ddl(sql):
-                    pg_engine.logger.error("Failed to execute ddl sql, the origin sql %s, the executed error sql is %s,"
+                    pg_engine.logger.error("%s Failed to execute ddl sql, the origin sql %s, the executed error sql is %s,"
                                            " sql code is %s, and error message is %s" %
-                                           (sql, destination_ddl, exp.code, exp.message))
+                                           (ErrorCode.SQL_EXCEPTION, sql, destination_ddl, exp.code, exp.message))
                 else:
-                    pg_engine.logger.error("Failed to execute dml sql, the error sql is %s, sql code is %s, and error "
-                                           "message is %s" % (sql, exp.code, exp.message))
+                    pg_engine.logger.error("%s Failed to execute dml sql, the error sql is %s, sql code is %s, and error "
+                                           "message is %s" % (ErrorCode.SQL_EXCEPTION, sql, exp.code, exp.message))
                 arr[id].flag = -1
 
 

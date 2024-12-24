@@ -43,7 +43,8 @@ setup(
         "pg_chameleon.lib.global_lib",
         "pg_chameleon.lib.mysql_lib",
         "pg_chameleon.lib.pg_lib",
-        "pg_chameleon.lib.sql_util"
+        "pg_chameleon.lib.sql_util",
+        "pg_chameleon.lib.ErrorCode"
     ],
     scripts=[
         "scripts/chameleon.py",
@@ -59,7 +60,8 @@ setup(
         'daemonize==2.4.7',
         'rollbar==0.13.17',
         'geomet==0.3.0',
-        'mysqlclient==2.1.1'
+        'mysqlclient==2.1.1',
+        'kafka-python==2.0.2'
     ],
     include_package_data = True,
     package_data=package_data,

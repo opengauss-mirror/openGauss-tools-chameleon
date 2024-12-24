@@ -369,6 +369,12 @@ rollbar_env: ''
 
 dump_json： No
 
+alert_log_collection_enable: false
+
+alert_log_kafka_server: 127.0.0.1:9092
+
+alert_log_kafka_topic: 'my_log'
+
  
 
 type_override:
@@ -578,6 +584,18 @@ status：状态（1：待迁移，2：迁移中，3：迁移完成，6：迁移�
 percent：迁移进度（小于1时处于正常范围，status为6时可以是大于1的值）
 
 error: 错误信息，如果对象迁移失败，会输出错误信息，默认为""
+
+### 3.1.9. alert_log_collection_enable
+
+可选项。使用datakit全量迁移时界面展示异常信息，需要启动kafka服务，此时参数设为true；独立安装执行chameleon可默认false。
+
+### 3.1.10. alert_log_kafka_server
+
+用于使用datakit全量迁移时界面展示异常信息的的Kafka服务器的地址和端口，当“3.1.9.alert_log_collection_enable”为false时，这里为无效值。
+
+### 3.1.11. alert_log_kafka_topic
+
+用于使用datakit全量迁移时界面展示异常信息的Kafka服务的topic，当“3.1.9.alert_log_collection_enable”为false时，这里为无效值。
 
 ## **3.2.** 类型重载规则
 
@@ -1084,6 +1102,11 @@ rollbar_env: ''
 
 dump_json: No
 
+alert_log_collection_enable: false
+
+alert_log_kafka_server: 127.0.0.1:9092
+
+alert_log_kafka_topic: my_log
  
 
 # type_override allows the user to override the default type conversion
