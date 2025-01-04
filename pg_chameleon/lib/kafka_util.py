@@ -16,7 +16,7 @@ class KafkaHandler(logging.Handler):
         self.log_filter_pattern = log_filter_pattern
         self.sent_error_log_count = sent_error_log_count
 
-    def register_error_code(self, alert_log_kafka_server, alert_log_kafka_topic):
+    def register_error_code(self):
         # Build a map of error codes
         code_cause_cn_map = {}
         code_cause_en_map = {}
@@ -29,15 +29,7 @@ class KafkaHandler(logging.Handler):
         code_cause_cn_string = json.dumps(code_cause_cn_map, ensure_ascii=False)
         code_cause_en_string = json.dumps(code_cause_en_map, ensure_ascii=False)
 
-        producer = KafkaProducer(
-            bootstrap_servers=alert_log_kafka_server,
-            key_serializer=str.encode,
-            value_serializer=lambda v: str(v).encode('utf-8')
-        )
-
-        producer.send(alert_log_kafka_topic, key="chameleon", value=f"<CODE:causeCn>{code_cause_cn_string}<CODE:causeEn>{code_cause_en_string}")
-        producer.flush()
-        producer.close()
+        producer.send(self.topic, key=b"chameleon", value=f"<CODE:causeCn>{code_cause_cn_string}<CODE:causeEn>{code_cause_en_string}")
 
     def emit(self, record):
         try:
@@ -45,6 +37,7 @@ class KafkaHandler(logging.Handler):
                 log_entry = self.format(record)
                 self.producer.send(self.topic, key=b"chameleon", value=log_entry)
                 self.producer.flush()
+                self.producer.close()
         except Exception:
             self.handleError(record)
 
@@ -52,7 +45,7 @@ class KafkaHandler(logging.Handler):
         if self.log_filter_pattern:
             if re.search(self.log_filter_pattern, record.getMessage()):
                 if self.sent_error_log_count == 0:
-                    self.register_error_code(self.alert_log_kafka_server, self.topic)
+                    self.register_error_code()
                 self.sent_error_log_count += 1
                 return True
             else:
