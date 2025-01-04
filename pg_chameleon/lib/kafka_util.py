@@ -28,16 +28,22 @@ class KafkaHandler(logging.Handler):
         # Serialize the error code information into a JSON string
         code_cause_cn_string = json.dumps(code_cause_cn_map, ensure_ascii=False)
         code_cause_en_string = json.dumps(code_cause_en_map, ensure_ascii=False)
+        producer = KafkaProducer(
+            bootstrap_servers=self.alert_log_kafka_server,
+            key_serializer=str.encode,
+            value_serializer=lambda v: str(v).encode('utf-8')
+        )
 
-        producer.send(self.topic, key=b"chameleon", value=f"<CODE:causeCn>{code_cause_cn_string}<CODE:causeEn>{code_cause_en_string}")
+        producer.send(self.topic, key="chameleon", value=f"<CODE:causeCn>{code_cause_cn_string}<CODE:causeEn>{code_cause_en_string}")
+        producer.flush()
+        producer.close()
 
     def emit(self, record):
         try:
             if self.should_log(record):
                 log_entry = self.format(record)
-                self.producer.send(self.topic, key=b"chameleon", value=log_entry)
-                self.producer.flush()
-                self.producer.close()
+                future = self.producer.send(self.topic, key=b"chameleon", value=log_entry)
+                future.get(timeout=1)
         except Exception:
             self.handleError(record)
 
