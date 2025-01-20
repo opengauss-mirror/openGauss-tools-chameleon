@@ -603,6 +603,40 @@ class pg_engine(object):
         self.types_override_rule = {ColumnType.ALL_DOUBLES.value: ColumnType.M_DOUBLE.value,
                                     ColumnType.ALL_FLOATS.value: ColumnType.M_FLOAT.value}
 
+    def check_db_status(self):
+        """
+            The method check whether the database status is normal
+        """
+        is_db_normal = False
+        try:
+            stmt = self.pgsql_conn.prepare("SELECT 1")
+            postgis_check = stmt.first()
+            if postgis_check is not None:
+                is_db_normal = True
+            else:
+                self.pgsql_conn = None
+            return is_db_normal
+        except Exception as e:
+            self.pgsql_conn = None
+            return is_db_normal
+        finally:
+            if not is_db_normal:
+                self.keep_trying_connect_db()
+
+    def keep_trying_connect_db(self):
+        while True:
+            try:
+                self.connect_db()
+                self.logger.info("%s The og database status is back to normal, and connected."
+                                 % ErrorCode.OPENGAUSS_DB_STATUS_BACK_NORMAL)
+                break
+            except Exception as exp:
+                self.logger.error(
+                    "%s The og database failed to connect. Try to reconnect 20 seconds later. "
+                    "Please Ensure that the database status is normal. Error: %s"
+                    % (ErrorCode.OPENGAUSS_DB_CONNECTION_FAILED, str(exp)))
+                time.sleep(20)
+
     def check_migration_collate(self):
         """
             The method check whether to migrate collate
@@ -914,6 +948,7 @@ class pg_engine(object):
                     sql_grant_usage = ("GRANT USAGE ON SCHEMA `{}` TO `{}`;").format(schema_loading, db_role)
                     sql_alter_default_privs = ("ALTER DEFAULT PRIVILEGES IN SCHEMA `{}` GRANT SELECT ON TABLES TO `{}`;").format(schema_loading, db_role)
                     try:
+                        self.check_db_status()
                         self.connect_db()
                         self.pgsql_conn.execute(sql_grant_usage)
                         self.pgsql_conn.execute(sql_alter_default_privs)

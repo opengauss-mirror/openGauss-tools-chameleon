@@ -14,10 +14,13 @@ class ErrorCode(Enum):
     PROCESS_STATE_CHECK_EXCEPTION = (5110, "进程状态检查失败", "Process state check failed")
     PROCESS_TERMINATE_EXCEPTION = (5120, "进程终止失败", "Process terminate failed")
     QUEUE_READ_EXCEPTION = (5130, "队列读取失败", "Queue read failed")
-    OPENGAUSS_DB_CONNECTION_FAILED = (5300, "OpenGauss数据库连接失败", "openGauss Database connection failed")
-    OPENGAUSS_DB_OPERATION_FAILED = (5301, "OpenGauss数据库操作失败", "Database operation failed")
+    OPENGAUSS_DB_CONNECTION_FAILED = (5300, "OpenGauss数据库连接失败", "OpenGauss Database connection failed")
+    OPENGAUSS_DB_OPERATION_FAILED = (5301, "OpenGauss数据库操作失败", "OpenGauss Database operation failed")
     OPENGAUSS_DB_SET_STATUS_FAILED = (5302, "设置OpenGauss数据库状态失败",
         "Failed to set OpenGauss database status")
+    OPENGAUSS_DB_STATUS_ABNORMAL = (5303, "OpenGauss数据库状态异常", "OpenGauss Database status abnormal")
+    OPENGAUSS_DB_STATUS_BACK_NORMAL = (5304, "OpenGauss数据库状态已恢复正常",
+        "OpenGauss Database status is back to normal")
     MYSQL_DB_CONNECTION_FAILED = (5310, "Mysql数据库连接失败", "MYSQL Database connection failed")
     SQL_EXCEPTION = (5320, "SQL执行失败", "SQL execution failed")
     OBJECT_MIGRATION_USER_MISSING = (5321, "对象迁移用户缺失", "Migration user for object is missing")
