@@ -634,7 +634,10 @@ def create_connection(pg_engine):
     """
         The method is used to create a connection in the work process.
     """
-    str_conn = "opengauss://%(host)s:%(port)s/%(database)s" % pg_engine.dest_conn
+    if ":" in self.dest_conn["host"]:
+        str_conn = "opengauss://[%(host)s]:%(port)s/%(database)s" % pg_engine.dest_conn
+    else:
+        str_conn = "opengauss://%(host)s:%(port)s/%(database)s" % pg_engine.dest_conn
     conn = py_opengauss.open(str_conn, user=pg_engine.dest_conn["user"],
                              password=pg_engine.dest_conn["password"])
     conn.settings['client_encoding'] = pg_engine.dest_conn["charset"]
