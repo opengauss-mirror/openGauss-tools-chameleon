@@ -7,10 +7,7 @@ from pg_chameleon.lib.error_code import ErrorCode
 class KafkaHandler(logging.Handler):
     def __init__(self, alert_log_kafka_server, topic, log_filter_pattern=None, sent_error_log_count=0):
         logging.Handler.__init__(self)
-        self.producer = KafkaProducer(
-            bootstrap_servers=alert_log_kafka_server,
-            value_serializer=lambda v: str(v).encode('utf-8')
-        )
+        self.producer = None
         self.alert_log_kafka_server = alert_log_kafka_server
         self.topic = topic
         self.log_filter_pattern = log_filter_pattern
@@ -42,8 +39,8 @@ class KafkaHandler(logging.Handler):
         try:
             if self.should_log(record):
                 log_entry = self.format(record)
-                future = self.producer.send(self.topic, key=b"chameleon", value=log_entry)
-                future.get(timeout=1)
+                self.producer.send(self.topic, key=b"chameleon", value=log_entry)
+                self.producer.flush()
         except Exception:
             self.handleError(record)
 
@@ -53,6 +50,11 @@ class KafkaHandler(logging.Handler):
                 if self.sent_error_log_count == 0:
                     self.register_error_code()
                 self.sent_error_log_count += 1
+                if not self.producer:
+                    self.producer = KafkaProducer(
+                        bootstrap_servers=self.alert_log_kafka_server,
+                        value_serializer=lambda v: str(v).encode('utf-8')
+                    )
                 return True
             else:
                 return False
@@ -62,6 +64,4 @@ class KafkaHandler(logging.Handler):
         return self.sent_error_log_count
 
     def close(self):
-        # Shut down KafkaProducer
-        self.producer.close()
         super().close()

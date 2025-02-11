@@ -144,6 +144,7 @@ class mysql_source(object):
         self.only_migration_index = False
         # record table pkey info when keep_existing_schema open
         self.table_pkeys = {}
+        self.writer_engine = None
 
     @classmethod
     def initJson(cls):
@@ -1870,16 +1871,7 @@ class mysql_source(object):
                     "no":task.slice + 1,"total":task_slice,"beginIdx":task.idx_pair.first,"endIdx":task.idx_pair.second,"slice":task_slice > 1})
 
     def copy_table_data(self, task, writer_engine):
-        if self.copy_mode == "direct":
-            csv_file = task.csv_file
-        elif self.copy_mode == "file":
-            csv_file = open(task.csv_file, 'rb')
-        else:
-            self.logger.warning("unknown copy mode, use \'direct\' mode")
-            csv_file = task.csv_file
-        if csv_file is None:
-            self.logger.warning("this is an empty csv file, you should check your batch for errors")
-            return
+        self.writer_engine = writer_engine
         count_rows = task.count_rows
         schema = task.schema
         table = task.table
@@ -1887,7 +1879,6 @@ class mysql_source(object):
         total_rows = count_rows["table_rows"]
         copy_limit = int(count_rows["copy_limit"])
         avg_row_length = int(count_rows["avg_row_length"])
-        loading_schema = self.schema_loading[schema]["loading"]
         column_list = select_columns["column_list"]
         column_list_select = select_columns["column_list_select"]
         if copy_limit == 0:
@@ -1896,35 +1887,34 @@ class mysql_source(object):
         range_slices = list(range(num_slices + 1))
         total_slices = len(range_slices)
         task_slice = task.slice
-        contain_columns = task.contain_columns
-        column_split = task.column_split
-        copy_data_from_csv = True
+        is_need_copy_from_csv = True
+
         if self.with_datacheck and task.slice == -1:
             self.put_writer_record("SLICE", task)
             return
-        
-        try:
-            writer_engine.copy_data(csv_file, loading_schema, table, column_list, contain_columns, column_split)
-            self.put_writer_record("SLICE", task)
-            if self.dump_json:
-                percent = 1.0 if (task_slice + 1) > total_slices else (task_slice + 1) / total_slices
-                self.__copied_progress_json("table", table, percent)
-                self.__copy_total_progress_json(copy_limit, avg_row_length)
-        except Exception as exp:
-            self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, exp.code, exp.message))
-            self.logger.info("Table %s.%s error in copy csv mode, saving slice number for the fallback to "
-                             "insert statements" % (loading_schema, table))
-            copy_data_from_csv = False
-        finally:
-            csv_file.close()
-            if self.copy_mode == "file" and not self.with_datacheck:
-                try:
-                    remove(task.csv_file)
-                except Exception as exp:
-                    self.logger.error("%s remove csv file failed %s and the exp message is %s"
-                                      % (ErrorCode.CSV_FILE_REMOVE_FAILED, task.csv_file, exp.message))
-            del csv_file
-            gc.collect()
+        while is_need_copy_from_csv:
+            if self.copy_mode == "direct":
+                csv_file = task.csv_file
+            elif self.copy_mode == "file":
+                csv_file = open(task.csv_file, 'rb')
+            else:
+                self.logger.warning("unknown copy mode, use \'direct\' mode")
+                csv_file = task.csv_file
+            if csv_file is None:
+                self.logger.warning("this is an empty csv file, you should check your batch for errors")
+                return
+            copy_from_csv_result = self.copy_data_from_csv_file(csv_file, task)
+            copy_data_from_csv = copy_from_csv_result[0]
+            is_need_copy_from_csv = copy_from_csv_result[1]
+        csv_file.close()
+        if self.copy_mode == "file" and not self.with_datacheck:
+            try:
+                remove(task.csv_file)
+            except Exception as exp:
+                self.logger.error("%s remove csv file failed %s and the exp message is %s"
+                                    % (ErrorCode.CSV_FILE_REMOVE_FAILED, task.csv_file, exp.message))
+        del csv_file
+        gc.collect()
         self.print_progress(task_slice + 1, total_slices, schema, table)
         if self.is_skip_completed_tables and copy_data_from_csv:
             self.handle_migration_progress(schema, table)
@@ -1933,8 +1923,55 @@ class mysql_source(object):
                        "select_stat": select_columns["select_stat"], "column_list": column_list,
                        "column_list_select": column_list_select, "copy_limit": copy_limit, "total_slices": total_slices,
                        "avg_row_length": avg_row_length}
-            self.insert_table_data(ins_arg, writer_engine)
+            self.insert_table_data(ins_arg, self.writer_engine)
             self.put_writer_record("SLICE", task)
+
+    def copy_data_from_csv_file(self, csv_file, task):
+        schema = task.schema
+        table = task.table
+        count_rows = task.count_rows
+        contain_columns = task.contain_columns
+        select_columns = task.select_columns
+        column_split = task.column_split
+        task_slice = task.slice
+        loading_schema = self.schema_loading[schema]["loading"]
+        column_list = select_columns["column_list"]
+        avg_row_length = int(count_rows["avg_row_length"])
+        copy_limit = int(count_rows["copy_limit"])
+        total_rows = count_rows["table_rows"]
+        if copy_limit == 0:
+            copy_limit = DATA_NUM_FOR_A_SLICE_CSV
+        num_slices = int(total_rows // copy_limit)
+        range_slices = list(range(num_slices + 1))
+        total_slices = len(range_slices)
+        copy_data_from_csv = True
+        is_need_recopy_from_csv = False
+        try:
+            self.writer_engine.copy_data(csv_file, loading_schema, table, column_list, contain_columns,
+                                         column_split)
+            self.put_writer_record("SLICE", task)
+            if self.dump_json:
+                percent = 1.0 if (task_slice + 1) > total_slices else (task_slice + 1) / total_slices
+                self.__copied_progress_json("table", table, percent)
+                self.__copy_total_progress_json(copy_limit, avg_row_length)
+        except Exception as exp:
+            if hasattr(exp, 'code') and hasattr(exp, 'message'):
+                self.logger.error(
+                    "%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, exp.code, exp.message))
+            else:
+                self.logger.error("%s %s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, str(exp)))
+            if not self.writer_engine.check_db_status():
+                self.logger.info(
+                    "The abnormal database state has been fixed and the csv file is now being re-copied")
+                self.writer_engine.set_source_status("initialising")
+                self.writer_engine.open_b_compatibility_mode()
+                is_need_recopy_from_csv = True
+                return copy_data_from_csv, is_need_recopy_from_csv
+            self.logger.info("Table %s.%s error in copy csv mode, then saving slice number for the fallback to "
+                             "insert statements" % (loading_schema, table))
+            copy_data_from_csv = False
+            return copy_data_from_csv, is_need_recopy_from_csv
+        return copy_data_from_csv, is_need_recopy_from_csv
 
     def insert_table_data(self, ins_arg, writer_engine):
         """
