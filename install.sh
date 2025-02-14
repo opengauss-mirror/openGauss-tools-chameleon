@@ -8,9 +8,8 @@ echo $venv_path >> ${install_log}
 
 function run_build(){
   echo "
-  LD_LIBRARY_PATH=`pwd`:\$LD_LIBRARY_PATH
-  export LD_LIBRARY_PATH
-  " >> ~/.bashrc
+LD_LIBRARY_PATH=`pwd`:\$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH" >> ~/.bashrc
   #解压后的操作
   cd venv/bin
   #创建软链接
