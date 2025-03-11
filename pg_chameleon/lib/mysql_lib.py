@@ -3174,7 +3174,6 @@ class mysql_source(object):
         success_num = 0  # number of replication success records
         failure_num = 0  # number of replication fail records
 
-        info_message = ". PLEASE create openGauss role!!! FIRST：set b_compatibility_user_host_auth to on; SECOND：create user `XXX`@`XXX` with password 'XXXXXX';(Attention: `` not '') THIRD: grant all privileges to `XXX`@`XXX`;"
         for object_metadata in self.cursor_buffered.fetchall():
             object_name = object_metadata["OBJECT_NAME"]
 
@@ -3198,6 +3197,7 @@ class mysql_source(object):
                                   % (db_object_type.value, schema, object_name, exp.code, exp.message))
 
                 total_error_message = "Method 1 execute failed: %s" % exp.message
+                # Users with the same name as the object definer (required by the object migration limit)
                 is_user_not_exist = False
                 if exp.code == USER_NOT_EXIST_ERROR_CODE:
                     is_user_not_exist = True
@@ -3208,10 +3208,8 @@ class mysql_source(object):
                 if "java: command not found" in stderr:
                     total_error_message += "; " + "Method 2 parse sql failed: No java environment for running sql-translator, %s" % stderr.strip()
 
-                    if is_user_not_exist:
-                        total_error_message += info_message
-                    failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
-                                                       failure_num, object_name)
+                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                        total_error_message, failure_num, object_name)
                     continue
 
                 tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type, schema,
@@ -3221,10 +3219,8 @@ class mysql_source(object):
                     # if translation has any error, this replication also fail
                     # insert a failure record into the object replication status table
                     total_error_message += "; " + "Method 2 parse sql failed: %s" % error_message
-                    if is_user_not_exist:
-                        total_error_message += info_message
-                    failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
-                                                       failure_num, object_name)
+                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                        total_error_message, failure_num, object_name)
                     continue
 
                 # if translate successful, add the corresponding database object to opengauss
@@ -3233,17 +3229,24 @@ class mysql_source(object):
                                                           schema, success_num, tran_create_object_statement)
                 except Exception as exception:
                     total_error_message += "; " + "Method 2 execute failed: %s" % exception.message
-                    if is_user_not_exist or exception.code == USER_NOT_EXIST_ERROR_CODE:
-                        total_error_message += info_message
-                    failure_num = self.add_object_fail(create_object_statement, db_object_type, total_error_message,
-                                                       failure_num, object_name)
+                    if exception.code == USER_NOT_EXIST_ERROR_CODE:
+                        is_user_not_exist = True
+                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                        total_error_message, failure_num, object_name)
         self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
             db_object_type.value, schema, success_num + failure_num, success_num, failure_num))
 
-    def add_object_fail(self, create_object_statement, db_object_type, total_error_message, failure_num, object_name):
+    def add_object_fail(self, is_user_not_exist, create_object_statement, db_object_type, total_error_message, failure_num, object_name):
+        info_message = (". PLEASE create openGauss role!!! FIRST：set b_compatibility_user_host_auth to on; "
+                        "SECOND：create user `XXX`@`XXX` with password 'XXXXXX';(Attention: `` not '') THIRD: grant all privileges to `XXX`@`XXX`;")
         self.pg_engine.insert_object_replicate_record(object_name, db_object_type, create_object_statement)
-        self.logger.error("%s Two methods execute create %s %s failed, error message is %s" %
-            (ErrorCode.OBJECT_MIGRATION_USER_MISSING, db_object_type.value, object_name, total_error_message))
+        if is_user_not_exist:
+            total_error_message += info_message
+            self.logger.error("%s Two methods execute create %s %s failed, error message is %s" %
+                (ErrorCode.OBJECT_MIGRATION_USER_MISSING, db_object_type.value, object_name, total_error_message))
+        else:
+            self.logger.error("%s Two methods execute create %s %s failed, error message is %s" %
+                            (ErrorCode.OBJECT_MIGRATION_FAILED, db_object_type.value, object_name, total_error_message))
         self.logger.error("%s Copying the source object fail %s : %s" %
             (ErrorCode.OBJECT_MIGRATION_FAILED, db_object_type.value, object_name))
         if self.dump_json:
