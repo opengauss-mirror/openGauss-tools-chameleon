@@ -556,6 +556,24 @@ class pgsql_source(object):
             raise
 
 
+def get_unique_or_fulltext_index_sql(unique_key, fulltext_key,
+                                       index_name, schema, table, using, local_index, comment):
+    if len(comment) == 0:
+        if unique_key != '':
+            idx_def = 'ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` UNIQUE %s %s;' \
+                % (schema, table, index_name, using, local_index)
+        else:
+            idx_def = 'CREATE %s INDEX `%s` ON `%s`.`%s` %s %s;' \
+                % (fulltext_key, index_name, schema, table, using, local_index)
+    else:
+        if unique_key != '':
+            idx_def = """ALTER TABLE `%s`.`%s` ADD CONSTRAINT `%s` UNIQUE %s %s comment '%s';""" \
+                % (schema, table, index_name, using, local_index, comment)
+        else:
+            idx_def = """CREATE %s INDEX `%s` ON `%s`.`%s` %s %s comment '%s';""" \
+                % (fulltext_key, index_name, schema, table, using, local_index, comment)
+    return idx_def
+
 
 class pg_engine(object):
     def __init__(self):
@@ -5213,13 +5231,8 @@ class pg_engine(object):
                 else:
                     local_index = ''
 
-                if len(comment) == 0:
-                    idx_def = 'CREATE %s %s INDEX `%s` ON `%s`.`%s` %s %s;'\
-                              % (unique_key, fulltext_key, index_name, schema, table, using, local_index)
-                else:
-                    idx_def = """CREATE %s %s INDEX `%s` ON `%s`.`%s` %s %s comment '%s';"""\
-                              % (unique_key, fulltext_key, index_name, schema, table, using, local_index, comment)
-                idx_ddl[index_name] = idx_def
+                idx_ddl[index_name] = get_unique_or_fulltext_index_sql(unique_key, fulltext_key,
+                                         index_name, schema, table, using, local_index, comment)
             self.idx_sequence += 1
 
         if is_parallel_create_index:
