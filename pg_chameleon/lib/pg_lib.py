@@ -4185,7 +4185,7 @@ class pg_engine(object):
                 self.logger.error("%s Execute create column comment ddl failed, the error sql is %s, sql code "
                                   "is %s, and error message is %s" % (ErrorCode.SQL_EXCEPTION, column_comments_ddl, exp.code, exp.message))
 
-        table_comment = table_info["table_comment"]
+        table_comment = table_info["table_comment"].replace("'", "''")
         if len(table_comment) > 0:
             destination_schema = self.schema_loading[schema]["loading"]
             table_comment_ddl = """COMMENT ON TABLE `%s`.`%s` IS '%s'""" % (destination_schema, table_name, table_comment)
