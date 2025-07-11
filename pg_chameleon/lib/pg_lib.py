@@ -5290,8 +5290,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(ddl)
             except Exception as exp:
-                self.logger.error("%s alter table adding auto_increment failed, error code is %s and error message is %s"
-                                  % (ErrorCode.AUTO_INCREMENT_INDEX_CREATE_FAILED, exp.code, exp.message))
+                self.logger.error("%s alter %s.%s adding auto_increment failed, error code is %s and error message is %s"
+                                  % (ErrorCode.AUTO_INCREMENT_INDEX_CREATE_FAILED, schema, table, exp.code, exp.message))
 
     def swap_schemas(self):
         """
