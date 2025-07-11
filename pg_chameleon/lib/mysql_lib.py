@@ -453,6 +453,24 @@ class mysql_source(object):
         )
         self.charset = db_conn["charset"]
         self.cursor_buffered = self.conn_buffered.cursor()
+        if self.charset == "utf8" and self.is_support_four_byte_characters():
+            self.charset = "utf8mb4"
+
+
+    def is_support_four_byte_characters(self):
+        self.cursor_buffered.execute("SELECT version();")
+        mysql_version = self.cursor_buffered.fetchall()
+
+        # Extract the MySQL version number
+        mysql_version_str = mysql_version[0][0]
+        # Extract the MySQL version number and parse the version number (assuming the version number format is 'X.Y.Z')
+        mysql_version_parts = mysql_version_str.split(' ')[1].split('.')
+        mysql_version_tuple = tuple(map(int, mysql_version_parts))
+
+        if mysql_version_tuple > (5, 5, 3):
+            return True
+        else:
+            return False
 
     def disconnect_db_buffered(self):
         """
@@ -1832,7 +1850,9 @@ class mysql_source(object):
                 # will lead to different value stored in MySQL and openGauss, we have no choice...
                 csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
                 if self.copy_mode == 'file':
-                    csv_file = codecs.open(out_file, 'wb', self.charset, buffering=-1)
+                    safe_charset = 'utf-8' if getattr(self, 'charset', '').lower().replace('-', '') in (
+                    'utf8mb4', 'utf8') else self.charset
+                    csv_file = codecs.open(out_file, 'wb', safe_charset, buffering=-1)
                     csv_file.write(csv_data)
                     csv_file.close()
                     task = CopyDataTask(out_file, count_rows, table, schema, select_columns, len(csv_results),
