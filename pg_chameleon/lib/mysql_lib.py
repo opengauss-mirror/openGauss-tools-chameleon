@@ -456,18 +456,9 @@ class mysql_source(object):
         if self.charset == "utf8" and self.is_support_four_byte_characters():
             self.charset = "utf8mb4"
 
-
     def is_support_four_byte_characters(self):
-        self.cursor_buffered.execute("SELECT version();")
-        mysql_version = self.cursor_buffered.fetchall()
-
-        # Extract the MySQL version number
-        mysql_version_str = mysql_version[0][0]
-        # Extract the MySQL version number and parse the version number (assuming the version number format is 'X.Y.Z')
-        mysql_version_parts = mysql_version_str.split(' ')[1].split('.')
-        mysql_version_tuple = tuple(map(int, mysql_version_parts))
-
-        if mysql_version_tuple > (5, 5, 3):
+        support_four_byte_characters = sql_token.parse_version("5.5.3")
+        if self.version > support_four_byte_characters:
             return True
         else:
             return False
