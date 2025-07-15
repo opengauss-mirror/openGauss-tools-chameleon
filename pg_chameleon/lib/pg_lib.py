@@ -674,7 +674,6 @@ class pg_engine(object):
         # character set and collate will not be migrated.
         if encoding == 0:
             self.logger.warning("The character set and collate will not be migrated for database encoding 0(SQL_ASCII)")
-            self.migration_collate = False
 
     def check_b_database(self):
         """
@@ -4170,6 +4169,14 @@ class pg_engine(object):
             table_collation = table_info["table_collation"]
             if table_collation and len(table_collation) > 0 and table_collation != UNSUPPORT_COLLATE:
                 table_ddl += " COLLATE = " + table_collation + ";"
+
+        set_multi_charset_sql = "SET b_format_behavior_compat_options = 'enable_multi_charset'"
+        try:
+            self.pgsql_conn.execute(set_multi_charset_sql)
+        except Exception as exp:
+            self.logger.error(
+                f"{ErrorCode.SQL_EXCEPTION} Execute set b_format_behavior_compat_options to enable_multi_charset failed, "
+                f"the error sql is {set_multi_charset_sql}, error message is {str(exp)}")
 
         try:
             self.pgsql_conn.execute(table_ddl)
