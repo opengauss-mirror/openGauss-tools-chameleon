@@ -66,6 +66,8 @@ DICTCURSOR_INDEX = 0
 SSCURSOR_INDEX = 1
 SSDICTCURSOR_INDEX = 2
 USER_NOT_EXIST_ERROR_CODE = '42704'
+UTF8MB4 = "utf8mb4"
+UTF8 = "utf8"
 
 
 class process_state():
@@ -453,15 +455,21 @@ class mysql_source(object):
         )
         self.charset = db_conn["charset"]
         self.cursor_buffered = self.conn_buffered.cursor()
-        if self.charset == "utf8" and self.is_support_four_byte_characters():
-            self.charset = "utf8mb4"
+        if db_conn["charset"] == UTF8:
+            self.is_support_four_byte_characters()
 
     def is_support_four_byte_characters(self):
         support_four_byte_characters = sql_token.parse_version("5.5.3")
+        if self.version == 0:
+            sql_version = """SHOW GLOBAL VARIABLES LIKE 'version';"""
+            self.cursor_buffered.execute(sql_version)
+            variable_check = self.cursor_buffered.fetchone()
+            self.is_mariadb = False if variable_check["Value"].lower().find(MARIADB) == -1 else True
+            if self.is_mariadb:
+                self.logger.warning("It is a mariadb.")
+            self.version = sql_token.parse_version(variable_check["Value"])
         if self.version > support_four_byte_characters:
-            return True
-        else:
-            return False
+            self.charset = UTF8MB4
 
     def disconnect_db_buffered(self):
         """
@@ -493,6 +501,8 @@ class mysql_source(object):
         )
         self.charset = db_conn["charset"]
         self.cursor_unbuffered = self.conn_unbuffered.cursor()
+        if db_conn["charset"] == UTF8:
+            self.is_support_four_byte_characters()
 
     def disconnect_db_unbuffered(self):
         """
@@ -1822,6 +1832,8 @@ class mysql_source(object):
         copydatatask_list = []
         self.flow_control(schema, table)
         with self.reader_xact(self, cursor_buffered, table_txs):
+            if self.charset == UTF8MB4:
+                cursor_unbuffered.execute("""SET NAMES utf8mb4;""")
             cursor_unbuffered.execute(sql_csv)
             self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
             # unlock tables
@@ -1842,7 +1854,7 @@ class mysql_source(object):
                 csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
                 if self.copy_mode == 'file':
                     safe_charset = 'utf-8' if getattr(self, 'charset', '').lower().replace('-', '') in (
-                    'utf8mb4', 'utf8') else self.charset
+                    UTF8MB4, UTF8) else self.charset
                     csv_file = codecs.open(out_file, 'wb', safe_charset, buffering=-1)
                     csv_file.write(csv_data)
                     csv_file.close()
