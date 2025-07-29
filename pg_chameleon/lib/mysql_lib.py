@@ -407,6 +407,13 @@ class mysql_source(object):
             self.logger.warning("Mandatory settings for online migration - log_bin ON, binlog_format ROW,"
                                 " binlog_row_image FULL, gtid_mode ON (only for MySQL 5.6+) ")
 
+    def get_mysql_password(self):
+        is_enable_env_password = os.getenv("enable.env.password", "").lower()
+        if is_enable_env_password == "true":
+            return os.getenv("sources.db_conn.password", "")
+        else:
+            return self.source_config["db_conn"]["password"]
+
     def get_connect(self, cursor_type=0):
         cursor_lst = [MySQLdb.cursors.DictCursor, MySQLdb.cursors.SSCursor, MySQLdb.cursors.SSDictCursor]
         db_conn = self.source_config["db_conn"]
@@ -417,7 +424,7 @@ class mysql_source(object):
             host=db_conn["host"],
             user=db_conn["user"],
             port=db_conn["port"],
-            password=db_conn["password"],
+            password=self.get_mysql_password(),
             charset=db_conn["charset"],
             connect_timeout=db_conn["connect_timeout"],
             autocommit=True,
@@ -453,7 +460,7 @@ class mysql_source(object):
             host = db_conn["host"],
             user = db_conn["user"],
             port = db_conn["port"],
-            password = db_conn["password"],
+            password = self.get_mysql_password(),
             charset = db_conn["charset"],
             connect_timeout = db_conn["connect_timeout"],
             cursorclass=pymysql.cursors.DictCursor
@@ -499,7 +506,7 @@ class mysql_source(object):
             host = db_conn["host"],
             user = db_conn["user"],
             port = db_conn["port"],
-            password = db_conn["password"],
+            password = self.get_mysql_password(),
             charset = db_conn["charset"],
             connect_timeout = db_conn["connect_timeout"],
             cursorclass=pymysql.cursors.SSCursor
@@ -2604,7 +2611,7 @@ class mysql_source(object):
         db_conn = self.source_config["db_conn"]
         self.replica_conn["host"] = str(db_conn["host"])
         self.replica_conn["user"] = str(db_conn["user"])
-        self.replica_conn["passwd"] = str(db_conn["password"])
+        self.replica_conn["passwd"] = str(self.get_mysql_password())
         self.replica_conn["port"] = int(db_conn["port"])
         self.__build_table_exceptions()
         self.__build_skip_events()
