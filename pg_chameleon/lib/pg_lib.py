@@ -755,7 +755,7 @@ class pg_engine(object):
                 strconn = "opengauss://[%(host)s]:%(port)s/%(database)s" % self.dest_conn
             else:
                 strconn = "opengauss://%(host)s:%(port)s/%(database)s" % self.dest_conn
-            self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.dest_conn["password"], sslmode="disable")
+            self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.get_opengauss_password(), sslmode="disable")
             self.pgsql_conn.settings['client_encoding']=self.dest_conn["charset"]
             self.pgsql_conn.execute("set session_timeout = 0;")
             self.set_params(self.pgsql_conn)
@@ -765,6 +765,13 @@ class pg_engine(object):
             os._exit(0)
         elif self.pgsql_conn:
             self.logger.debug("There is already a database connection active.")
+
+    def get_opengauss_password(self):
+        is_enable_env_password = os.getenv("enable.env.password", "").lower()
+        if is_enable_env_password == "true":
+            return os.getenv("pg_conn.password", "")
+        else:
+            return self.dest_conn["password"]
 
     def set_params(self, connection):
         try:
