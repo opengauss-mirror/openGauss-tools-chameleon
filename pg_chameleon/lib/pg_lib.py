@@ -5253,8 +5253,8 @@ class pg_engine(object):
                 try:
                     self.pgsql_conn.execute(set_parallel_index)
                 except Exception as exp:
-                    self.logger.error("%s create parallel index error, error code is %s and error is %s"
-                                  % (ErrorCode.SQL_EXCEPTION, exp.code, exp.message))
+                    self.logger.error("%s create parallel index from table %s.%s error, error code is %s and error is %s"
+                                  % (ErrorCode.SQL_EXCEPTION, schema, table, exp.code, exp.message))
                 self.logger.info("set parallel index workers %s for table %s.%s"
                          % (self.index_parallel_workers, schema, table))
 
@@ -5274,8 +5274,8 @@ class pg_engine(object):
             try:
                 self.pgsql_conn.execute(reset_parallel_index)
             except Exception as exp:
-                self.logger.error("%s reset parallel index error, error code is %s and error is %s"
-                                  % (ErrorCode.PARALLEL_INDEX_RESET_FAILED, exp.code, exp.message))
+                self.logger.error("%s reset parallel index from %s.%s error, error code is %s and error is %s"
+                                  % (ErrorCode.PARALLEL_INDEX_RESET_FAILED, schema, table, exp.code, exp.message))
             self.logger.info("reset parallel index workers %s for table %s.%s"
                              % (self.index_parallel_workers, schema, table))
 

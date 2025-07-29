@@ -68,6 +68,11 @@ SSDICTCURSOR_INDEX = 2
 USER_NOT_EXIST_ERROR_CODE = '42704'
 UTF8MB4 = "utf8mb4"
 UTF8 = "utf8"
+MAX_RETRIES = 3
+# Retry interval, in seconds
+RETRY_DELAY = 1
+# Set a longer read timeout, in seconds.
+NET_READ_TIMEOUT = 600
 
 
 class process_state():
@@ -1572,7 +1577,7 @@ class mysql_source(object):
                     self.write_task_queue.put(self.index_waiting_queue.get(block=True))
                 self.index_waiting_queue.put(index_write_task, block=True)
         except BaseException as exp:
-            self.logger.error("%s Message: %s", ErrorCode.PROCESS_STATE_CHECK_EXCEPTION, exp)
+            self.logger.error("%s Message: %s, table is %s.%s.", ErrorCode.PROCESS_STATE_CHECK_EXCEPTION, exp, schema, table)
             self.logger.info("Could not copy the table %s. Excluding it from the replica." % (table))
             self.read_retry_queue.put(task, block=True)
         finally:
@@ -1826,57 +1831,91 @@ class mysql_source(object):
 
         # We use a random string here when the value is NULL, we can't use 'NULL' to represent a NULL value,
         # cause we can store a string which is 'NULL'(4 byte length string). But a random string is also not
-        # a perfect method to slove this problem. We may need to find another method to slove this later.    
-
-        task_slice = 0
+        # a perfect method to slove this problem. We may need to find another method to slove this later.
+        last_successful_slice_before_retry = 0
         copydatatask_list = []
         self.flow_control(schema, table)
-        with self.reader_xact(self, cursor_buffered, table_txs):
-            if self.charset == UTF8MB4:
-                cursor_unbuffered.execute("""SET NAMES utf8mb4;""")
-            cursor_unbuffered.execute(sql_csv)
-            self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
-            # unlock tables
-            if table_txs:
-                self.logger.debug("Finish executing query, so unlocking the tables")
-                self.unlock_tables(cursor_buffered)
-            while True:
-                out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_DATA_SUB_DIR, schema, table, task_slice + 1)
-                try:
-                    csv_results = cursor_unbuffered.fetchmany(copy_limit)
-                except BaseException as exp:
-                    self.logger.error("%s catch exception in fetch many and exp is %s" % (ErrorCode.GET_SOURCE_DATA_FAILED, exp))
-                    raise
-                if len(csv_results) == 0:
+        retries = 0
+        while retries < MAX_RETRIES:
+            task_slice = 0
+            skip_outer_loop = False
+            fetch_data_complete = False
+            with self.reader_xact(self, cursor_buffered, table_txs):
+                if self.charset == UTF8MB4:
+                    cursor_unbuffered.execute("""SET NAMES utf8mb4;""")
+                cursor_unbuffered.execute(sql_csv)
+                self.logger.debug("Finish executing query for table %s.%s" % (schema, table))
+                # unlock tables
+                if table_txs:
+                    self.logger.debug("Finish executing query, so unlocking the tables")
+                    self.unlock_tables(cursor_buffered)
+                while True:
+                    out_file = '%s/%s/%s_%s_slice%d.csv' % (self.out_dir, CSV_DATA_SUB_DIR, schema, table, task_slice + 1)
+                    try:
+                        csv_results = cursor_unbuffered.fetchmany(copy_limit)
+                    except BaseException as exp:
+                        # Check if it is a MySQL connection lost error
+                        if "lost connection" in str(exp).lower():
+                            retries += 1
+                            if retries < MAX_RETRIES:
+                                self.logger.warning(
+                                    f"Attempt {retries} to fetch data for table {schema}.{table} (slice {task_slice + 1}) "
+                                    f"failed due to MySQL connection loss. Retrying in {RETRY_DELAY} seconds...")
+                                time.sleep(RETRY_DELAY)  # 等待重试
+                                cursor_unbuffered.execute(f"SET SESSION net_read_timeout = {NET_READ_TIMEOUT};")
+                                last_successful_slice_before_retry = task_slice
+                                skip_outer_loop = True
+                                break
+                            else:
+                                self.logger.error(
+                                    f"{ErrorCode.GET_SOURCE_DATA_FAILED}Max retries reached for table {schema}.{table} (slice {task_slice + 1}). Exception: {exp}.")
+                                raise
+                        else:
+                            self.logger.error(
+                                f"{ErrorCode.UNKNOWN} Unexpected error while fetching data for table "
+                                f"{schema}.{table} (slice {task_slice + 1}): {exp}")
+                            raise
+                    if len(csv_results) == 0:
+                        fetch_data_complete = True
+                        break
+                    # The task_slice that were successfully migrated before the retry will no longer be migrated again.
+                    if task_slice + 1 <= last_successful_slice_before_retry:
+                        self.logger.debug(f"Table {schema}.{table} slice {task_slice + 1} has already been successfully migrated before the retry, "
+                                          f"so there is no need to repeat the migration process.")
+                        task_slice += 1
+                        continue
+                    # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
+                    # will lead to different value stored in MySQL and openGauss, we have no choice...
+                    csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
+                    if self.copy_mode == 'file':
+                        safe_charset = 'utf-8' if getattr(self, 'charset', '').lower().replace('-', '') in (
+                        UTF8MB4, UTF8) else self.charset
+                        csv_file = codecs.open(out_file, 'wb', safe_charset, buffering=-1)
+                        csv_file.write(csv_data)
+                        csv_file.close()
+                        task = CopyDataTask(out_file, count_rows, table, schema, select_columns, len(csv_results),
+                                            task_slice)
+                    else:
+                        if self.copy_mode != 'direct':
+                            self.logger.warning("unknown copy mode, use direct instead")
+                        csv_file = io.BytesIO()
+                        csv_file.write(csv_data.encode())
+                        csv_file.seek(0)
+                        task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, len(csv_results),
+                                            task_slice)
+                    if self.with_datacheck:
+                        if pk_column:
+                            task.idx_pair = Pair(csv_results[0][1], csv_results[len(csv_results) - 1][1])
+                        copydatatask_list.append(task)
+                    self.write_task_queue.put(task, block=True)
+                    task_slice += 1
+                    self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, task_slice, total_slices))
+                if skip_outer_loop:
+                    continue
+                if self.is_skip_completed_tables:
+                    self.handle_migration_progress(schema, table, task_slice)
+                if fetch_data_complete:
                     break
-                # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
-                # will lead to different value stored in MySQL and openGauss, we have no choice...
-                csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
-                if self.copy_mode == 'file':
-                    safe_charset = 'utf-8' if getattr(self, 'charset', '').lower().replace('-', '') in (
-                    UTF8MB4, UTF8) else self.charset
-                    csv_file = codecs.open(out_file, 'wb', safe_charset, buffering=-1)
-                    csv_file.write(csv_data)
-                    csv_file.close()
-                    task = CopyDataTask(out_file, count_rows, table, schema, select_columns, len(csv_results),
-                                        task_slice)
-                else:
-                    if self.copy_mode != 'direct':
-                        self.logger.warning("unknown copy mode, use direct instead")
-                    csv_file = io.BytesIO()
-                    csv_file.write(csv_data.encode())
-                    csv_file.seek(0)
-                    task = CopyDataTask(csv_file, count_rows, table, schema, select_columns, len(csv_results),
-                                        task_slice)
-                if self.with_datacheck:
-                    if pk_column:
-                        task.idx_pair = Pair(csv_results[0][1], csv_results[len(csv_results) - 1][1])
-                    copydatatask_list.append(task)
-                self.write_task_queue.put(task, block=True)
-                task_slice += 1
-                self.logger.info("Table %s.%s generated %s slice of %s" % (schema, table, task_slice, total_slices))
-            if self.is_skip_completed_tables:
-                self.handle_migration_progress(schema, table, task_slice)
         self.__add_tableslices_to_reader(schema, table, task_slice, copydatatask_list, count_rows, select_columns)   
         return [master_status, is_parallel_create_index]
 
@@ -1980,9 +2019,9 @@ class mysql_source(object):
         except Exception as exp:
             if hasattr(exp, 'code') and hasattr(exp, 'message'):
                 self.logger.error(
-                    "%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, exp.code, exp.message))
+                    "%s SQLCODE: %s SQLERROR: %s, Table: %s.%s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, exp.code, exp.message, schema, table))
             else:
-                self.logger.error("%s %s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, str(exp)))
+                self.logger.error("%s %s. Table: %s.%s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, str(exp), schema, table))
             if not self.writer_engine.check_db_status():
                 self.logger.info(
                     "The abnormal database state has been fixed and the csv file is now being re-copied")
@@ -2027,7 +2066,8 @@ class mysql_source(object):
             cursor_unbuffered.execute(sql_fallback)
             insert_data = cursor_unbuffered.fetchall()
         except Exception as exp:
-            self.logger.error("%s SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION, exp.code, exp.message))
+            self.logger.error("%s failed to query table %s.%s. SQLCODE: %s SQLERROR: %s" % (ErrorCode.SQL_EXCEPTION,
+                               schema, table, exp.code, exp.message))
         try:
             writer_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
             if self.dump_json:
@@ -2045,7 +2085,7 @@ class mysql_source(object):
 
     def create_index_process(self, task, writer_engine):
         if task.indices is None:
-            self.logger.error("%s index data is None", ErrorCode.CREATE_INDEX_FAILED)
+            self.logger.error("%s table %s.%s index data is None", ErrorCode.CREATE_INDEX_FAILED, task.schema, task.table)
             return
         if len(task.indices) == 0:
             self.logger.info("there are no indices be created, just store the table, tablename: "
@@ -2079,7 +2119,8 @@ class mysql_source(object):
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(schema, table)
         except:
-            self.logger.error("%s create index or constraint error", ErrorCode.CREATE_INDEX_FAILED)
+            self.logger.error("%s create index or constraint from table:%s.%s error." % (ErrorCode.CREATE_INDEX_FAILED
+                              , schema, table))
 
     def put_writer_record(self, record_type, task, index_status=None, contains_index=None):
         """
@@ -2334,6 +2375,7 @@ class mysql_source(object):
             self.write_task_queue.put(self.index_waiting_queue.get(block=True), block=True)
         self.write_task_queue.put(None, block=True)
         self.wait_for_finish(writer_pool)
+        self.logger.info('Index migration tasks have been finished.')
         writer_pool.clear()
 
         if self.with_datacheck and self.__no_need_retry():
