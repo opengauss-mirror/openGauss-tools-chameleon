@@ -1816,9 +1816,7 @@ class mysql_source(object):
         table_txs = count_rows["transactions"] == "YES"
         if copy_limit == 0:
             copy_limit = DATA_NUM_FOR_A_SLICE_CSV
-        num_slices = int(total_rows//copy_limit)
-        range_slices = list(range(num_slices+1))
-        total_slices = len(range_slices)
+        total_slices = math.ceil(total_rows / copy_limit)
 
         self.logger.debug("The table %s.%s will be copied in %s estimated slice(s) of %s rows, using a transaction %s"
                           % (schema, table, total_slices, copy_limit, table_txs))
@@ -1952,9 +1950,7 @@ class mysql_source(object):
         column_list_select = select_columns["column_list_select"]
         if copy_limit == 0:
             copy_limit = DATA_NUM_FOR_A_SLICE_CSV
-        num_slices = int(total_rows // copy_limit)
-        range_slices = list(range(num_slices + 1))
-        total_slices = len(range_slices)
+        total_slices = math.ceil(total_rows / copy_limit)
         task_slice = task.slice
         is_need_copy_from_csv = True
 
@@ -2010,9 +2006,7 @@ class mysql_source(object):
         total_rows = count_rows["table_rows"]
         if copy_limit == 0:
             copy_limit = DATA_NUM_FOR_A_SLICE_CSV
-        num_slices = int(total_rows // copy_limit)
-        range_slices = list(range(num_slices + 1))
-        total_slices = len(range_slices)
+        total_slices = math.ceil(total_rows / copy_limit)
         copy_data_from_csv = True
         is_need_recopy_from_csv = False
         try:
