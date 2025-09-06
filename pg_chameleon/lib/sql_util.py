@@ -1697,11 +1697,21 @@ class SqlTranslator():
         # use base64 to encode raw sql, avoiding the impact of special symbols on bash
         sql_encoded = str(base64.b64encode(raw_sql.encode("utf-8")), "utf-8")
         # chameleon calling the java subproject og-translator to implement the power of translating sql statements
-
-        cmd = "java -jar -Dfile.encoding=UTF-8 %s/sql-translator-1.0.jar --base64 '%s'" % (self.lib_dir, sql_encoded)
+        cmd_list = ['java', '-jar', '-Dfile.encoding=UTF-8', f'{self.lib_dir}/sql-translator-1.0.jar', '--base64', sql_encoded]
         
-        communicate = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
+        communicate = subprocess.Popen(cmd_list, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
 
         stdout = communicate[0].decode("utf-8")  # sql translated into opengauss dialect format
         stderr = communicate[1].decode("utf-8")  # logs generated during translation
         return stdout, stderr
+
+
+class CmdCharacterChecker():
+    def __int__(self):
+        self.black_character_list = ['$', '\n']
+
+    def has_black_characters(self, path):
+        for char in self.black_character_list:
+            if char in path:
+                return True
+        return False
