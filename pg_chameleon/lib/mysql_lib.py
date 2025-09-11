@@ -22,7 +22,7 @@ from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, Write
 from pg_chameleon import sql_token, ColumnType
 from pg_chameleon.lib.parallel_replication import BinlogTrxReader, MyGtidEvent, modified_my_gtid_event
 from pg_chameleon.lib.pg_lib import pg_engine
-from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType
+from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType, CmdCharacterChecker
 from pg_chameleon.lib.task_lib import CopyDataTask, CreateIndexTask, ReadDataTask
 from pg_chameleon.lib.task_lib import TableMetadataTask, ColumnMetadataTask, Pair
 from pg_chameleon.lib.error_code import ErrorCode
@@ -152,6 +152,7 @@ class mysql_source(object):
         # record table pkey info when keep_existing_schema open
         self.table_pkeys = {}
         self.writer_engine = None
+        self.cmd_character_checker = CmdCharacterChecker()
 
     @classmethod
     def initJson(cls):
@@ -1712,6 +1713,9 @@ class mysql_source(object):
 
         origin_csv_file = "%s_%s.csv" % (schema, table)
         origin_csv_path = self.csv_dir + os.path.sep + origin_csv_file
+        if self.cmd_character_checker(origin_csv_path):
+            self.logger.error("csv file contain illegal character")
+            return
         self.logger.info("statistic line number for %s file" % origin_csv_path)
         line_num_cmd = "wc -l -c %s | awk -F \" \" '{print$1,$2}'"
         line_num_and_bytes = os.popen(line_num_cmd % origin_csv_path).read().strip()
@@ -1766,7 +1770,6 @@ class mysql_source(object):
             self.handle_migration_progress(schema, table, len(file_list))
         self.logger.info("Table %s.%s generated %s slices" % (schema, table, len(file_list)))
         return [master_status, is_parallel_create_index]
-    
 
     def read_data_from_table(self, schema, table, cursor_manager):
         """
