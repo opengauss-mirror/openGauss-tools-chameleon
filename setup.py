@@ -10,7 +10,7 @@ package_data = {'pg_chameleon': ['configuration/config-example.yml','sql/upgrade
 
 setup(
     name="chameleon",
-    version="7.0.0rc2",
+    version="7.0.0rc3",
     description="MySQL to openGauss replica and migration",
     long_description=readme(),
     author = "Federico Campoli",
