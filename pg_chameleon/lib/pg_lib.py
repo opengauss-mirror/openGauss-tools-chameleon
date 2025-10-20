@@ -758,6 +758,7 @@ class pg_engine(object):
             self.pgsql_conn = py_opengauss.open(strconn, user=self.dest_conn["user"], password=self.get_opengauss_password(), sslmode="disable")
             self.pgsql_conn.settings['client_encoding']=self.dest_conn["charset"]
             self.pgsql_conn.execute("set session_timeout = 0;")
+            self.set_b_compatibility_para()
             self.set_params(self.pgsql_conn)
         elif not self.dest_conn:
             self.logger.error("%s Undefined database connection string. Exiting now.",
@@ -765,6 +766,24 @@ class pg_engine(object):
             os._exit(0)
         elif self.pgsql_conn:
             self.logger.debug("There is already a database connection active.")
+
+    def set_b_compatibility_para(self):
+        try:
+            sql_mode = self.pgsql_conn.prepare("show dolphin.sql_mode").first()
+            if "no_zero_date" in sql_mode:
+                cleaned_mode = sql_mode.translate(str.maketrans('', '', ' \t\n\r\f\v'))
+                new_sql_mode = self.remove_target_mode(cleaned_mode, "no_zero_date")
+                self.pgsql_conn.execute(f"SET dolphin.sql_mode = '{new_sql_mode}'")
+        except:
+            self.logger.warning("%s Some B compatibility parameters may fail to be set.", ErrorCode.SQL_EXCEPTION)
+
+    def remove_target_mode(self, sql_mode, mode_to_remove):
+        """
+           remove target mode from sql_mode
+        """
+        modes = sql_mode.split(',')
+        filtered = [m for m in modes if m != mode_to_remove]
+        return ','.join(filtered)
 
     def get_opengauss_password(self):
         is_enable_env_password = os.getenv("enable.env.password", "").lower()
@@ -4994,7 +5013,7 @@ class pg_engine(object):
             :param schema: the table's schema
             :param table: the table's name
         """
-        sql_truncate = ("TRUNCATE TABLE \"{}\".\"{}\";").format((schema), (table))
+        sql_truncate = ("TRUNCATE TABLE \"{}\".\"{}\";").format((schema.strip('"')), (table.strip('"')))
         self.pgsql_conn.execute(sql_truncate)
 
     def store_table(self, schema, table, table_pkey, master_status):

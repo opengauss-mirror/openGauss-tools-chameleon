@@ -1553,7 +1553,6 @@ class mysql_source(object):
 
 
     def read_data_process(self, task):
-        cursor_manager = reader_cursor_manager(self)
         destination_schema = task.destination_schema
         loading_schema = task.loading_schema
         schema = task.schema
@@ -1562,6 +1561,7 @@ class mysql_source(object):
 
         self.logger.info("Copying the source table %s into %s.%s" % (table, loading_schema, table))
         try:
+            cursor_manager = reader_cursor_manager(self)
             if self.is_read_data_from_csv(schema, table):
                 master_status, is_parallel_create_index = self.read_data_from_csv(schema, table, cursor_manager)
             else:
