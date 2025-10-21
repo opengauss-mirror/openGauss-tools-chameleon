@@ -1715,3 +1715,7 @@ class CmdCharacterChecker():
             if char in path:
                 return True
         return False
+
+class BCompatibilityParaSqls:
+    SET_ENABLE_SET_VARIABLE_B_FORMAT_SQL = "set enable_set_variable_b_format = on"
+    SET_B_COMPATIBILITY_USER_HOST_AUTH_SQL = "set b_compatibility_user_host_auth = on"

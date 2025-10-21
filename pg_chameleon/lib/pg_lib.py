@@ -16,6 +16,7 @@ from pg_chameleon.lib.task_lib import KeyWords
 from py_opengauss import sys as pg_sys
 from py_opengauss.lib import Element
 from pg_chameleon.lib.error_code import ErrorCode
+from pg_chameleon.lib.sql_util import BCompatibilityParaSqls
 
 # from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
@@ -774,6 +775,8 @@ class pg_engine(object):
                 cleaned_mode = sql_mode.translate(str.maketrans('', '', ' \t\n\r\f\v'))
                 new_sql_mode = self.remove_target_mode(cleaned_mode, "no_zero_date")
                 self.pgsql_conn.execute(f"SET dolphin.sql_mode = '{new_sql_mode}'")
+            self.pgsql_conn.execute(BCompatibilityParaSqls.SET_ENABLE_SET_VARIABLE_B_FORMAT_SQL)
+            self.pgsql_conn.execute(BCompatibilityParaSqls.SET_B_COMPATIBILITY_USER_HOST_AUTH_SQL)
         except:
             self.logger.warning("%s Some B compatibility parameters may fail to be set.", ErrorCode.SQL_EXCEPTION)
 
