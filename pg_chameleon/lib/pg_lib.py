@@ -5259,7 +5259,7 @@ class pg_engine(object):
 
                 comment = index["index_comment"]
                 # If the table is partitioned, create a local index
-                if self.have_table_partitions(schema, table):
+                if self.have_table_partitions(schema, table) and non_unique == 1:
                     local_index = 'LOCAL'  # Add the LOCAL keyword to indicate the local index
                 else:
                     local_index = ''
