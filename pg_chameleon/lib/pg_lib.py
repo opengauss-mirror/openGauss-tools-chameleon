@@ -16,7 +16,7 @@ from pg_chameleon.lib.task_lib import KeyWords
 from py_opengauss import sys as pg_sys
 from py_opengauss.lib import Element
 from pg_chameleon.lib.error_code import ErrorCode
-from pg_chameleon.lib.sql_util import BCompatibilityParaSqls
+from pg_chameleon.lib.sql_util import BCompatibilityParas
 
 # from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
@@ -769,16 +769,27 @@ class pg_engine(object):
             self.logger.debug("There is already a database connection active.")
 
     def set_b_compatibility_para(self):
+        sql_mode = ""
         try:
             sql_mode = self.pgsql_conn.prepare("show dolphin.sql_mode").first()
-            if "no_zero_date" in sql_mode:
-                cleaned_mode = sql_mode.translate(str.maketrans('', '', ' \t\n\r\f\v'))
-                new_sql_mode = self.remove_target_mode(cleaned_mode, "no_zero_date")
-                self.pgsql_conn.execute(f"SET dolphin.sql_mode = '{new_sql_mode}'")
-            self.pgsql_conn.execute(BCompatibilityParaSqls.SET_ENABLE_SET_VARIABLE_B_FORMAT_SQL)
-            self.pgsql_conn.execute(BCompatibilityParaSqls.SET_B_COMPATIBILITY_USER_HOST_AUTH_SQL)
         except:
-            self.logger.warning("%s Some B compatibility parameters may fail to be set.", ErrorCode.SQL_EXCEPTION)
+            self.logger.warning("%s Fail to query dolphin.sql_mode.", ErrorCode.SQL_EXCEPTION)
+        new_sql_mode = ""
+        if "no_zero_date" in sql_mode:
+            cleaned_mode = sql_mode.translate(str.maketrans('', '', ' \t\n\r\f\v'))
+            new_sql_mode = self.remove_target_mode(cleaned_mode, "no_zero_date")
+            self.common_set_db_para(BCompatibilityParas.SQL_MODE, f"'{new_sql_mode}'")
+        if "no_auto_value_on_zero" not in new_sql_mode:
+            new_sql_mode = new_sql_mode + ",no_auto_value_on_zero"
+            self.common_set_db_para(BCompatibilityParas.SQL_MODE, f"'{new_sql_mode}'")
+        self.common_set_db_para(BCompatibilityParas.ENABLE_SET_VARIABLE_B_FORMAT, "on")
+        self.common_set_db_para(BCompatibilityParas.B_COMPATIBILITY_USER_HOST_AUTH, "on")
+
+    def common_set_db_para(self, para, value):
+        try:
+            self.pgsql_conn.execute(f"set {para} = {value}")
+        except Exception as e:
+            self.logger.warning("The B compatibility parameter %s fail to be set.", para)
 
     def remove_target_mode(self, sql_mode, mode_to_remove):
         """
