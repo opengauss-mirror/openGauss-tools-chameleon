@@ -1716,6 +1716,7 @@ class CmdCharacterChecker():
                 return True
         return False
 
-class BCompatibilityParaSqls:
-    SET_ENABLE_SET_VARIABLE_B_FORMAT_SQL = "set enable_set_variable_b_format = on"
-    SET_B_COMPATIBILITY_USER_HOST_AUTH_SQL = "set b_compatibility_user_host_auth = on"
+class BCompatibilityParas:
+    ENABLE_SET_VARIABLE_B_FORMAT = "enable_set_variable_b_format"
+    B_COMPATIBILITY_USER_HOST_AUTH = "b_compatibility_user_host_auth"
+    SQL_MODE = "dolphin.sql_mode"
