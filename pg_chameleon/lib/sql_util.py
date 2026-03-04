@@ -1720,3 +1720,4 @@ class BCompatibilityParas:
     ENABLE_SET_VARIABLE_B_FORMAT = "enable_set_variable_b_format"
     B_COMPATIBILITY_USER_HOST_AUTH = "b_compatibility_user_host_auth"
     SQL_MODE = "dolphin.sql_mode"
+    B_FORMAT_BEHAVIOR_COMPAT_OPTIONS = "b_format_behavior_compat_options"

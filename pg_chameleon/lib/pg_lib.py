@@ -784,6 +784,7 @@ class pg_engine(object):
             self.common_set_db_para(BCompatibilityParas.SQL_MODE, f"'{new_sql_mode}'")
         self.common_set_db_para(BCompatibilityParas.ENABLE_SET_VARIABLE_B_FORMAT, "on")
         self.common_set_db_para(BCompatibilityParas.B_COMPATIBILITY_USER_HOST_AUTH, "on")
+        self.common_set_db_para(BCompatibilityParas.B_FORMAT_BEHAVIOR_COMPAT_OPTIONS, "''")
 
     def common_set_db_para(self, para, value):
         try:
