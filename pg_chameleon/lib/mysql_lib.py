@@ -3270,6 +3270,9 @@ class mysql_source(object):
                 is_user_not_exist = False
                 if exp.code == USER_NOT_EXIST_ERROR_CODE:
                     is_user_not_exist = True
+                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                                                       total_error_message, failure_num, object_name)
+                    continue
 
                 # Method 2: translate sql to openGauss format
                 # translate sql dialect in mysql format to opengauss format.
