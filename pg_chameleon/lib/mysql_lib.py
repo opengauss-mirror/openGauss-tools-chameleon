@@ -1713,7 +1713,7 @@ class mysql_source(object):
 
         origin_csv_file = "%s_%s.csv" % (schema, table)
         origin_csv_path = self.csv_dir + os.path.sep + origin_csv_file
-        if self.cmd_character_checker(origin_csv_path):
+        if self.cmd_character_checker.has_black_characters(origin_csv_path):
             self.logger.error("csv file contain illegal character")
             return
         self.logger.info("statistic line number for %s file" % origin_csv_path)
