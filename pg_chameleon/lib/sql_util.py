@@ -1707,7 +1707,7 @@ class SqlTranslator():
 
 
 class CmdCharacterChecker():
-    def __int__(self):
+    def __init__(self):
         self.black_character_list = ['$', '\n']
 
     def has_black_characters(self, path):
