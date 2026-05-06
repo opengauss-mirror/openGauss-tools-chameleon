@@ -1674,7 +1674,21 @@ class DBObjectType(Enum):
         :return: target sql string
         """
         return "SHOW CREATE {} `%s`.`%s`;".format(self.value.upper())
+    
+    def sql_to_get_object_distinct_definers(self):
+        """
+        This method can obtain the sql which can get all object definers after distinct.
+        The obtained sql is in mysql dialect format.
 
+        :return: target sql string
+        """
+        sql_on_dict = {
+            DBObjectType.VIEW: "SELECT DISTINCT DEFINER FROM information_schema.VIEWS WHERE TABLE_SCHEMA = '%s';",
+            DBObjectType.TRIGGER: "SELECT DISTINCT DEFINER FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = '%s';",
+            DBObjectType.PROC: "SELECT DISTINCT DEFINER FROM information_schema.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' AND ROUTINE_SCHEMA = '%s';",
+            DBObjectType.FUNC: "SELECT DISTINCT DEFINER FROM information_schema.ROUTINES WHERE ROUTINE_TYPE = 'FUNCTION' AND ROUTINE_SCHEMA = '%s';"
+        }
+        return sql_on_dict[self]
 
 class SqlTranslator():
 

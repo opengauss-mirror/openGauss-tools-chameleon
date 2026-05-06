@@ -3213,10 +3213,21 @@ class mysql_source(object):
         self.logger.info("Starting the %s replica for source %s." % (db_object_type.value, self.source))
         self.__init_sync()
 
+        is_sysadmin = self.pg_engine.is_connect_user_sysadmin()
+        sql_to_get_object_distinct_definers = db_object_type.sql_to_get_object_distinct_definers()
         sql_to_get_object_metadata = db_object_type.sql_to_get_object_metadata()
         self.pg_engine.pgsql_conn.execute("set b_compatibility_user_host_auth to on;")
 
         for schema in self.schema_mappings:
+            if is_sysadmin:
+                self.logger.info("The connect user is sysadmin, create definer for %s objects on schema %s" % (db_object_type.value, schema))
+                self.cursor_buffered.execute(sql_to_get_object_distinct_definers % (schema,))
+                definers = self.cursor_buffered.fetchall()
+
+                for definer in definers:
+                    user, host = definer["DEFINER"].split("@")
+                    self.pg_engine.create_definer(user, host)
+
             self.logger.info("Starting the %s replica for schema %s." % (db_object_type.value, schema))
             # get metadata (object name) of all objects on schema
             if self.dump_json:

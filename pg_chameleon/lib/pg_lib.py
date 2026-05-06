@@ -5547,3 +5547,31 @@ class pg_engine(object):
         else:
             sql_insert = sql % (i_id_source, db_object_type.name, False, src_object_sql, "NULL")
         self.pgsql_conn.execute(sql_insert)
+
+    def is_connect_user_sysadmin(self):
+        """
+        Check if the connect user is sysadmin.
+
+        :return: True if the connect user is sysadmin, False otherwise.
+        """
+        sql = "select rolsystemadmin from pg_roles where rolname = '%s';"
+        sql_result = self.pgsql_conn.query.first(sql % self.dest_conn["user"])
+
+        if sql_result is not None:
+            return sql_result
+        
+        return False
+    
+    def create_definer(self, user, host):
+        """
+        Create a definer on opengauss.
+
+        :param user: The user name
+        :param host: The host name
+        """
+        try:
+            self.pgsql_conn.execute(f"CREATE USER IF NOT EXISTS `{user}`@`{host}` WITH PASSWORD '{self.get_opengauss_password()}'")
+            self.pgsql_conn.execute(f"GRANT ALL PRIVILEGES TO `{user}`@`{host}`")
+            self.logger.info(f"Create definer user: `{user}`@`{host}` success")
+        except Exception as exception:
+            self.logger.error(f"Create definer user: `{user}`@`{host}` failed, error: {exception.message}")
