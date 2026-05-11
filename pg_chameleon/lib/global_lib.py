@@ -228,7 +228,7 @@ class replica_engine(object):
 
         self.__get_and_check_bool_param("is_create_index", True)
         self.__get_and_check_bool_param("mysql_restart_config", False)
-        self.__get_and_check_bool_param("is_skip_completed_tables", False)
+        self.__get_and_check_bool_param("is_skip_completed_tables", True)
         self.__get_and_check_bool_param("with_datacheck", False)
 
     def initialize_pg_engine(self):

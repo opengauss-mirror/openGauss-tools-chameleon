@@ -538,7 +538,7 @@ class pgsql_source(object):
             self.__copy_tables()
             self.__create_indices()
             self.pg_engine.grant_select()
-            self.pg_engine.swap_schemas()
+            self.pg_engine.swap_schemas(None, None)
             self.__drop_loading_schemas()
             self.pg_engine.set_source_status("initialised")
             fake_master = [{'File': None, 'Position': None }]
@@ -2650,7 +2650,7 @@ class pg_engine(object):
                     master_data["File"] = min_position[0]
                     master_data["Position"] = min_position[1]
                     master_status.append(master_data)
-                    self.save_master_status(master_status)
+                    self.save_master_status(master_status, True)
 
                     master_status = []
                     master_data["File"] = max_position[0]
@@ -4243,6 +4243,20 @@ class pg_engine(object):
                 self.logger.error("%s create table comment failed, the error sql is %s, error code is %s and"
                                   " error message is %s" % (ErrorCode.SQL_EXCEPTION, table_comment_ddl, exp.code, exp.message))
 
+    def unlock_schema_tables(self, schema):
+        self.logger.info("begin unlock schema tables.")
+        destination_schema = self.schema_loading[schema]["loading"]
+        select_lock_sql = "SELECT l.pid FROM pg_locks l JOIN pg_class c ON l.relation = c.oid JOIN pg_stat_activity a ON l.pid = a.pid JOIN pg_namespace n ON c.relnamespace = n.oid WHERE l.locktype = 'relation' AND n.nspname = $1"
+        try:
+            stmt = self.pgsql_conn.prepare(select_lock_sql)
+            lock_pids = stmt(destination_schema)
+            for lock_pid in lock_pids:
+                drop_lock_sql = "SELECT pg_terminate_backend(%s)" % (lock_pid)
+                self.pgsql_conn.execute(drop_lock_sql)
+        except Exception as exp:
+            self.logger.error("%s unlock tables failed, unlock schema is %s, error code is %s and"
+                              " error message is %s" % (ErrorCode.SQL_EXCEPTION, schema, exp.code, exp.message))
+
     def drop_failed_table(self, schema, table_name):
         self.logger.info("begin dropping existed tables.")
         destination_schema = self.schema_loading[schema]["loading"]
@@ -4669,7 +4683,7 @@ class pg_engine(object):
         self.logger.info("Set high watermark for source: %s" %(self.source, ) )
 
 
-    def save_master_status(self, master_status):
+    def save_master_status(self, master_status, is_reset_progress_info):
         """
             This method saves the master data determining which log table should be used in the next batch.
             The method assumes there is a database connection active.
@@ -4697,8 +4711,9 @@ class pg_engine(object):
         sql_last_update, sql_master = self.__get_sql()
 
         try:
-            stmt = self.pgsql_conn.prepare(sql_master % (self.i_id_source, binlog_name, binlog_position, executed_gtid_set, log_table))
-            next_batch_id=stmt.first()
+            if is_reset_progress_info:
+                stmt = self.pgsql_conn.prepare(sql_master % (self.i_id_source, binlog_name, binlog_position, executed_gtid_set, log_table))
+                next_batch_id=stmt.first()
             stmt = self.pgsql_conn.prepare(sql_last_update)
             db_event_time = stmt.first(event_time, self.i_id_source)
             self.logger.info("Saved master data for source: %s" %(self.source, ) )
@@ -5341,12 +5356,23 @@ class pg_engine(object):
                 self.logger.error("%s alter %s.%s adding auto_increment failed, error code is %s and error message is %s"
                                   % (ErrorCode.AUTO_INCREMENT_INDEX_CREATE_FAILED, schema, table, exp.code, exp.message))
 
-    def swap_schemas(self):
+    def is_tables_replica_finished(self, completed_schema_tables):
+        if completed_schema_tables is None:
+            return False
+        for schema in completed_schema_tables:
+            for table in completed_schema_tables[schema]:
+                if table == "finished":
+                    return True
+        return False
+
+    def swap_schemas(self, progress_file, completed_schema_tables):
         """
             The method  loops over the schema_loading class dictionary and
             swaps the loading with the destination schemas performing a double rename.
             The method assumes there is a database connection active.
         """
+        renaming_schema_destination = self.is_tables_replica_finished(completed_schema_tables)
+        is_destination_schema = True
         for schema in self.schema_loading:
             schema_loading = self.schema_loading[schema]["loading"]
             schema_destination = self.schema_loading[schema]["destination"]
@@ -5354,17 +5380,22 @@ class pg_engine(object):
             sql_dest_to_tmp = ("ALTER SCHEMA `{}` RENAME TO `{}`;").format((schema_destination), (schema_temporary))
             sql_load_to_dest = ("ALTER SCHEMA `{}` RENAME TO `{}`;").format((schema_loading), (schema_destination))
             sql_tmp_to_load = ("ALTER SCHEMA `{}` RENAME TO `{}`;").format((schema_temporary), (schema_loading))
-            x = self.pgsql_conn.xact()
-            x.start()
-            self.logger.info("Swapping schema %s with %s" % (schema_destination, schema_loading))
-            self.logger.debug("Renaming schema %s in %s" % (schema_destination, schema_temporary))
-            self.pgsql_conn.execute(sql_dest_to_tmp)
-            self.logger.debug("Renaming schema %s in %s" % (schema_loading, schema_destination))
-            self.pgsql_conn.execute(sql_load_to_dest)
-            self.logger.debug("Renaming schema %s in %s" % (schema_temporary, schema_loading))
-            self.pgsql_conn.execute(sql_tmp_to_load)
-            self.logger.debug("Commit the swap transaction" )
-            x.commit()
+            if progress_file is not None and is_destination_schema:
+                with open(progress_file, 'a') as fw:
+                    fw.write('`%s`.`%s`' % (schema_destination, 'finished') + '\n')
+            if not renaming_schema_destination or not is_destination_schema:
+                x = self.pgsql_conn.xact()
+                x.start()
+                self.logger.info("Swapping schema %s with %s" % (schema_destination, schema_loading))
+                self.logger.debug("Renaming schema %s in %s" % (schema_destination, schema_temporary))
+                self.pgsql_conn.execute(sql_dest_to_tmp)
+                self.logger.debug("Renaming schema %s in %s" % (schema_loading, schema_destination))
+                self.pgsql_conn.execute(sql_load_to_dest)
+                is_destination_schema = False
+                self.logger.debug("Renaming schema %s in %s" % (schema_temporary, schema_loading))
+                self.pgsql_conn.execute(sql_tmp_to_load)
+                self.logger.debug("Commit the swap transaction" )
+                x.commit()
 
     def set_batch_processed(self, id_batch):
         """
