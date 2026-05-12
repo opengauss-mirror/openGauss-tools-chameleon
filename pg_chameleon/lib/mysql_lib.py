@@ -665,6 +665,7 @@ class mysql_source(object):
 
             self.schema_tables[schema] = self.filter_table_list_from_csv_file(schema, table_list)
 
+            completed_schema_tables = {}
             if self.is_skip_completed_tables:
                 completed_schema_tables = self.get_completed_tables()
                 self.schema_tables[schema] = self.filter_table_list_from_progress(schema, table_list, completed_schema_tables) 
@@ -673,11 +674,18 @@ class mysql_source(object):
             table_rows = {key: value for key, value in table_rows.items() if key in table_list}
             if self.dump_json:
                 for key in table_list:
+                    status = process_state.PENDING_STATUS
+                    if table_rows[key] == process_state.COUNT_EMPTY:
+                        status = process_state.ACCOMPLISH_STATUS
+                    percent = process_state.PRECISION_START
+                    if schema in completed_schema_tables and key in completed_schema_tables[schema]:
+                        status = process_state.ACCOMPLISH_STATUS
+                        percent = process_state.PRECISION_SUCCESS
+
                     managerJson.update({key: {
                         "name": key,
-                        "status": process_state.ACCOMPLISH_STATUS
-                        if table_rows[key] == process_state.COUNT_EMPTY else process_state.PENDING_STATUS,
-                        "percent": process_state.PRECISION_START,
+                        "status": status,
+                        "percent": percent,
                         "error": ""
                     }})
 
@@ -853,7 +861,7 @@ class mysql_source(object):
         finally:
             cursor_manager.close()
             self.logger.warning("close connection for get dource schema character set and collate.")
-        return collates     
+        return collates
 
     def create_destination_schemas(self):
         """
@@ -1016,7 +1024,7 @@ class mysql_source(object):
         """
             The method collects the foreign key metadata for the detach replica process.
         """
-        self.__init_sync()
+        self.__init_sync(False)
         schema_replica = "'%s'"  % "','".join([schema.strip() for schema in self.sources[self.source]["schema_mappings"]])
         self.logger.info("retrieving foreign keys metadata for schemas %s" % schema_replica)
         sql_fkeys = """
@@ -1097,6 +1105,7 @@ class mysql_source(object):
         self.logger.info("Start to drop failed tables before.")
         for schema in self.schema_tables:
             table_list = self.schema_tables[schema]
+            self.pg_engine.unlock_schema_tables(schema)
             for table in table_list:
                 self.pg_engine.drop_failed_table(schema, table)
         self.logger.info("Finish dropping failed tables before.")
@@ -1645,7 +1654,7 @@ class mysql_source(object):
             The method migrate index only.
         """
         self.only_migration_index = True
-        self.__init_sync()
+        self.__init_sync(False)
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
         self.get_table_list()
@@ -1661,8 +1670,6 @@ class mysql_source(object):
             self.init_workers(writers, self.data_writer, writer_pool, "writer-")
             self.wait_for_finish(writer_pool)
             writer_pool.clear()
-            if self.is_skip_completed_tables:
-                open(self.progress_file, 'w').close()
             notifier_message = "start index replica for source %s finished" % (self.source)
             self.notifier.send_message(notifier_message, 'info')
             self.logger.info(notifier_message)
@@ -2018,7 +2025,7 @@ class mysql_source(object):
             self.put_writer_record("SLICE", task)
             if self.dump_json:
                 percent = 1.0 if (task_slice + 1) > total_slices else (task_slice + 1) / total_slices
-                self.__copied_progress_json("table", table, percent)
+                self.__copied_progress_json("table", schema, table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
         except Exception as exp:
             if hasattr(exp, 'code') and hasattr(exp, 'message'):
@@ -2076,11 +2083,11 @@ class mysql_source(object):
             writer_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
             if self.dump_json:
                 percent = 1.0 if (slice_insert + 1) > total_slices else (slice_insert + 1) / total_slices
-                self.__copied_progress_json("table", table, percent)
+                self.__copied_progress_json("table", schema, table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
         except Exception as exp:
             if self.dump_json:
-                self.__copied_progress_json("table", table, process_state.FAIL_STATUS, exp.message)
+                self.__copied_progress_json("table", schema, table, process_state.FAIL_STATUS, exp.message)
         if self.is_skip_completed_tables:
             self.handle_migration_progress(schema, table)
 
@@ -2098,6 +2105,7 @@ class mysql_source(object):
             self.put_writer_record("INDEX", task, "None", False)
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(task.schema, task.table)
+            self.create_index_progress_json(task.schema, task.table)
             return
         table = task.table
         destination_schema = task.destination_schema
@@ -2122,6 +2130,7 @@ class mysql_source(object):
             writer_engine.store_table(destination_schema, table, table_pkey, master_status)
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(schema, table)
+            self.create_index_progress_json(schema, table)
         except:
             self.logger.error("%s create index or constraint from table:%s.%s error." % (ErrorCode.CREATE_INDEX_FAILED
                               , schema, table))
@@ -2170,6 +2179,9 @@ class mysql_source(object):
         """
         if not os.path.exists(filedir):
             os.makedirs(filedir)
+        if self.is_reset_progress_info:
+            if os.path.isfile(filename):
+                os.remove(filename)
         if not os.path.isfile(filename):
             open(filename, 'x').close()
 
@@ -2214,9 +2226,11 @@ class mysql_source(object):
         if self.check_table_completed(schema, table):
             self.flush_progress_file(schema, table)
 
-    def __copied_progress_json(self, type_val, name, value, error=""):
+    def __copied_progress_json(self, type_val, schema, name, value, error=""):
         if managerJson[name]["percent"] < value:
-            if process_state.is_precision_success(value):
+            if schema is None and process_state.is_precision_success(value):
+                status = process_state.ACCOMPLISH_STATUS
+            elif process_state.is_precision_success(value) and schema is not None and self.check_table_completed(schema, name):
                 status = process_state.ACCOMPLISH_STATUS
             elif process_state.is_fail_status(value):
                 status = process_state.FAIL_STATUS
@@ -2228,6 +2242,17 @@ class mysql_source(object):
                 "name": name,
                 "status": status,
                 "percent": value,
+                "error": error
+            }})
+
+    def create_index_progress_json(self, schema, name, error=""):
+        if self.check_table_completed(schema, name):
+            if len(managerJson[name]["error"]) > 0:
+                error = managerJson[name]["error"] + error
+            managerJson.update({name: {
+                "name": name,
+                "status": process_state.ACCOMPLISH_STATUS,
+                "percent": 1.0,
                 "error": error
             }})
 
@@ -2617,7 +2642,7 @@ class mysql_source(object):
             master_data = self.get_master_coordinates()
             self.start_xid = master_data[0]["Executed_Gtid_Set"].split(':')[1].split('-')[0]
 
-    def __init_sync(self):
+    def __init_sync(self, is_object_replica):
         """
             The method calls the common steps required to initialise the database connections and
             class attributes within sync_tables,refresh_schema and init_replica.
@@ -2666,10 +2691,11 @@ class mysql_source(object):
             self.create_file(self.index_dir, self.index_file)
             if not self.is_skip_completed_tables:
                 open(self.index_file, 'w').close()
-        
+
+        self.is_reset_progress_info = self.source_config['is_reset_progress_info']
         self.progress_dir = os.path.expanduser('~/.pg_chameleon/progress')
-        self.progress_file = self.progress_dir + os.sep + TABLE_PROGRESS_FILE
-        if self.is_skip_completed_tables:
+        self.progress_file = self.progress_dir + os.sep + self.source_config['progress_tables']
+        if self.is_skip_completed_tables and not is_object_replica:
             self.create_file(self.progress_dir, self.progress_file)
         
         if "keep_existing_schema" in self.sources[self.source]:
@@ -2710,7 +2736,7 @@ class mysql_source(object):
         """
         self.logger.debug("starting sync schema for source %s" % self.source)
         self.logger.debug("The schema affected is %s" % self.schema)
-        self.__init_sync()
+        self.__init_sync(False)
         self.check_mysql_config()
         self.pg_engine.set_source_status("syncing")
         self.__build_table_exceptions()
@@ -2729,7 +2755,8 @@ class mysql_source(object):
                 self.disconnect_db_buffered()
                 self.__copy_tables()
                 self.pg_engine.grant_select()
-                self.pg_engine.swap_schemas()
+                completed_schema_tables = self.get_completed_tables()
+                self.pg_engine.swap_schemas(self.progress_file, completed_schema_tables)
                 self.drop_loading_schemas()
             self.pg_engine.set_source_status("initialised")
             self.connect_db_buffered()
@@ -2759,7 +2786,7 @@ class mysql_source(object):
             The swap happens in a single transaction.
         """
         self.logger.info("Starting sync tables for source %s" % self.source)
-        self.__init_sync()
+        self.__init_sync(False)
         self.check_mysql_config()
         self.pg_engine.set_source_status("syncing")
         if self.tables == 'disabled':
@@ -3117,7 +3144,7 @@ class mysql_source(object):
                     if close_batch:
                         self.master_status=[master_data]
                         self.logger.debug("trying to save the master data...")
-                        next_id_batch=self.pg_engine.save_master_status(self.master_status)
+                        next_id_batch=self.pg_engine.save_master_status(self.master_status, self.is_reset_progress_info)
                         if next_id_batch:
                             self.logger.debug("new batch created, saving id_batch %s in class variable" % (id_batch))
                             self.id_batch=id_batch
@@ -3152,15 +3179,16 @@ class mysql_source(object):
             The method performs a full init replica for the given source
         """
         self.logger.debug("starting init replica for source %s" % self.source)
-        self.__init_sync()
+        self.__init_sync(False)
         self.__init_convert_map()
         self.check_mysql_config()
         self.check_lower_case_table_names()
         master_start = self.get_master_coordinates()
         self.pg_engine.check_b_database()
         self.pg_engine.set_source_status("initialising")
-        self.pg_engine.clean_batch_data()
-        self.pg_engine.save_master_status(master_start)
+        if self.is_reset_progress_info:
+            self.pg_engine.clean_batch_data()
+        self.pg_engine.save_master_status(master_start, self.is_reset_progress_info)
         self.pg_engine.cleanup_source_tables()
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
@@ -3182,10 +3210,9 @@ class mysql_source(object):
                 self.disconnect_db_buffered()
                 self.__copy_tables()
                 self.pg_engine.grant_select()
-                self.pg_engine.swap_schemas()
+                completed_schema_tables = self.get_completed_tables()
+                self.pg_engine.swap_schemas(self.progress_file, completed_schema_tables)
                 self.drop_loading_schemas()
-            if self.is_skip_completed_tables:
-                open(self.progress_file, 'w').close()
             self.pg_engine.set_source_status("initialised")
             self.connect_db_buffered()
             master_end = self.get_master_coordinates()
@@ -3211,7 +3238,7 @@ class mysql_source(object):
         :param db_object_type: the database object type, refer to enumeration class DBObjectType
         """
         self.logger.info("Starting the %s replica for source %s." % (db_object_type.value, self.source))
-        self.__init_sync()
+        self.__init_sync(True)
 
         is_sysadmin = self.pg_engine.is_connect_user_sysadmin()
         sql_to_get_object_distinct_definers = db_object_type.sql_to_get_object_distinct_definers()
@@ -3335,7 +3362,7 @@ class mysql_source(object):
         self.logger.error("%s Copying the source object fail %s : %s" %
             (ErrorCode.OBJECT_MIGRATION_FAILED, db_object_type.value, object_name))
         if self.dump_json:
-            self.__copied_progress_json(db_object_type.value, object_name, process_state.FAIL_STATUS,
+            self.__copied_progress_json(db_object_type.value, None, object_name, process_state.FAIL_STATUS,
                                         total_error_message)
         failure_num += 1
         return failure_num
@@ -3350,7 +3377,7 @@ class mysql_source(object):
                                                       tran_create_object_statement)
         self.logger.info("Copying the source object success %s : %s" % (db_object_type.value, object_name))
         if self.dump_json:
-            self.__copied_progress_json(db_object_type.value, object_name, process_state.PRECISION_SUCCESS)
+            self.__copied_progress_json(db_object_type.value, None, object_name, process_state.PRECISION_SUCCESS)
         success_num += 1
         return success_num
 

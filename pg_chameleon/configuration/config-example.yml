@@ -94,7 +94,9 @@ sources:
     mysql_restart_config: No
     is_create_index: Yes
     index_dir: '~/.pg_chameleon/index/'
-    is_skip_completed_tables: No
+    is_skip_completed_tables: Yes
+    is_reset_progress_info: Yes
+    progress_tables: 'completed_tables.progress'
     with_datacheck: No
     slice_size: 100000
     csv_files_threshold:
