@@ -1823,7 +1823,7 @@ class mysql_source(object):
         if self.with_datacheck:
             count_rows["copy_limit"] = str(self.slice_size)
         copy_limit = int(count_rows["copy_limit"])
-        table_txs = count_rows["transactions"] == "YES"
+        table_txs = count_rows.get("transactions") == "YES"
         if copy_limit == 0:
             copy_limit = DATA_NUM_FOR_A_SLICE_CSV
         total_slices = math.ceil(total_rows / copy_limit)
