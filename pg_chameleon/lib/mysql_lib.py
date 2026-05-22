@@ -2132,6 +2132,8 @@ class mysql_source(object):
                 self.handle_migration_progress(schema, table)
             self.create_index_progress_json(schema, table)
         except:
+            if not self.writer_engine.check_db_status():
+                self.create_index_process(task, writer_engine)
             self.logger.error("%s create index or constraint from table:%s.%s error." % (ErrorCode.CREATE_INDEX_FAILED
                               , schema, table))
 
