@@ -3176,6 +3176,21 @@ class mysql_source(object):
                 self.pg_engine.cleanup_idx_cons(destination_schema, table)
                 self.pg_engine.truncate_table(destination_schema, table)
 
+    def check_mysql_status(self):
+        self.logger.info("check mysql connection status.")
+        is_db_normal = False
+        try:
+            self.connect_db_buffered()
+            check_sql = "select 1;"
+            self.cursor_buffered.execute(check_sql)
+            check_result = self.cursor_buffered.fetchone()
+            if check_result is not None:
+                is_db_normal = True
+            return is_db_normal
+        except Exception as e:
+            self.logger.info("mysql connection failed.")
+            return is_db_normal
+
     def init_replica(self):
         """
             The method performs a full init replica for the given source
@@ -3213,8 +3228,9 @@ class mysql_source(object):
                 self.__copy_tables()
                 self.pg_engine.grant_select()
                 completed_schema_tables = self.get_completed_tables()
-                self.pg_engine.swap_schemas(self.progress_file, completed_schema_tables)
-                self.drop_loading_schemas()
+                if self.check_mysql_status():
+                    self.pg_engine.swap_schemas(self.progress_file, completed_schema_tables)
+                    self.drop_loading_schemas()
             self.pg_engine.set_source_status("initialised")
             self.connect_db_buffered()
             master_end = self.get_master_coordinates()
