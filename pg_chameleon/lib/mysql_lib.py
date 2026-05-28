@@ -1024,7 +1024,7 @@ class mysql_source(object):
         """
             The method collects the foreign key metadata for the detach replica process.
         """
-        self.__init_sync(False)
+        self.__init_sync(True)
         schema_replica = "'%s'"  % "','".join([schema.strip() for schema in self.sources[self.source]["schema_mappings"]])
         self.logger.info("retrieving foreign keys metadata for schemas %s" % schema_replica)
         sql_fkeys = """
@@ -1654,7 +1654,7 @@ class mysql_source(object):
             The method migrate index only.
         """
         self.only_migration_index = True
-        self.__init_sync(False)
+        self.__init_sync(True)
         self.schema_list = [schema for schema in self.schema_mappings]
         self.__build_table_exceptions()
         self.get_table_list()
@@ -2738,7 +2738,7 @@ class mysql_source(object):
         """
         self.logger.debug("starting sync schema for source %s" % self.source)
         self.logger.debug("The schema affected is %s" % self.schema)
-        self.__init_sync(False)
+        self.__init_sync(True)
         self.check_mysql_config()
         self.pg_engine.set_source_status("syncing")
         self.__build_table_exceptions()
@@ -2788,7 +2788,7 @@ class mysql_source(object):
             The swap happens in a single transaction.
         """
         self.logger.info("Starting sync tables for source %s" % self.source)
-        self.__init_sync(False)
+        self.__init_sync(True)
         self.check_mysql_config()
         self.pg_engine.set_source_status("syncing")
         if self.tables == 'disabled':
