@@ -5506,7 +5506,7 @@ class pg_engine(object):
         result = self.pgsql_conn.query.first(sql, schema_name)
         if not result:
             try:
-                sql_create = "CREATE SCHEMA %s CHARACTER SET %s COLLATE %s;"
+                sql_create = "CREATE SCHEMA `%s` CHARACTER SET %s COLLATE %s;"
                 self.pgsql_conn.execute(sql_create % (schema_name, collate["DEFAULT_CHARACTER_SET_NAME"], collate["DEFAULT_COLLATION_NAME"]))
             except Exception as exp:
                 self.logger.warning("create schema with character set and collate failed, create normal")
