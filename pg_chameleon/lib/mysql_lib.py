@@ -1991,9 +1991,7 @@ class mysql_source(object):
         del csv_file
         gc.collect()
         self.print_progress(task_slice + 1, total_slices, schema, table)
-        if self.is_skip_completed_tables and copy_data_from_csv:
-            self.handle_migration_progress(schema, table)
-        elif not copy_data_from_csv:
+        if not copy_data_from_csv:
             ins_arg = {"slice_insert": task_slice, "table": table, "schema": schema,
                        "select_stat": select_columns["select_stat"], "column_list": column_list,
                        "column_list_select": column_list_select, "copy_limit": copy_limit, "total_slices": total_slices,
@@ -2023,6 +2021,8 @@ class mysql_source(object):
             self.writer_engine.copy_data(csv_file, loading_schema, table, column_list, contain_columns,
                                          column_split)
             self.put_writer_record("SLICE", task)
+            if self.is_skip_completed_tables:
+                self.handle_migration_progress(schema, table)
             if self.dump_json:
                 percent = 1.0 if (task_slice + 1) > total_slices else (task_slice + 1) / total_slices
                 self.__copied_progress_json("table", schema, table, percent)
@@ -2081,6 +2081,8 @@ class mysql_source(object):
                                schema, table, exp.code, exp.message))
         try:
             writer_engine.insert_data(loading_schema, table, insert_data, column_list, column_list_select)
+            if self.is_skip_completed_tables:
+                self.handle_migration_progress(schema, table)
             if self.dump_json:
                 percent = 1.0 if (slice_insert + 1) > total_slices else (slice_insert + 1) / total_slices
                 self.__copied_progress_json("table", schema, table, percent)
@@ -2088,8 +2090,6 @@ class mysql_source(object):
         except Exception as exp:
             if self.dump_json:
                 self.__copied_progress_json("table", schema, table, process_state.FAIL_STATUS, exp.message)
-        if self.is_skip_completed_tables:
-            self.handle_migration_progress(schema, table)
 
         cursor_unbuffered.close()
         conn_unbuffered.close()
@@ -2195,12 +2195,15 @@ class mysql_source(object):
             :param table: table
         """
         table_name = '`%s`.`%s`' % (schema, table)
+        completed_len = len(self.table_completed_slice_dict[table_name])
+        total_slices = self.table_slice_num_dict[table_name].value
         if self.only_migration_index:
-            return len(self.table_completed_slice_dict[table_name]) > 0
-        if self.is_create_index:
-            return len(self.table_completed_slice_dict[table_name]) - 1 == self.table_slice_num_dict[table_name].value
+            result = completed_len > 0
+        elif self.is_create_index:
+            result = completed_len - 1 == total_slices
         else:
-            return len(self.table_completed_slice_dict[table_name]) == self.table_slice_num_dict[table_name].value
+            result = completed_len == total_slices
+        return result
 
     def flush_progress_file(self, schema, table):
         """
