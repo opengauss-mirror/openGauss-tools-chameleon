@@ -599,6 +599,7 @@ class pg_engine(object):
         self.date_type = ColumnType.get_opengauss_date_type()
         self.index_parallel_workers = 2
         self.migration_collate = True
+        self._collate_map = {}
         self.default_value_map = {
             # without time zone
             'curdate()': "CURRENT_DATE",
@@ -3423,6 +3424,14 @@ class pg_engine(object):
         table_ddl["table"] = (ddl_head+def_columns+partition_method+def_part+ddl_tail)
         return table_ddl
 
+    def _replace_collate(self, collate):
+        if not collate:
+            return collate
+        replaced = self._collate_map.get(collate, collate)
+        if replaced != collate:
+            self.logger.debug("collate_override: %s => %s" % (collate, replaced))
+        return replaced
+
     def get_character_set_collate(self, column):
         if not self.migration_collate:
             return ""
@@ -3441,7 +3450,7 @@ class pg_engine(object):
             else:
                 character_and_collate += " character set " + character_set
         if collate and len(collate) > 0 and collate != UNSUPPORT_COLLATE:
-            character_and_collate += " collate " + collate
+            character_and_collate += " collate " + self._replace_collate(collate)
         return character_and_collate
 
     def build_sub_partition(self, schema, table_name, sub_table_metadata, sub_partition_metadata):
@@ -4209,7 +4218,7 @@ class pg_engine(object):
         if self.migration_collate:
             table_collation = table_info["table_collation"]
             if table_collation and len(table_collation) > 0 and table_collation != UNSUPPORT_COLLATE:
-                table_ddl += " COLLATE = " + table_collation + ";"
+                table_ddl += " COLLATE = " + self._replace_collate(table_collation) + ";"
 
         set_multi_charset_sql = "SET b_format_behavior_compat_options = 'enable_multi_charset'"
         try:
@@ -5507,7 +5516,7 @@ class pg_engine(object):
         if not result:
             try:
                 sql_create = "CREATE SCHEMA `%s` CHARACTER SET %s COLLATE %s;"
-                self.pgsql_conn.execute(sql_create % (schema_name, collate["DEFAULT_CHARACTER_SET_NAME"], collate["DEFAULT_COLLATION_NAME"]))
+                self.pgsql_conn.execute(sql_create % (schema_name, collate["DEFAULT_CHARACTER_SET_NAME"], self._replace_collate(collate["DEFAULT_COLLATION_NAME"])))
             except Exception as exp:
                 self.logger.warning("create schema with character set and collate failed, create normal")
                 self.pgsql_conn.execute(("CREATE SCHEMA {};").format((schema_name)))
