@@ -101,3 +101,9 @@ sources:
     slice_size: 100000
     csv_files_threshold:
     csv_dir_space_threshold:
+
+
+# collate_override: map MySQL collation -> openGauss-compatible collation.
+collate_override:
+  utf8mb4_0900_ai_ci: utf8mb4_general_ci
+#  utf8mb4_0900_as_cs: utf8mb4_general_ci
