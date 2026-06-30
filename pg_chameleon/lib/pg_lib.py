@@ -5052,7 +5052,7 @@ class pg_engine(object):
             :param schema: the table's schema
             :param table: the table's name
         """
-        sql_truncate = ("TRUNCATE TABLE \"{}\".\"{}\";").format((schema.strip('"')), (table.strip('"')))
+        sql_truncate = ("TRUNCATE TABLE `{}`.`{}`;").format((schema.strip('"')), (table.strip('"')))
         self.pgsql_conn.execute(sql_truncate)
 
     def store_table(self, schema, table, table_pkey, master_status):
