@@ -2195,6 +2195,8 @@ class mysql_source(object):
             :param table: table
         """
         table_name = '`%s`.`%s`' % (schema, table)
+        if not hasattr(self, 'table_completed_slice_dict'):
+            return False
         completed_len = len(self.table_completed_slice_dict[table_name])
         total_slices = self.table_slice_num_dict[table_name].value
         if self.only_migration_index:
@@ -3294,6 +3296,10 @@ class mysql_source(object):
     def create_single_object(self, db_object_type, schema):
         """
         The method create single object.
+        Objects may have dependencies on each other (e.g. view A references view B, function C calls function D).
+        To handle cross-object dependencies, the method retries objects that fail due to unresolved dependencies
+        in multiple rounds. Each round, successfully created objects may resolve dependencies for the next round.
+        A round with no new successes means remaining failures are not dependency-related, so retrying stops.
 
         :param: db_object_type: the database object type, refer to enumeration class DBObjectType
         :param: schema: the schema name
@@ -3302,72 +3308,137 @@ class mysql_source(object):
         success_num = 0  # number of replication success records
         failure_num = 0  # number of replication fail records
 
-        for object_metadata in self.cursor_buffered.fetchall():
-            object_name = object_metadata["OBJECT_NAME"]
+        # read all object names at once, because the cursor will be reused to fetch create statements
+        all_object_names = [row["OBJECT_NAME"] for row in self.cursor_buffered.fetchall()]
+        pending = list(all_object_names)
+        # at most N rounds (N = object count), which is the deepest possible dependency chain
+        max_rounds = len(all_object_names)
+        round_num = 0
 
-            # get the details required to create the object
-            self.cursor_buffered.execute(sql_to_get_create_object_statement % (schema, object_name))
-            create_object_metadata = self.cursor_buffered.fetchone()
-            create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
-            if db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
-                if not create_object_statement.endswith(";"):
-                    create_object_statement += ";"
-            try:
-                # Method 1: Directly execute ddl to openGauss
-                tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type,
-                                                                                       schema,
-                                                                                       create_object_statement)
-                success_num = self.add_object_success(create_object_statement, db_object_type, object_name, schema,
-                                                      success_num, tran_create_object_statement)
-            except Exception as exp:
-                self.logger.warning("Method 1 directly execute create %s %s.%s failed, error code "
-                                  "is %s and error message is %s, so translate it according to sql-translator"
-                                  % (db_object_type.value, schema, object_name, exp.code, exp.message))
+        while pending and round_num < max_rounds:
+            round_num += 1
+            if round_num > 1:
+                self.logger.info("Retry round %d for %s on schema %s due to possible object dependencies, %d objects pending."
+                                 % (round_num, db_object_type.value, schema, len(pending)))
 
-                total_error_message = "Method 1 execute failed: %s" % exp.message
-                # Users with the same name as the object definer (required by the object migration limit)
-                is_user_not_exist = False
-                if exp.code == USER_NOT_EXIST_ERROR_CODE:
-                    is_user_not_exist = True
-                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
-                                                       total_error_message, failure_num, object_name)
-                    continue
+            next_pending = []
+            success_this_round = 0
 
-                # Method 2: translate sql to openGauss format
-                # translate sql dialect in mysql format to opengauss format.
-                stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
-                if stdout == "":
-                    if "java: command not found" in stderr:
-                        total_error_message += "; " + "Method 2 parse sql failed: No java environment for running sql-translator, %s" % stderr.strip()
-                    else:
-                        total_error_message += "; " + "Method 2 parse sql failed: %s" % stderr.strip()
-                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
-                                                       total_error_message, failure_num, object_name)
-                    continue
+            for object_name in pending:
+                status = self.__try_create_object(db_object_type, schema, object_name,
+                                                  sql_to_get_create_object_statement, is_final_round=False)
+                if status == "success":
+                    success_num += 1
+                    success_this_round += 1
+                elif status == "fail_final":
+                    failure_num += 1
+                else:  # fail_retry
+                    next_pending.append(object_name)
 
-                tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type, schema,
-                                                                                       stdout)
-                has_error, error_message = self.__unified_log(stderr)
-                if has_error:
-                    # if translation has any error, this replication also fail
-                    # insert a failure record into the object replication status table
-                    total_error_message += "; " + "Method 2 parse sql failed: %s" % error_message
-                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
-                        total_error_message, failure_num, object_name)
-                    continue
+            if not next_pending:
+                break
 
-                # if translate successful, add the corresponding database object to opengauss
-                try:
-                    success_num = self.add_object_success(create_object_statement, db_object_type, object_name,
-                                                          schema, success_num, tran_create_object_statement)
-                except Exception as exception:
-                    total_error_message += "; " + "Method 2 execute failed: %s" % exception.message
-                    if exception.code == USER_NOT_EXIST_ERROR_CODE:
-                        is_user_not_exist = True
-                    failure_num = self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
-                        total_error_message, failure_num, object_name)
+            # if no object succeeded this round, remaining failures are not dependency-related
+            if success_this_round == 0:
+                self.logger.info("No progress in round %d, the remaining %d objects are recorded as permanently failed."
+                                 % (round_num, len(next_pending)))
+                for object_name in next_pending:
+                    self.__try_create_object(db_object_type, schema, object_name,
+                                             sql_to_get_create_object_statement, is_final_round=True)
+                    failure_num += 1
+                break
+
+            pending = next_pending
+
         self.logger.info("Complete the %s replica for schema %s, total %d, success %d, fail %d." % (
             db_object_type.value, schema, success_num + failure_num, success_num, failure_num))
+
+    def __try_create_object(self, db_object_type, schema, object_name, sql_to_get_create_object_statement, is_final_round):
+        """
+        Try to create a single object and return the result status.
+
+        :param db_object_type: the database object type, refer to enumeration class DBObjectType
+        :param schema: the schema name
+        :param object_name: the object name
+        :param sql_to_get_create_object_statement: the sql template to get create statement
+        :param is_final_round: when True, dependency-related failures are recorded as final failures instead of retrying
+        :return: status string, one of:
+                 "success" - the object was created successfully
+                 "fail_final" - the object failed permanently (already recorded in t_replica_object)
+                 "fail_retry" - the object may fail due to unresolved dependencies, should be retried (not recorded)
+        """
+        # get the details required to create the object
+        self.cursor_buffered.execute(sql_to_get_create_object_statement % (schema, object_name))
+        create_object_metadata = self.cursor_buffered.fetchone()
+        create_object_statement = self.__get_create_object_statement(create_object_metadata, db_object_type)
+        if db_object_type == DBObjectType.PROC or db_object_type == DBObjectType.FUNC:
+            if not create_object_statement.endswith(";"):
+                create_object_statement += ";"
+        try:
+            # Method 1: Directly execute ddl to openGauss
+            tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type,
+                                                                                   schema,
+                                                                                   create_object_statement)
+            self.add_object_success(create_object_statement, db_object_type, object_name, schema,
+                                    0, tran_create_object_statement)
+            return "success"
+        except Exception as exp:
+            self.logger.warning("Method 1 directly execute create %s %s.%s failed, error code "
+                                "is %s and error message is %s, so translate it according to sql-translator"
+                                % (db_object_type.value, schema, object_name, exp.code, exp.message))
+
+            total_error_message = "Method 1 execute failed: %s" % exp.message
+            # Users with the same name as the object definer (required by the object migration limit)
+            is_user_not_exist = False
+            if exp.code == USER_NOT_EXIST_ERROR_CODE:
+                is_user_not_exist = True
+                self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                                     total_error_message, 0, object_name)
+                return "fail_final"
+
+            # Method 2: translate sql to openGauss format
+            # translate sql dialect in mysql format to opengauss format.
+            stdout, stderr = self.sql_translator.mysql_to_opengauss(create_object_statement)
+            if stdout == "":
+                if "java: command not found" in stderr:
+                    total_error_message += "; " + "Method 2 parse sql failed: No java environment for running sql-translator, %s" % stderr.strip()
+                else:
+                    total_error_message += "; " + "Method 2 parse sql failed: %s" % stderr.strip()
+                self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                                     total_error_message, 0, object_name)
+                return "fail_final"
+
+            tran_create_object_statement = self.__get_tran_create_object_statement(db_object_type, schema,
+                                                                                   stdout)
+            has_error, error_message = self.__unified_log(stderr)
+            if has_error:
+                # if translation has any error, this replication also fail
+                # insert a failure record into the object replication status table
+                total_error_message += "; " + "Method 2 parse sql failed: %s" % error_message
+                self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                                     total_error_message, 0, object_name)
+                return "fail_final"
+
+            # if translate successful, add the corresponding database object to opengauss
+            try:
+                self.add_object_success(create_object_statement, db_object_type, object_name,
+                                        schema, 0, tran_create_object_statement)
+                return "success"
+            except Exception as exception:
+                total_error_message += "; " + "Method 2 execute failed: %s" % exception.message
+                if exception.code == USER_NOT_EXIST_ERROR_CODE:
+                    is_user_not_exist = True
+                    self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                                         total_error_message, 0, object_name)
+                    return "fail_final"
+                # other errors may be caused by unresolved object dependencies, retry if not final round
+                if is_final_round:
+                    self.add_object_fail(is_user_not_exist, create_object_statement, db_object_type,
+                                         total_error_message, 0, object_name)
+                    return "fail_final"
+                self.logger.debug("Object %s.%s may fail due to unresolved dependencies, will retry in next round."
+                                  % (schema, object_name))
+                return "fail_retry"
 
     def add_object_fail(self, is_user_not_exist, create_object_statement, db_object_type, total_error_message, failure_num, object_name):
         info_message = (". PLEASE create openGauss role!!! FIRST：set b_compatibility_user_host_auth to on; "
