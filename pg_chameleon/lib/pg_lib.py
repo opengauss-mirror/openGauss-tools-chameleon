@@ -5048,11 +5048,27 @@ class pg_engine(object):
 
     def truncate_table(self, schema, table):
         """
-            The method truncates the table defined by schema and name.
-            :param schema: the table's schema
-            :param table: the table's name
+        Truncates the specified table if it exists.
+        :param schema: The table's schema name
+        :param table: The table's name
         """
-        sql_truncate = ("TRUNCATE TABLE `{}`.`{}`;").format((schema.strip('"')), (table.strip('"')))
+        origin_schema = schema.strip('"').strip()
+        origin_table = table.strip('"').strip()
+        sql_truncate = f"""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = '{origin_schema}' 
+                  AND c.relname = '{origin_table}'
+                  AND c.relkind = 'r'
+            ) THEN
+                EXECUTE 'TRUNCATE TABLE `{origin_schema}`.`{origin_table}`';
+            END IF;
+        END $$;
+        """
         self.pgsql_conn.execute(sql_truncate)
 
     def store_table(self, schema, table, table_pkey, master_status):
