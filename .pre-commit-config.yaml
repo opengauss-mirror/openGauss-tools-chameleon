@@ -1,0 +1,58 @@
+# pre-commit 配置（openGauss-tools-chameleon / Python）
+#
+# 格式化(darker)行级，其余改动文件级；工具源均使用 gitcode 镜像。
+#
+# 首次启用：
+#   bash setup-pre-commit.sh
+#   或 pip install pre-commit && pre-commit install
+
+exclude: |
+  (?x)^(
+    images/|
+    pg_chameleon/sql/|
+    pg_chameleon/lib/.*\.jar
+  )
+
+repos:
+  - repo: https://gitcode.com/gh_mirrors/pr/pre-commit-hooks.git
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: detect-private-key
+
+  - repo: https://gitcode.com/gh_mirrors/co/codespell.git
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        types: [markdown]
+        args: ["--skip", "*.svg"]
+
+  - repo: https://gitcode.com/gh_mirrors/ru/ruff-pre-commit.git
+    rev: v0.15.20
+    hooks:
+      - id: ruff
+        args:
+          - "--fix"
+          - "--target-version"
+          - "py37"
+          - "--extend-ignore"
+          - "F403,F405,E501,E402,F401,E722,E711,E712,C901"
+
+  - repo: https://gitcode.com/gh_mirrors/ba/bandit.git
+    rev: "1.9.4"
+    hooks:
+      - id: bandit
+        args: ["-ll", "-s", "B101,B601"]
+
+  - repo: https://gitcode.com/gh_mirrors/da/darker.git
+    rev: v3.0.0
+    hooks:
+      - id: darker
+        additional_dependencies: ["black==24.10.0", "isort==5.13.2"]
+        args: ["--isort"]
