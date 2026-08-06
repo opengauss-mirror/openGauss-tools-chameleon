@@ -33,3 +33,6 @@ nosetests.xml
 .project
 .pydevproject
 .idea/
+
+# pre-commit 隔离环境
+.pre-commit-venv/
