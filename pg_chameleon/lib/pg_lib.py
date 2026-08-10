@@ -4812,7 +4812,8 @@ class pg_engine(object):
         sql_get_pk_drop = """
             SELECT
                 v_index_name,
-                t_pkey_drop
+                t_pkey_drop,
+                t_autoinc_drop
             FROM
                 sch_chameleon.t_pkeys
             WHERE
@@ -4840,6 +4841,12 @@ class pg_engine(object):
             except:
                 pass
         for pk in pk_drop:
+            if pk[2]:
+                self.logger.info("Dropping the auto_increment before primary key {}".format(pk[0],))
+                try:
+                    self.pgsql_conn.execute(pk[2])
+                except:
+                    pass
             self.logger.info("Dropping the primary key {}".format(pk[0],))
             try:
                 self.pgsql_conn.execute(pk[1])
@@ -4894,7 +4901,8 @@ class pg_engine(object):
         sql_get_pk_create = """
             SELECT
                 v_index_name,
-                t_pkey_create
+                t_pkey_create,
+                t_autoinc_create
             FROM
                 sch_chameleon.t_pkeys
             WHERE
@@ -4910,6 +4918,12 @@ class pg_engine(object):
         for pk in pk_create:
             self.logger.info("Creating the primary key {}".format(pk[0],))
             self.pgsql_conn.execute(pk[1])
+            if pk[2]:
+                self.logger.info("Creating the auto_increment after primary key {}".format(pk[0],))
+                try:
+                    self.pgsql_conn.execute(pk[2])
+                except:
+                    pass
 
         # Check if the table is partitioned (to determine if we should create local indexes)
         is_partitioned = self.have_table_partitions(schema, table)
@@ -4962,21 +4976,25 @@ class pg_engine(object):
                     v_table_name,
                     v_index_name,
                     t_pkey_drop,
-                    t_pkey_create
+                    t_pkey_create,
+                    t_autoinc_drop,
+                    t_autoinc_create
             )
             SELECT
                 vip.v_schema_name,
                 vip.v_table_name,
                 vip.v_index_name,
                 vip.t_sql_drop,
-                vip.t_sql_create
+                vip.t_sql_create,
+                vip.t_autoinc_drop,
+                vip.t_autoinc_create
             FROM
                 sch_chameleon.v_idx_pkeys vip
             WHERE
                 vip.v_schema_name ='%s'
                 AND vip.v_table_name ='%s'
             AND vip.b_idx_pkey
-            ON DUPLICATE KEY UPDATE v_index_name = v_index_name,t_pkey_drop=t_pkey_drop,t_pkey_create=t_pkey_create;
+            ON DUPLICATE KEY UPDATE v_index_name = v_index_name,t_pkey_drop=t_pkey_drop,t_pkey_create=t_pkey_create,t_autoinc_drop=t_autoinc_drop,t_autoinc_create=t_autoinc_create;
 
         """
 

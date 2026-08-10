@@ -675,8 +675,6 @@ class mysql_source(object):
             if self.dump_json:
                 for key in table_list:
                     status = process_state.PENDING_STATUS
-                    if table_rows[key] == process_state.COUNT_EMPTY:
-                        status = process_state.ACCOMPLISH_STATUS
                     percent = process_state.PRECISION_START
                     if schema in completed_schema_tables and key in completed_schema_tables[schema]:
                         status = process_state.ACCOMPLISH_STATUS
@@ -696,19 +694,20 @@ class mysql_source(object):
         """
         self.logger.info("start to init migration_progress variables.")
 
-        self.write_progress_file_lock = multiprocessing.Manager().Lock()
-        self.table_slice_num_dict = multiprocessing.Manager().dict()
-        self.table_completed_slice_dict = multiprocessing.Manager().dict()
+        manager = multiprocessing.Manager()
+        self.write_progress_file_lock = manager.Lock()
+        self.table_slice_num_dict = manager.dict()
+        self.table_completed_slice_dict = manager.dict()
         self.table_slice_num_list = []
         self.table_completed_slice_list = []
         for schema in self.schema_list:
             for table in self.schema_tables[schema]:
                 table_name = '`%s`.`%s`' % (schema, table)
-                table_slice_list = multiprocessing.Manager().list()
+                table_slice_list = manager.list()
                 self.table_completed_slice_list.append(table_slice_list)
                 self.table_completed_slice_dict[table_name] = table_slice_list
 
-                table_slice_num =  multiprocessing.Manager().Value('i', -10)
+                table_slice_num = manager.Value('i', -10)
                 self.table_slice_num_list.append(table_slice_num)
                 self.table_slice_num_dict[table_name] = table_slice_num
         self.logger.info("Finish initing migration_progress_dict.")
@@ -1776,6 +1775,8 @@ class mysql_source(object):
         if self.is_skip_completed_tables:
             self.handle_migration_progress(schema, table, len(file_list))
         self.logger.info("Table %s.%s generated %s slices" % (schema, table, len(file_list)))
+        if self.dump_json and len(file_list) == 0:
+            self.__copied_progress_json("table", schema, table, process_state.PRECISION_SUCCESS)
         return [master_status, is_parallel_create_index]
 
     def read_data_from_table(self, schema, table, cursor_manager):
@@ -1932,6 +1933,8 @@ class mysql_source(object):
                 if fetch_data_complete:
                     break
         self.__add_tableslices_to_reader(schema, table, task_slice, copydatatask_list, count_rows, select_columns)   
+        if self.dump_json and total_slices == 0:
+            self.__copied_progress_json("table", schema, table, process_state.PRECISION_SUCCESS)
         return [master_status, is_parallel_create_index]
 
     def __add_tableslices_to_reader(self, schema, table, task_slice, copydatatask_list, count_rows, select_columns):
@@ -2253,7 +2256,7 @@ class mysql_source(object):
             }})
 
     def create_index_progress_json(self, schema, name, error=""):
-        if self.check_table_completed(schema, name):
+        if not hasattr(self, 'table_completed_slice_dict') or self.check_table_completed(schema, name):
             if len(managerJson[name]["error"]) > 0:
                 error = managerJson[name]["error"] + error
             managerJson.update({name: {
