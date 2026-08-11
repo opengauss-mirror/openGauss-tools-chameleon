@@ -217,6 +217,8 @@ CREATE TABLE sch_chameleon.t_pkeys
         v_index_name varchar NOT NULL,
         t_pkey_drop text NULL,
         t_pkey_create text NULL,
+        t_autoinc_drop text NULL,
+        t_autoinc_create text NULL,
         CONSTRAINT pk_t_pkeys PRIMARY KEY (i_id_pkey)
     );
 CREATE UNIQUE INDEX idx_t_pkeys_table_schema ON sch_chameleon.t_pkeys USING btree(v_schema_name,v_table_name);
@@ -1031,6 +1033,18 @@ SELECT
              v_constraint_def
          )
     END AS t_sql_create,
+    CASE
+        WHEN oid_conid IS NOT NULL AND v_autoinc_column IS NOT NULL
+        THEN format('ALTER TABLE %I.%I MODIFY %I %s%s;', v_schema_name, v_table_name, v_autoinc_column, v_autoinc_type,
+            CASE WHEN b_autoinc_notnull THEN ' NOT NULL' ELSE '' END)
+        ELSE NULL
+    END AS t_autoinc_drop,
+    CASE
+        WHEN oid_conid IS NOT NULL AND v_autoinc_column IS NOT NULL
+        THEN format('ALTER TABLE %I.%I MODIFY %I %s%s AUTO_INCREMENT;', v_schema_name, v_table_name, v_autoinc_column, v_autoinc_type,
+            CASE WHEN b_autoinc_notnull THEN ' NOT NULL' ELSE '' END)
+        ELSE NULL
+    END AS t_autoinc_create,
     v_index_name,
     v_table_name,
     v_schema_name
@@ -1043,7 +1057,10 @@ FROM
         idx.indexdef AS v_index_def,
         pg_get_constraintdef(con.oid_conid) AS v_constraint_def,
         idx.tablespace AS v_index_tablespace,
-        con.oid_conid
+        con.oid_conid,
+        autoinc.v_autoinc_column,
+        autoinc.v_autoinc_type,
+        autoinc.b_autoinc_notnull
 
     FROM
         pg_indexes idx
@@ -1067,6 +1084,27 @@ FROM
                 con.v_table_name=idx.tablename
             AND con.v_schema_name=idx.schemaname
             AND con.v_constraint_name=idx.indexname
+        LEFT OUTER JOIN
+        (
+            SELECT
+                sch.nspname AS v_schema_name,
+                tab.relname AS v_table_name,
+                att.attname AS v_autoinc_column,
+                format_type(att.atttypid, att.atttypmod) AS v_autoinc_type,
+                att.attnotnull AS b_autoinc_notnull
+            FROM
+                pg_constraint con
+                INNER JOIN pg_class tab ON tab.oid = con.conrelid
+                INNER JOIN pg_namespace sch ON sch.oid = tab.relnamespace
+                INNER JOIN pg_attribute att ON att.attrelid = tab.oid AND att.attnum = con.conkey[1]
+                INNER JOIN pg_attrdef ad ON ad.adrelid = tab.oid AND ad.adnum = att.attnum
+            WHERE
+                con.contype = 'p'
+                AND pg_get_expr(ad.adbin, ad.adrelid) ~* 'nextval|auto_increment'
+        ) autoinc
+        ON
+                autoinc.v_schema_name = idx.schemaname
+            AND autoinc.v_table_name = idx.tablename
 ) idx_con
 ;
 
