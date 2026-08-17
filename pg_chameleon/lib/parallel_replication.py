@@ -349,18 +349,14 @@ class Transaction:
         return master_data
 
 
-def qstr(obj) -> str:
-    """
-        The method formats the string with the single quote.
-    """
-    return "'{}'".format(str(obj).replace("'", "''"))
-
-
 def dqstr(obj) -> str:
-    """
-        The method formats the string with the double quote.
-    """
-    return "`{}`".format(str(obj))
+    """Quote an identifier (backtick style), escaping embedded backticks to prevent identifier injection."""
+    return "`{}`".format(str(obj).replace("`", "``"))
+
+
+def qstr(obj) -> str:
+    """Quote a string literal (single-quote style), escaping embedded single quotes."""
+    return "'{}'".format(str(obj).replace("'", "''"))
 
 
 def sql_delete(table, row) -> str:

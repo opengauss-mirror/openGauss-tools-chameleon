@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import subprocess
+import shutil
 from enum import Enum, unique
 
 
@@ -1735,3 +1736,98 @@ class BCompatibilityParas:
     B_COMPATIBILITY_USER_HOST_AUTH = "b_compatibility_user_host_auth"
     SQL_MODE = "dolphin.sql_mode"
     B_FORMAT_BEHAVIOR_COMPAT_OPTIONS = "b_format_behavior_compat_options"
+
+
+# ---------------------------------------------------------------------------
+# Security helpers (standard-library only, importable by standalone unit tests)
+#   - Identifier quoting: quote_ident (openGauss double-quote quoting)
+#   - Command-injection guard: disk_free_bytes / count_dir_files / dir_size_bytes /
+#               file_line_bytes / move_file / rmtree_contents / split_csv_file
+# ---------------------------------------------------------------------------
+
+def quote_ident(obj) -> str:
+    """Quote an openGauss identifier (double-quote style), escaping embedded double quotes to prevent identifier injection."""
+    return '"{}"'.format(str(obj).replace('"', '""'))
+
+
+def quote_ident_backtick(obj) -> str:
+    """Quote an identifier (backtick style), escaping embedded backticks to prevent identifier injection."""
+    return '`{}`'.format(str(obj).replace('`', '``'))
+
+
+# Command-injection guard: avoid shell command concatenation by using standard-library implementations.
+def disk_free_bytes(path) -> float:
+    """Equivalent to `df`: return the free bytes of the filesystem containing the path."""
+    return shutil.disk_usage(path).free
+
+
+def count_dir_files(path) -> int:
+    """Equivalent to `ls <dir> | wc -l`: return the number of entries in the directory."""
+    return len(os.listdir(path))
+
+
+def dir_size_bytes(path) -> int:
+    """Equivalent to `du -sh`: recursively compute the on-disk (block-allocated) size in bytes."""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                # st_blocks * 512 mirrors du's default disk-block accounting (not apparent size)
+                total += os.stat(fp).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
+def file_line_bytes(path):
+    """Equivalent to `wc -l -c <file>`: return (line_count, byte_count)."""
+    lines, bytes_ = 0, 0
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            lines += chunk.count(b"\n")
+            bytes_ += len(chunk)
+    return lines, bytes_
+
+
+def move_file(src, dst):
+    """Equivalent to `mv src dst`, without invoking the shell."""
+    shutil.move(src, dst)
+
+
+def rmtree_contents(target_dir):
+    """Equivalent to `rm -rf <dir>/*`: remove all entries inside the directory but keep the directory itself, without invoking the shell."""
+    if not os.path.isdir(target_dir):
+        return
+    for entry in os.listdir(target_dir):
+        p = os.path.join(target_dir, entry)
+        if os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(p)
+        else:
+            os.remove(p)
+
+
+def split_csv_file(origin_csv_path, lines_per_file, suffix_length, csv_dir, file_suffix):
+    """Equivalent to `split -l N -d -a L prefix`: split a CSV file by line count.
+    Return the list of generated file names, following GNU split's naming rule:
+    <file_suffix> + a zero-padded numeric suffix of length suffix_length (no extension)."""
+    produced = []
+    idx = 0
+    with open(origin_csv_path, "rb") as src:
+        while True:
+            name = "%s%0*d" % (file_suffix, suffix_length, idx)
+            out_path = os.path.join(csv_dir, name)
+            wrote = 0
+            with open(out_path, "wb") as out:
+                for _ in range(lines_per_file):
+                    line = src.readline()
+                    if not line:
+                        break
+                    out.write(line)
+                    wrote += 1
+            if wrote == 0:
+                os.remove(out_path)
+                break
+            produced.append(name)
+            idx += 1
+    return produced

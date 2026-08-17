@@ -463,7 +463,7 @@ class replica_engine(object):
             os._exit(0)
 
         config_file = open(self.config_file, 'r')
-        self.config = yaml.load(config_file.read(), Loader=yaml.FullLoader)
+        self.config = yaml.safe_load(config_file.read())
         config_file.close()
 
     def show_sources(self):

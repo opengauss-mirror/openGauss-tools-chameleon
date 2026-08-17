@@ -22,7 +22,9 @@ from pymysqlreplication.row_event import DeleteRowsEvent, UpdateRowsEvent, Write
 from pg_chameleon import sql_token, ColumnType
 from pg_chameleon.lib.parallel_replication import BinlogTrxReader, MyGtidEvent, modified_my_gtid_event
 from pg_chameleon.lib.pg_lib import pg_engine
-from pg_chameleon.lib.sql_util import SqlTranslator, DBObjectType, CmdCharacterChecker
+from pg_chameleon.lib.sql_util import (SqlTranslator, DBObjectType, CmdCharacterChecker,
+                                        disk_free_bytes, count_dir_files, dir_size_bytes,
+                                        file_line_bytes, move_file, rmtree_contents, split_csv_file)
 from pg_chameleon.lib.task_lib import CopyDataTask, CreateIndexTask, ReadDataTask
 from pg_chameleon.lib.task_lib import TableMetadataTask, ColumnMetadataTask, Pair
 from pg_chameleon.lib.error_code import ErrorCode
@@ -751,22 +753,9 @@ class mysql_source(object):
                 "set csv_dir_space_threshold to " + str(self.csv_dir_space_threshold / (1024 * 1024)) + "GB")
         self.logger.info("Finish initing with_datacheck variables.")
 
-    def __format_space_in_kb(self, space):
-        space_in_kb = 0.0
-        unit = space[-1:].upper()
-        if unit == 'K':
-            space_in_kb = float(space[:-1])
-        elif unit == 'M':
-            space_in_kb = float(space[:-1]) * 1024
-        elif unit == 'G':
-            space_in_kb = float(space[:-1]) * 1024 * 1024
-        elif unit == 'T':
-            space_in_kb = float(space[:-1]) * 1024 * 1024 * 1024
-        return space_in_kb
-
     def __get_csvdir_space(self, csv_file_dir):
-        total_space = os.popen("df -h " + csv_file_dir + " | awk {'print $4'}").read().split(os.linesep)[1]
-        return self.__format_space_in_kb(total_space)      
+        free_bytes = disk_free_bytes(csv_file_dir)
+        return free_bytes / 1024.0
 
     def get_compress_tables(self, schema, table_list):
         if self.enable_compress:
@@ -1491,7 +1480,7 @@ class mysql_source(object):
             for file_name in os.listdir(csv_file_dir):
                 if file_name.endswith(".check"):
                     os.remove(csv_file_dir + os.sep + file_name)
-            file_nums = int(os.popen("ls " +  csv_file_dir + " | wc -l").read())
+            file_nums = count_dir_files(csv_file_dir)
             if self.write_csv_finish.get() and file_nums == 0:
                 break
             limit_reader = self.is_limit_reader(file_nums, csv_file_dir)
@@ -1520,8 +1509,7 @@ class mysql_source(object):
         :return: return True if csv storage space exceeds the threshold else False
         :rtype: bool
         """
-        used_storage = os.popen("du -sh " +  csv_file_dir + " | awk {'print $1'}").read().strip()
-        used_storage_in_kb = self.__format_space_in_kb(used_storage)
+        used_storage_in_kb = dir_size_bytes(csv_file_dir) / 1024.0
         return used_storage_in_kb >= self.csv_dir_space_threshold
 
     def flow_control(self, schema, table):
@@ -1723,10 +1711,7 @@ class mysql_source(object):
             self.logger.error("csv file contain illegal character")
             return
         self.logger.info("statistic line number for %s file" % origin_csv_path)
-        line_num_cmd = "wc -l -c %s | awk -F \" \" '{print$1,$2}'"
-        line_num_and_bytes = os.popen(line_num_cmd % origin_csv_path).read().strip()
-        line_num = int(line_num_and_bytes.split(" ")[0])
-        bytes_num = int(line_num_and_bytes.split(" ")[1])
+        line_num, bytes_num = file_line_bytes(origin_csv_path)
         avg_row_length = bytes_num // line_num
 
         self.logger.info("statistic line number %s for %s file" % (line_num, origin_csv_path))
@@ -1741,11 +1726,7 @@ class mysql_source(object):
         file_suffix = "%s_%s_slice" % (schema, table)
         self.logger.info("split csv file for table %s.%s into %s slices of %s rows"
                          % (schema, table, total_slice, DATA_NUM_FOR_A_SLICE_CSV))
-        split_cmd = "split -l %s %s -d -a %s /%s/%s && ls %s | grep %s" \
-                    % (DATA_NUM_FOR_A_SLICE_CSV, origin_csv_path, suffix_length, self.csv_dir, file_suffix,
-                       self.csv_dir, file_suffix)
-        self.logger.info(split_cmd)
-        file_list = os.popen(split_cmd).readlines()
+        file_list = split_csv_file(origin_csv_path, DATA_NUM_FOR_A_SLICE_CSV, suffix_length, self.csv_dir, file_suffix)
         self.logger.info("finish splitting csv files")
 
         for file_name in file_list:
@@ -1754,11 +1735,19 @@ class mysql_source(object):
             csv_file = file_suffix + str(index + 1) + ".csv"
             generated_csv_path = self.out_dir + os.path.sep + CSV_DATA_SUB_DIR + os.path.sep + csv_file
             split_csv = self.csv_dir + os.path.sep + split_file_name
-            if os.system("mv %s %s" % (split_csv, generated_csv_path)) == 0:
-                csv_len = int(str(os.popen(line_num_cmd % generated_csv_path).read()).strip().split(" ")[0])
-            else:
-                self.logger.error("%s mv csv file to out_dir failed for table {}.{}",
-                    ErrorCode.CSV_FILE_MOVE_FAILED, schema, table)
+            moved = True
+            try:
+                move_file(split_csv, generated_csv_path)
+            except Exception:
+                moved = False
+                self.logger.error("%s mv csv file to out_dir failed for table %s.%s." %
+                    (ErrorCode.CSV_FILE_MOVE_FAILED, schema, table))
+            if not moved:
+                self.logger.error("%s abort copying table %s.%s due to slice move failure." %
+                    (ErrorCode.CSV_FILE_MOVE_FAILED, schema, table))
+                raise RuntimeError("%s slice move failed for table %s.%s" %
+                    (ErrorCode.CSV_FILE_MOVE_FAILED, schema, table))
+            csv_len = file_line_bytes(generated_csv_path)[0]
             if self.contains_columns and index == 0:
                 # read column name list
                 with open(generated_csv_path, 'r') as f:
@@ -2569,7 +2558,7 @@ class mysql_source(object):
         csv_file_dir = self.out_dir + os.sep + CSV_DATA_SUB_DIR
         chameleon_dir = self.out_dir + os.sep + CSV_META_SUB_DIR
         if os.path.exists(csv_file_dir):
-            os.system("rm -rf " + chameleon_dir + "/*")
+            rmtree_contents(chameleon_dir)
         os.makedirs(csv_file_dir)
 
     def set_copy_max_memory(self):
