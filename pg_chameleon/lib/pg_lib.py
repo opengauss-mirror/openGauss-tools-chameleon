@@ -5648,4 +5648,8 @@ class pg_engine(object):
             self.pgsql_conn.execute(f"GRANT ALL PRIVILEGES TO `{user}`@`{host}`")
             self.logger.info(f"Create definer user: `{user}`@`{host}` success")
         except Exception as exception:
-            self.logger.error(f"Create definer user: `{user}`@`{host}` failed, error: {exception.message}")
+            password = self.get_opengauss_password()
+            error_message = exception.message if hasattr(exception, "message") else str(exception)
+            if password:
+                error_message = error_message.replace(password, "******")
+            self.logger.error(f"Create definer user: `{user}`@`{host}` failed, error: {error_message}")
