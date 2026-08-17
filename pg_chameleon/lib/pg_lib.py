@@ -16,7 +16,7 @@ from pg_chameleon.lib.task_lib import KeyWords
 from py_opengauss import sys as pg_sys
 from py_opengauss.lib import Element
 from pg_chameleon.lib.error_code import ErrorCode
-from pg_chameleon.lib.sql_util import BCompatibilityParas
+from pg_chameleon.lib.sql_util import BCompatibilityParas, quote_ident, quote_ident_backtick
 
 # from MariaDB 10.2.7, Literals in the COLUMN_DEFAULT column in the Information Schema COLUMNS table
 # are now quoted to distinguish them from expressions. https://mariadb.com/kb/en/mariadb-1027-release-notes/
@@ -1488,13 +1488,13 @@ class pg_engine(object):
                 if token["command"] == "RENAME TABLE":
                     old_name = token["name"]
                     new_name = token["new_name"]
-                    query = """ALTER TABLE "%s"."%s" RENAME TO "%s" """ % (destination_schema, old_name, new_name)
+                    query = """ALTER TABLE %s.%s RENAME TO %s """ % (quote_ident(destination_schema), quote_ident(old_name), quote_ident(new_name))
                     table_pkey = self.get_table_pkey(destination_schema, old_name)
                     self.store_table(destination_schema, new_name, table_pkey, None)
                 elif token["command"] == "DROP TABLE":
-                    query=""" DROP TABLE IF EXISTS "%s"."%s" CASCADE;""" % (destination_schema, token["name"])
+                    query=""" DROP TABLE IF EXISTS %s.%s CASCADE;""" % (quote_ident(destination_schema), quote_ident(token["name"]))
                 elif token["command"] == "TRUNCATE":
-                    query=""" TRUNCATE TABLE "%s"."%s" CASCADE;""" % (destination_schema, token["name"])
+                    query=""" TRUNCATE TABLE %s.%s CASCADE;""" % (quote_ident(destination_schema), quote_ident(token["name"]))
                 elif token["command"] == "ALTER TABLE":
                     query=self.build_alter_table(destination_schema, token)
                 elif token["command"] == "DROP PRIMARY KEY":
@@ -1648,7 +1648,7 @@ class pg_engine(object):
 
         for alter_dic in token["alter_cmd"]:
             if alter_dic["command"] == 'DROP':
-                alter_cmd.append("%(command)s %(name)s CASCADE" % alter_dic)
+                alter_cmd.append("%s %s CASCADE" % (alter_dic["command"], quote_ident(alter_dic["name"])))
             elif alter_dic["command"] == 'ADD':
 
                 column_type=self.get_data_type(alter_dic, schema, table_name)
@@ -1664,7 +1664,7 @@ class pg_engine(object):
                     default_value = "DEFAULT %s::%s" % (alter_dic["default"], column_type.strip())
                 else:
                     default_value=""
-                alter_cmd.append("%s \"%s\" %s NULL %s" % (alter_dic["command"], column_name, column_type, default_value))
+                alter_cmd.append("%s %s %s NULL %s" % (alter_dic["command"], quote_ident(column_name), column_type, default_value))
             elif alter_dic["command"] == 'CHANGE':
                 sql_rename = ""
                 sql_type = ""
@@ -1688,9 +1688,9 @@ class pg_engine(object):
                     column_type == ColumnType.O_NUMERIC.value or column_type == ColumnType.O_BIT.value or\
                     column_type == ColumnType.O_DOUBLE_P.value or column_type == ColumnType.O_REAL.value:
                         column_type=column_type+"("+str(alter_dic["dimension"])+")"
-                sql_type = """ALTER TABLE "%s"."%s" ALTER COLUMN %s SET DATA TYPE %s  USING %s::%s ;;""" % (schema, table_name, old_column, column_type, old_column, column_type)
+                sql_type = """ALTER TABLE %s.%s ALTER COLUMN %s SET DATA TYPE %s  USING %s::%s ;;""" % (quote_ident(schema), quote_ident(table_name), quote_ident(alter_dic["old"]), column_type, quote_ident(alter_dic["old"]), column_type)
                 if old_column != new_column:
-                    sql_rename = """ALTER TABLE "%s"."%s" RENAME COLUMN %s TO %s ;""" % (schema, table_name, old_column, new_column)
+                    sql_rename = """ALTER TABLE %s.%s RENAME COLUMN %s TO %s ;""" % (quote_ident(schema), quote_ident(table_name), quote_ident(alter_dic["old"]), quote_ident(alter_dic["new"]))
 
                 query = ' '.join(ddl_pre_alter)
                 query += sql_type+sql_rename
@@ -1716,11 +1716,11 @@ class pg_engine(object):
                     column_type == ColumnType.O_DOUBLE_P.value or column_type == ColumnType.O_REAL.value:
                         column_type = column_type+"("+str(alter_dic["dimension"])+")"
                 query = ' '.join(ddl_pre_alter)
-                query += """ALTER TABLE "%s"."%s" ALTER COLUMN "%s" SET DATA TYPE %s USING "%s"::%s ;""" % (schema, table_name, column_name, column_type, column_name, column_type)
+                query += """ALTER TABLE %s.%s ALTER COLUMN %s SET DATA TYPE %s USING %s::%s ;""" % (quote_ident(schema), quote_ident(table_name), quote_ident(column_name), column_type, quote_ident(column_name), column_type)
                 query += ' '.join(ddl_post_alter)
                 return query
         query = ' '.join(ddl_pre_alter)
-        query +=  """%s "%s"."%s" %s;""" % (query_cmd , schema,  table_name,', '.join(alter_cmd))
+        query +=  """%s %s.%s %s;""" % (query_cmd , quote_ident(schema),  quote_ident(table_name),', '.join(alter_cmd))
         query += ' '.join(ddl_post_alter)
         return query
 
@@ -5162,8 +5162,8 @@ class pg_engine(object):
             :param column_list: A string with the list of columns to use in the COPY FROM command already quoted and comma separated
         """
         header = "HEADER" if contain_columns else ""
-        sql_copy = 'COPY `%s`.`%s` (%s) FROM STDIN WITH NULL \'NULL\' CSV QUOTE \'"\' DELIMITER \'%s\' ESCAPE \'"\' %s'\
-                   % (schema, table, column_list, column_split, header)
+        sql_copy = 'COPY %s.%s (%s) FROM STDIN WITH NULL \'NULL\' CSV QUOTE \'"\' DELIMITER \'%s\' ESCAPE \'"\' %s'\
+                   % (quote_ident_backtick(schema), quote_ident_backtick(table), column_list, column_split, header)
         receive_stmt = self.pgsql_conn.prepare(sql_copy)
         receive_stmt.load_rows(csv_file)
 
@@ -5180,7 +5180,7 @@ class pg_engine(object):
         sample_row = insert_data[0]
         column_marker = ','.join(['%s' for column in sample_row])
 
-        sql_head = 'INSERT INTO `%s`.`%s`(%s) VALUES (%s);' % (schema, table, column_list, column_marker)
+        sql_head = 'INSERT INTO %s.%s(%s) VALUES (%s);' % (quote_ident_backtick(schema), quote_ident_backtick(table), column_list, column_marker)
         self.logger.info(sql_head)
         for data_row in insert_data:
             try:
@@ -5196,7 +5196,7 @@ class pg_engine(object):
                 if "column" in str(e.message) and "does not exist" in str(e.message):
                     self.logger.warning("%s contains columns that do not exist, so using column list from select %s "
                                         "and retry insert data" % (column_list, column_list_select))
-                    sql_head = 'INSERT INTO "%s"."%s"(%s) VALUES (%s);' % (schema, table, column_list_select,
+                    sql_head = 'INSERT INTO %s.%s(%s) VALUES (%s);' % (quote_ident(schema), quote_ident(table), column_list_select,
                                                                            column_marker)
                     try:
                         self.logger.info(sql_head)
