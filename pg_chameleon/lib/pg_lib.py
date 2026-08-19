@@ -4845,13 +4845,45 @@ class pg_engine(object):
                 self.logger.info("Dropping the auto_increment before primary key {}".format(pk[0],))
                 try:
                     self.pgsql_conn.execute(pk[2])
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.error("Dropping the auto_increment failed for table %s.%s: %s" % (schema, table, str(e)))
+                try:
+                    stmt_seq_name = self.pgsql_conn.prepare(
+                        "SELECT pg_get_serial_sequence('%s.%s', '%s')" % (schema, table, 'id'))
+                    seq_name = stmt_seq_name.first()
+                except Exception as e:
+                    self.logger.error("Failed to get sequence name for table %s.%s: %s" % (schema, table, str(e)))
+                    seq_name = None
+                if seq_name:
+                    try:
+                        stmt_relkind = self.pgsql_conn.prepare(
+                            "SELECT c.relkind FROM pg_class c "
+                            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                            "WHERE n.nspname='%s' AND c.relname='%s'" % (schema, seq_name.split('.')[-1]))
+                        relkind = stmt_relkind.first()
+                    except Exception as e:
+                        self.logger.error("Failed to query sequence relkind for %s: %s" % (seq_name, str(e)))
+                        relkind = None
+                    try:
+                        if relkind and relkind in ('Z', 'L', b'Z', b'L'):
+                            drop_sql = "DROP LARGE SEQUENCE IF EXISTS %s" % seq_name
+                        else:
+                            drop_sql = "DROP SEQUENCE IF EXISTS %s" % seq_name
+                        self.pgsql_conn.execute(drop_sql)
+                    except Exception as e:
+                        self.logger.error("Failed to drop sequence for table %s.%s: %s" % (schema, table, str(e)))
             self.logger.info("Dropping the primary key {}".format(pk[0],))
             try:
                 self.pgsql_conn.execute(pk[1])
             except:
                 pass
+        # Commit the transaction so that the drop operations (including sequence deletion)
+        # are visible to other connections (e.g. writer threads).
+        try:
+            x = self.pgsql_conn.xact()
+            x.commit()
+        except Exception as e:
+            self.logger.warning("failed to commit after cleanup_idx_cons: %s" % str(e))
     def __create_foreign_keys(self):
         """
             The method creates the foreign keys previously dropped using the data stored in sch_chameleon.t_fkeys.
@@ -4917,26 +4949,39 @@ class pg_engine(object):
 
         for pk in pk_create:
             self.logger.info("Creating the primary key {}".format(pk[0],))
-            self.pgsql_conn.execute(pk[1])
+            try:
+                self.pgsql_conn.execute(pk[1])
+            except Exception as e:
+                self.logger.error("Creating the primary key %s for table %s.%s failed: %s"
+                                  % (pk[0], schema, table, str(e)))
             if pk[2]:
                 self.logger.info("Creating the auto_increment after primary key {}".format(pk[0],))
                 try:
                     self.pgsql_conn.execute(pk[2])
-                except:
-                    pass
+                except Exception as exp:
+                    self.logger.error("%s creating auto_increment constraint %s for table %s.%s error: %s"
+                                      % (ErrorCode.SQL_EXCEPTION, pk[0], schema, table, str(exp)))
 
         # Check if the table is partitioned (to determine if we should create local indexes)
         is_partitioned = self.have_table_partitions(schema, table)
         for idx in idx_create:
             self.logger.info("Creating the index {}".format(idx[0],))
-            # If the table is partitioned, modify the index creation statement to include 'LOCAL'
-            if is_partitioned:
-                idx_create_sql = idx[1].replace('CREATE INDEX', 'CREATE INDEX LOCAL')
-                self.logger.info("Table %s.%s is a partitioned table. Creating local indexes." % (schema, table))
-                self.pgsql_conn.execute(idx_create_sql)
-            else:
-                self.logger.info("Table %s.%s is not a partitioned table. Creating global indexes." % (schema, table))
-                self.pgsql_conn.execute(idx[1])
+            try:
+                # If the table is partitioned, modify the index creation statement to include 'LOCAL'
+                if is_partitioned:
+                    idx_create_sql = idx[1]
+                    idx_create_sql = idx_create_sql.replace(' ON ONLY ', ' ')
+                    if 'LOCAL' not in idx_create_sql.upper():
+                        idx_create_sql = idx_create_sql.replace('CREATE UNIQUE INDEX', 'CREATE UNIQUE INDEX LOCAL')
+                        idx_create_sql = idx_create_sql.replace('CREATE INDEX', 'CREATE INDEX LOCAL')
+                    self.logger.info("Table %s.%s is a partitioned table. Creating local indexes." % (schema, table))
+                    self.pgsql_conn.execute(idx_create_sql)
+                else:
+                    self.logger.info("Table %s.%s is not a partitioned table. Creating global indexes." % (schema, table))
+                    self.pgsql_conn.execute(idx[1])
+            except Exception as e:
+                self.logger.error("Creating the index %s for table %s.%s failed: %s"
+                                  % (idx[0], schema, table, str(e)))
 
     def collect_idx_cons(self,schema,table):
         """

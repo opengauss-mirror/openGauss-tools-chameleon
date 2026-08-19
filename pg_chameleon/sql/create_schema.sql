@@ -1035,13 +1035,16 @@ SELECT
     END AS t_sql_create,
     CASE
         WHEN oid_conid IS NOT NULL AND v_autoinc_column IS NOT NULL
-        THEN format('ALTER TABLE %I.%I MODIFY %I %s%s;', v_schema_name, v_table_name, v_autoinc_column, v_autoinc_type,
+        THEN format('ALTER TABLE %I.%I MODIFY %I %s%s', v_schema_name, v_table_name, v_autoinc_column, v_autoinc_type,
             CASE WHEN b_autoinc_notnull THEN ' NOT NULL' ELSE '' END)
         ELSE NULL
     END AS t_autoinc_drop,
     CASE
         WHEN oid_conid IS NOT NULL AND v_autoinc_column IS NOT NULL
-        THEN format('ALTER TABLE %I.%I MODIFY %I %s%s AUTO_INCREMENT;', v_schema_name, v_table_name, v_autoinc_column, v_autoinc_type,
+        THEN format('ALTER TABLE %I.%I MODIFY %I %s%s; ALTER TABLE %I.%I MODIFY %I %s%s AUTO_INCREMENT;',
+            v_schema_name, v_table_name, v_autoinc_column, v_autoinc_type,
+            CASE WHEN b_autoinc_notnull THEN ' NOT NULL' ELSE '' END,
+            v_schema_name, v_table_name, v_autoinc_column, v_autoinc_type,
             CASE WHEN b_autoinc_notnull THEN ' NOT NULL' ELSE '' END)
         ELSE NULL
     END AS t_autoinc_create,
@@ -1060,10 +1063,27 @@ FROM
         con.oid_conid,
         autoinc.v_autoinc_column,
         autoinc.v_autoinc_type,
-        autoinc.b_autoinc_notnull
+        autoinc.b_autoinc_notnull,
+        autoinc.v_seq_name
 
     FROM
-        pg_indexes idx
+        (
+            SELECT
+                sch.nspname AS schemaname,
+                tab.relname AS tablename,
+                ind.relname AS indexname,
+                tsp.spcname AS tablespace,
+                pg_get_indexdef(ind.oid) AS indexdef
+            FROM
+                pg_index x
+                INNER JOIN pg_class tab ON tab.oid = x.indrelid
+                INNER JOIN pg_class ind ON ind.oid = x.indexrelid
+                INNER JOIN pg_namespace sch ON sch.oid = tab.relnamespace
+                LEFT JOIN pg_tablespace tsp ON tsp.oid = ind.reltablespace
+            WHERE
+                tab.relkind IN ('r', 'p')
+                AND ind.relkind IN ('i', 'I')
+        ) idx
         LEFT OUTER JOIN
         (
             SELECT
@@ -1091,7 +1111,8 @@ FROM
                 tab.relname AS v_table_name,
                 att.attname AS v_autoinc_column,
                 format_type(att.atttypid, att.atttypmod) AS v_autoinc_type,
-                att.attnotnull AS b_autoinc_notnull
+                att.attnotnull AS b_autoinc_notnull,
+                pg_get_serial_sequence(format('%I.%I', sch.nspname, tab.relname), att.attname) AS v_seq_name
             FROM
                 pg_constraint con
                 INNER JOIN pg_class tab ON tab.oid = con.conrelid

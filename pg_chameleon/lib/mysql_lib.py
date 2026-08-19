@@ -1991,6 +1991,17 @@ class mysql_source(object):
             self.insert_table_data(ins_arg, self.writer_engine)
             self.put_writer_record("SLICE", task)
 
+    def is_table_not_exist_error(self, exp):
+        """
+            The method checks whether the exception is caused by the destination table not existing.
+            The SQLSTATE 42P01 means undefined_table, and some drivers also describe it as 'does not exist'.
+        """
+        code = getattr(exp, 'code', None)
+        if code is not None and str(code) == '42P01':
+            return True
+        message = getattr(exp, 'message', None) or str(exp)
+        return 'does not exist' in str(message)
+
     def copy_data_from_csv_file(self, csv_file, task):
         schema = task.schema
         table = task.table
@@ -2025,6 +2036,10 @@ class mysql_source(object):
                     "%s SQLCODE: %s SQLERROR: %s, Table: %s.%s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, exp.code, exp.message, schema, table))
             else:
                 self.logger.error("%s %s. Table: %s.%s" % (ErrorCode.SQL_COPY_CSV_MODE_FAILED, str(exp), schema, table))
+            if self.is_table_not_exist_error(exp):
+                self.logger.warning("Table %s.%s does not exist in destination schema, skip copying data."
+                                    % (schema, table))
+                return copy_data_from_csv, is_need_recopy_from_csv
             if not self.writer_engine.check_db_status():
                 self.logger.info(
                     "The abnormal database state has been fixed and the csv file is now being re-copied")
@@ -3164,14 +3179,18 @@ class mysql_source(object):
             table_list = self.schema_tables[schema]
             for table in table_list:
                 destination_schema = self.schema_mappings[schema]
-                self.table_pkeys["`%s`.`%s`" % (destination_schema, table)] = self.pg_engine.get_existing_pkey(destination_schema, table)
-                self.logger.info("Collecting constraints and indices from the destination table  %s.%s" % (
-                    destination_schema, table))
-                self.pg_engine.collect_idx_cons(destination_schema, table)
-                self.logger.info("Removing constraints and indices from the destination table  %s.%s" % (
-                    destination_schema, table))
-                self.pg_engine.cleanup_idx_cons(destination_schema, table)
-                self.pg_engine.truncate_table(destination_schema, table)
+                try:
+                    self.table_pkeys["`%s`.`%s`" % (destination_schema, table)] = self.pg_engine.get_existing_pkey(destination_schema, table)
+                    self.logger.info("Collecting constraints and indices from the destination table  %s.%s" % (
+                        destination_schema, table))
+                    self.pg_engine.collect_idx_cons(destination_schema, table)
+                    self.logger.info("Removing constraints and indices from the destination table  %s.%s" % (
+                        destination_schema, table))
+                    self.pg_engine.cleanup_idx_cons(destination_schema, table)
+                    self.pg_engine.truncate_table(destination_schema, table)
+                except Exception as e:
+                    self.logger.error("Failed to clean existing table %s.%s, skipping it. Error: %s"
+                                      % (destination_schema, table, str(e)))
 
     def check_mysql_status(self):
         self.logger.info("check mysql connection status.")
