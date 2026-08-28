@@ -2547,7 +2547,10 @@ class mysql_source(object):
                 self.logger.error("%s truncate table %s.%s failed and the error message is %s"
                                   % (ErrorCode.SQL_EXCEPTION, loading_schema, table_name, exp.message))
             self.delete_table_csv_file(schema, table_name)
-        self.pg_engine.disconnect_db()
+        # Keep the shared main-process connection alive. init_replica() still relies on
+        # self.pg_engine.pgsql_conn after __copy_tables() (e.g. set_source_status("initialised")).
+        # Disconnecting here leaves pgsql_conn as None and crashes with
+        # "AttributeError: 'NoneType' object has no attribute 'prepare'".
         self.logger.info('[RETRY] end to delete failed tables')
 
     def delete_table_csv_file(self, schema, table):
@@ -3259,7 +3262,12 @@ class mysql_source(object):
         except:
             if not self.keep_existing_schema and not self.is_skip_completed_tables:
                 self.drop_loading_schemas()
-            self.pg_engine.set_source_status("error")
+            # Best-effort record the error status. set_source_status self-heals a missing or
+            # broken connection, and this guard ensures the original exception is never masked.
+            try:
+                self.pg_engine.set_source_status("error")
+            except Exception as exp:
+                self.logger.critical("Failed to set the error status on the destination: %s" % str(exp))
             notifier_message = "init replica for source %s failed" % self.source
             self.logger.critical(notifier_message)
             self.notifier.send_message(notifier_message, 'critical')

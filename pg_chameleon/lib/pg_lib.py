@@ -4377,7 +4377,7 @@ class pg_engine(object):
     def set_source_status(self, source_status):
         """
             The method updates the source status for the source_name and sets the class attribute i_id_source.
-            The method assumes there is a database connection active.
+            The method ensures there is an active database connection, reconnecting if needed.
 
             :param source_status: The source status to be set.
 
@@ -4391,8 +4391,24 @@ class pg_engine(object):
             RETURNING i_id_source
                 ;
             """
-        stmt = self.pgsql_conn.prepare(sql_source % (source_status, self.source, ))
-        source_data = stmt.first()
+        if not self.pgsql_conn:
+            self.logger.warning("No active destination connection. Reconnecting before setting source status to %s." % source_status)
+            self.connect_db()
+        try:
+            stmt = self.pgsql_conn.prepare(sql_source % (source_status, self.source, ))
+            source_data = stmt.first()
+        except Exception as exp:
+            # The shared connection may be broken/stale (e.g. a network drop or a server-side
+            # session close). Reset it, reconnect once and retry before giving up.
+            self.logger.warning("set_source_status(%s) failed (%s). Reconnecting and retrying." % (source_status, str(exp)))
+            try:
+                self.pgsql_conn.close()
+            except Exception:
+                pass
+            self.pgsql_conn = None
+            self.connect_db()
+            stmt = self.pgsql_conn.prepare(sql_source % (source_status, self.source, ))
+            source_data = stmt.first()
 
 
         try:
