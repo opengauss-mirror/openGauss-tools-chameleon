@@ -168,10 +168,34 @@ class mysql_source(object):
         global INITIAL_TIME
         start_time = time.time()
         INITIAL_TIME = manager.dict({"initialTime": int(start_time)})
+        global stageRows
+        stageRows = manager.dict({"extractRows": 0, "csvRows": 0, "loadRows": 0})
+        global stageSpeed
+        stageSpeed = manager.dict({"extractSpeed": 0, "csvSpeed": 0, "loadSpeed": 0})
+        global managerProgressLock
+        managerProgressLock = manager.Lock()
 
     @classmethod
     def getmanagerJson(cls):
         return managerJson
+
+    @classmethod
+    def add_stage_rows(cls, stage, rows):
+        with managerProgressLock:
+            stageRows.update({stage: stageRows[stage] + rows})
+
+    @classmethod
+    def get_stage_progress(cls):
+        with managerProgressLock:
+            return dict(stageRows)
+
+    @classmethod
+    def update_stage_speed(cls, speeds):
+        stageSpeed.update(speeds)
+
+    @classmethod
+    def get_stage_speed(cls):
+        return dict(stageSpeed)
 
     @classmethod
     def __decode_hexify_value(cls, origin_value, numeric_scale):
@@ -1892,12 +1916,16 @@ class mysql_source(object):
                     # '\x00' is '\0', which is a illeage char in openGauss, we need to remove it, but this
                     # will lead to different value stored in MySQL and openGauss, we have no choice...
                     csv_data = ("\n".join(d[0] for d in csv_results)).replace('\x00', '')
+                    if self.dump_json:
+                        self.add_stage_rows("extractRows", len(csv_results))
                     if self.copy_mode == 'file':
                         safe_charset = 'utf-8' if getattr(self, 'charset', '').lower().replace('-', '') in (
                         UTF8MB4, UTF8) else self.charset
                         csv_file = codecs.open(out_file, 'wb', safe_charset, buffering=-1)
                         csv_file.write(csv_data)
                         csv_file.close()
+                        if self.dump_json:
+                            self.add_stage_rows("csvRows", len(csv_results))
                         task = CopyDataTask(out_file, count_rows, table, schema, select_columns, len(csv_results),
                                             task_slice)
                     else:
@@ -2027,6 +2055,7 @@ class mysql_source(object):
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(schema, table)
             if self.dump_json:
+                self.add_stage_rows("loadRows", task.rows)
                 percent = 1.0 if (task_slice + 1) > total_slices else (task_slice + 1) / total_slices
                 self.__copied_progress_json("table", schema, table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
@@ -2091,6 +2120,7 @@ class mysql_source(object):
             if self.is_skip_completed_tables:
                 self.handle_migration_progress(schema, table)
             if self.dump_json:
+                self.add_stage_rows("loadRows", len(insert_data))
                 percent = 1.0 if (slice_insert + 1) > total_slices else (slice_insert + 1) / total_slices
                 self.__copied_progress_json("table", schema, table, percent)
                 self.__copy_total_progress_json(copy_limit, avg_row_length)
@@ -2291,7 +2321,10 @@ class mysql_source(object):
             "record": total_record,
             "data": data,
             "time": migration_time,
-            "speed": speed
+            "speed": speed,
+            "extractSpeed": stageSpeed["extractSpeed"],
+            "csvSpeed": stageSpeed["csvSpeed"],
+            "loadSpeed": stageSpeed["loadSpeed"]
         }})
 
 
