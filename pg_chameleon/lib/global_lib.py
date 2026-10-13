@@ -375,14 +375,33 @@ class replica_engine(object):
                 dump_jsons["total"] = dump_object[key]
             else:
                 dump_jsons[dump_object_name].append(dump_object[key])
+        dump_jsons["total"].update(self.mysql_source.get_stage_speed())
         with open('data_'+self.args.config+'_'+self.args.command+'.json', 'w', encoding='utf8') as f:
             f.seek(0)
             json.dump(dump_jsons,f)
 
     def dump_Json(self):
+        last_stage_rows = None
+        last_time = None
         while True:
+            last_stage_rows, last_time = self.__refresh_stage_speed(last_stage_rows, last_time)
             self.write_Json()
             time.sleep(2)
+
+    def __refresh_stage_speed(self, last_stage_rows, last_time):
+        stage_rows = self.mysql_source.get_stage_progress()
+        current_time = time.monotonic()
+        if last_time is None or current_time <= last_time:
+            speeds = {"extractSpeed": 0, "csvSpeed": 0, "loadSpeed": 0}
+        else:
+            delta = current_time - last_time
+            speeds = {
+                "extractSpeed": int(round((stage_rows["extractRows"] - last_stage_rows["extractRows"]) / delta)),
+                "csvSpeed": int(round((stage_rows["csvRows"] - last_stage_rows["csvRows"]) / delta)),
+                "loadSpeed": int(round((stage_rows["loadRows"] - last_stage_rows["loadRows"]) / delta))
+            }
+        self.mysql_source.update_stage_speed(speeds)
+        return stage_rows, current_time
 
     def __check_param_valid(self, param):
         """
