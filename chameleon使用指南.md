@@ -1258,11 +1258,13 @@ openGauss侧使用的用户名密码分别是 **opengauss_test**和 **Sample@123
 
 ## **6.2.** 创建用户及修改database配置
 
-准备好配置文件后，在openGauss侧创建迁移时需要用到的用户以及database。
+准备好配置文件后，在openGauss侧创建迁移时需要用到的用户以及database，并为该用户授予对database的所有权限。
 
 **CREATE USER opengauss_test WITH PASSWORD 'Sample@123';**
 
 **CREATE DATABASE opengauss_database WITH OWNER opengauss_test dbcompatibility='B' ;**
+
+**GRANT ALL ON DATABASE opengauss_database TO opengauss_test;**
 
 **注意：创建’B’兼容性的数据库。**
 
